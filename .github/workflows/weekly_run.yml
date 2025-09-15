@@ -1,0 +1,34 @@
+name: Weekly NeuroCell Agent Run
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Runs every Tuesday at 09:00 UTC
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+
+    env:
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      SENDER_EMAIL: your-email@domain.com
+      RECIPIENT_EMAIL: recipient@domain.com
+      NCBI_EMAIL: your-ncbi-email@domain.com
+      PUBMED_TERM: "exosomes AND CNS"
+      MAX_RECORDS: 20
+      SMTP_SERVER: smtp.gmail.com
+      SMTP_PORT: 465
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run NeuroCell Agent script
+        run: python neurocell_agent.py
