@@ -234,7 +234,6 @@ class PubMedFetcher:
 
     def _parse_pubmed_articles(self, papers) -> List[Dict]:
         summaries = []
-
         for article in papers.get("PubmedArticle", []):
             try:
                 parsed_article = self._parse_single_article(article)
@@ -336,7 +335,6 @@ class PubMedFetcher:
                 if hasattr(loc, 'attributes') and loc.attributes.get("EIdType") == "doi":
                     return loc.attributes.get('text', '')
         return "N/A"
-
 # ---------------------
 # Clinical Trials fetcher class
 # ---------------------
