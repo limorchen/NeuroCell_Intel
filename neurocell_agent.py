@@ -13,6 +13,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import hashlib
 import time
+from typing import List, Dict, Optional
 
 # ---------------------
 # Logging config
@@ -37,14 +38,11 @@ class Config:
     SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
     EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
     PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
     CLINICALTRIALS_BASE = "https://clinicaltrials.gov/api/v2/studies"
     MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
     RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-
     DB_FILE = "neurocell_database.db"
-
 
 config = Config()
 
@@ -85,7 +83,6 @@ class NeuroCellDB:
             content_hash TEXT,
             first_seen TEXT
         )""")
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS clinical_trials (
             nctid TEXT PRIMARY KEY,
@@ -117,10 +114,8 @@ class NeuroCellDB:
         hash_val = compute_content_hash(article['title'] + article['abstract'])
         self.cursor.execute("SELECT pmid, content_hash FROM pubmed_articles WHERE pmid=?", (article['pmid'],))
         row = self.cursor.fetchone()
-
         now = current_timestamp()
         if not row:
-            # Insert new article
             self.cursor.execute("""
                 INSERT INTO pubmed_articles
                 (pmid, title, abstract, authors, publication_date, journal, volume, issue, pages, doi, keywords, url, is_new, content_hash, first_seen)
@@ -132,7 +127,6 @@ class NeuroCellDB:
             ))
             logger.info(f"Added NEW PubMed article: {article['pmid']}")
         else:
-            # Update is_new flag if content hash changed
             if row[1] != hash_val:
                 self.cursor.execute("""
                     UPDATE pubmed_articles SET title=?, abstract=?, authors=?, publication_date=?, journal=?, volume=?, issue=?, pages=?, doi=?, keywords=?, url=?, is_new=1, content_hash=?
@@ -144,18 +138,14 @@ class NeuroCellDB:
                 ))
                 logger.info(f"Updated & marked NEW PubMed article: {article['pmid']}")
             else:
-                # Just keep is_new as 0 for existing without change
                 self.cursor.execute("UPDATE pubmed_articles SET is_new=0 WHERE pmid=?", (article['pmid'],))
-
         self.conn.commit()
 
     def upsert_clinical_trial(self, trial):
         hash_text = trial['title'] + (trial['detailed_description'] or "") + "".join(trial['conditions']) + "".join(trial['interventions'])
         hash_val = compute_content_hash(hash_text)
-
         self.cursor.execute("SELECT nctid, content_hash FROM clinical_trials WHERE nctid=?", (trial['nctid'],))
         row = self.cursor.fetchone()
-
         now = current_timestamp()
         if not row:
             self.cursor.execute("""
@@ -182,9 +172,7 @@ class NeuroCellDB:
                 ))
                 logger.info(f"Updated & marked NEW Clinical Trial: {trial['nctid']}")
             else:
-                # Keep is_new=0 for unchanged existing
                 self.cursor.execute("UPDATE clinical_trials SET is_new=0 WHERE nctid=?", (trial['nctid'],))
-
         self.conn.commit()
 
     def export_csv(self, table_name, filename, new_only=False):
@@ -200,150 +188,135 @@ class NeuroCellDB:
         self.conn.close()
 
 # ---------------------
-# PubMed Fetcher (as before)
+# PubMed Fetcher complete implementation
 # ---------------------
 class PubMedFetcher:
     def __init__(self, email: str):
         Entrez.email = email
         self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
-    # ... your existing methods remain unchanged ...
-
-
-# ---------------------
-# Clinical Trials Fetcher (as before)
-# ---------------------
-class ClinicalTrialsFetcher:
-    def __init__(self):
-        self.base_url = config.CLINICALTRIALS_BASE
-
-    # ... your existing methods remain unchanged ...
-
-
-# ---------------------
-# Email Sender
-# ---------------------
-class EmailSender:
-    def __init__(self, config_obj):
-        self.config = config_obj
-
-    def send_comprehensive_report(self, db: NeuroCellDB) -> bool:
-        password = self.config.EMAIL_PASSWORD
-        if not password:
-            logger.error("Missing EMAIL_PASSWORD environment variable")
-            return False
-
+    def fetch_articles(self, term: str, max_records: int = 20, days_back: int = 30) -> List[Dict]:
         try:
-            # Export CSVs
-            new_pubmed_csv = db.export_csv("pubmed_articles", "new_pubmed_this_week.csv", new_only=True)
-            new_trials_csv = db.export_csv("clinical_trials", "new_trials_this_week.csv", new_only=True)
-            all_pubmed_csv = db.export_csv("pubmed_articles", "all_pubmed_database.csv", new_only=False)
-            all_trials_csv = db.export_csv("clinical_trials", "all_trials_database.csv", new_only=False)
+            date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
+            search_term = f'{term} AND ("{date_filter}"[Date - Publication] : "3000"[Date - Publication])'
+            logger.info(f"Searching PubMed with term: {search_term}")
 
-            # Create email
-            msg = MIMEMultipart()
-            msg['From'] = self.config.SENDER_EMAIL
-            msg['To'] = self.config.RECIPIENT_EMAIL
-            msg['Subject'] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
+            handle = Entrez.esearch(
+                db="pubmed",
+                term=search_term,
+                retmax=max_records,
+                sort="date",
+                usehistory="y"
+            )
+            record = Entrez.read(handle)
+            ids = record["IdList"]
+            handle.close()
 
-            # Construct summary text
-            pubmed_new_count = pd.read_csv(new_pubmed_csv).shape[0]
-            trials_new_count = pd.read_csv(new_trials_csv).shape[0]
-            pubmed_total_count = pd.read_csv(all_pubmed_csv).shape[0]
-            trials_total_count = pd.read_csv(all_trials_csv).shape[0]
+            if not ids:
+                logger.warning("No PubMed articles found")
+                return []
 
-            text = f"""
-🧬 NeuroCell Intelligence Report
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            time.sleep(config.RATE_LIMIT_DELAY)
 
-Summary Statistics:
-- New PubMed Articles this week: {pubmed_new_count}
-- Total PubMed Articles in DB: {pubmed_total_count}
+            handle = Entrez.efetch(
+                db="pubmed",
+                id=",".join(ids),
+                rettype="abstract",
+                retmode="xml"
+            )
+            papers = Entrez.read(handle)
+            handle.close()
 
-- New Clinical Trials this week: {trials_new_count}
-- Total Clinical Trials in DB: {trials_total_count}
-
-Please see the attached CSV files for details.
-"""
-            msg.attach(MIMEText(text, 'plain'))
-
-            # Attach all CSVs
-            for filepath in [new_pubmed_csv, new_trials_csv, all_pubmed_csv, all_trials_csv]:
-                with open(filepath, "rb") as f:
-                    part = MIMEBase("application", "octet-stream")
-                    part.set_payload(f.read())
-                encoders.encode_base64(part)
-                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(filepath)}")
-                msg.attach(part)
-
-            # Send email
-            with smtplib.SMTP_SSL(self.config.SMTP_SERVER, self.config.SMTP_PORT) as server:
-                server.login(self.config.SENDER_EMAIL, password)
-                server.sendmail(self.config.SENDER_EMAIL, self.config.RECIPIENT_EMAIL, msg.as_string())
-
-            logger.info("Email report sent successfully")
-            return True
-
+            return self._parse_pubmed_articles(papers)
         except Exception as e:
-            logger.error(f"Email sending failed: {e}")
-            return False
+            logger.error(f"Error fetching PubMed articles: {e}")
+            return []
 
+    def _parse_pubmed_articles(self, papers) -> List[Dict]:
+        summaries = []
 
-# ---------------------
-# Main Agent Orchestrator
-# ---------------------
-class NeuroCellAgent:
-    def __init__(self):
-        self.config = config
-        self.db = NeuroCellDB()
-        self.pubmed_fetcher = PubMedFetcher(self.config.NCBI_EMAIL)
-        self.trials_fetcher = ClinicalTrialsFetcher()
-        self.email_sender = EmailSender(self.config)
+        for article in papers.get("PubmedArticle", []):
+            try:
+                parsed_article = self._parse_single_article(article)
+                if parsed_article:
+                    summaries.append(parsed_article)
+            except Exception as e:
+                logger.error(f"Error parsing individual PubMed article: {e}")
+                continue
+        logger.info(f"Successfully parsed {len(summaries)} PubMed articles")
+        return summaries
 
-    def run_weekly(self, days_back=7):
-        logger.info("Starting weekly NeuroCell Intelligence Agent run.")
+    def _parse_single_article(self, article) -> Optional[Dict]:
+        medline_citation = article.get("MedlineCitation", {})
+        article_data = medline_citation.get("Article", {})
 
-        # Mark all existing entries as old
-        self.db.mark_all_old()
+        pmid = medline_citation.get("PMID")
+        title = article_data.get("ArticleTitle")
+        if not (pmid and title):
+            return None
 
-        # Fetch PubMed articles
-        articles = self.pubmed_fetcher.fetch_articles(
-            self.config.PUBMED_TERM, self.config.MAX_RECORDS, days_back
-        )
-
-        # Insert/update database with new PubMed articles
-        for art in articles:
-            self.db.upsert_pubmed_article(art)
-
-        # Fetch clinical trials
-        trial_queries = [
-            "exosomes AND neurological",
-            "exosome AND CNS",
-            "extracellular vesicles AND brain",
-            "exosomes AND spinal cord"
-        ]
-        trials = self.trials_fetcher.search_trials(trial_queries, self.config.MAX_RECORDS)
-
-        for tr in trials:
-            self.db.upsert_clinical_trial(tr)
-
-        # Send the email report with attached CSVs
-        success = self.email_sender.send_comprehensive_report(self.db)
-
-        self.db.close()
-
-        if success:
-            logger.info("Weekly run completed successfully.")
+        abstract_list = article_data.get("Abstract", {}).get("AbstractText", [])
+        if isinstance(abstract_list, list):
+            abstract = " ".join([str(abs_text) for abs_text in abstract_list])
         else:
-            logger.error("Weekly run encountered errors.")
-        return success
+            abstract = str(abstract_list) if abstract_list else ""
 
+        authors = self._extract_authors(article_data.get("AuthorList", []))
+        journal_info = article_data.get("Journal", {})
+        pub_info = self._extract_publication_info(journal_info)
+        keywords = self._extract_keywords(medline_citation)
+        doi = self._extract_doi(article_data)
 
-if __name__ == "__main__":
-    agent = NeuroCellAgent()
-    success = agent.run_weekly()
+        return {
+            "pmid": str(pmid),
+            "title": str(title),
+            "abstract": abstract,
+            "authors": authors,
+            "publication_date": pub_info["date"],
+            "journal": pub_info["journal"],
+            "volume": pub_info["volume"],
+            "issue": pub_info["issue"],
+            "pages": pub_info["pages"],
+            "doi": doi,
+            "keywords": keywords,
+            "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        }
 
-    if success:
-        print("✅ NeuroCell Intelligence Agent completed successfully")
-    else:
-        print("❌ NeuroCell Intelligence Agent encountered errors")
+    def _extract_authors(self, author_list: List) -> str:
+        authors = []
+        for author in author_list[:10]:
+            if "LastName" in author and "Initials" in author:
+                authors.append(f"{author['LastName']} {author['Initials']}")
+            elif "CollectiveName" in author:
+                authors.append(author["CollectiveName"])
+        if len(author_list) > 10:
+            authors.append("et al.")
+        return ", ".join(authors)
+
+    def _extract_publication_info(self, journal_info: Dict) -> Dict:
+        journal_issue = journal_info.get("JournalIssue", {})
+        pub_date_data = journal_issue.get("PubDate", {})
+
+        pub_date = "N/A"
+        if "Year" in pub_date_data:
+            year = pub_date_data["Year"]
+            month = pub_date_data.get("Month")
+            day = pub_date_data.get("Day")
+
+            if all([year, month, day]):
+                pub_date = f"{year}-{month:02d}-{day:02d}" if month.isdigit() else f"{year}-{month}-{day}"
+            elif year and month:
+                pub_date = f"{year}-{month}"
+            elif year:
+                pub_date = str(year)
+        elif "MedlineDate" in pub_date_data:
+            pub_date = pub_date_data["MedlineDate"]
+
+        return {
+            "date": pub_date,
+            "journal": journal_info.get("Title", "N/A"),
+            "volume": journal_issue.get("Volume", "N/A"),
+            "issue": journal_issue.get("Issue", "N/A"),
+            "pages": journal_info.get("Article", {}).get("Pagination", {}).get("StartPage", "N/A")
+        }
+
