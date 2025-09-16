@@ -15,8 +15,10 @@ import hashlib
 import time
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
+import os
 load_dotenv()
 
+print("EMAIL_PASSWORD:", os.getenv("EMAIL_PASSWORD"))
 # ---------------------
 # Logging configuration
 # ---------------------
