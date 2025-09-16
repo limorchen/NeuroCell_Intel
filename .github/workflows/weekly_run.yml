@@ -2,18 +2,18 @@ name: Weekly NeuroCell Agent Run
 
 on:
   schedule:
-      - cron: '0 10 * * 2'  # 13:00 Israel time every Tuesday
-  workflow_dispatch:   # <-- add this line to allow manual runs
+    - cron: '0 11 * * 2'  # 13:00 Israel time every Tuesday
+  workflow_dispatch:      # allows manual runs
 
 jobs:
   run-agent:
     runs-on: ubuntu-latest
 
     env:
-      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-      SENDER_EMAIL: your-email@domain.com
-      RECIPIENT_EMAIL: recipient@domain.com
-      NCBI_EMAIL: your-ncbi-email@domain.com
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}   # your Gmail app password in GitHub secrets
+      SENDER_EMAIL: limor@nurexone.com
+      RECIPIENT_EMAIL: limor@nurexone.com            # add more by separating with commas if your script supports it
+      NCBI_EMAIL: chen.limor@gmail.com
       PUBMED_TERM: "exosomes AND CNS"
       MAX_RECORDS: 20
       SMTP_SERVER: smtp.gmail.com
