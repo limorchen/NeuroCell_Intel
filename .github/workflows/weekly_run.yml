@@ -2,7 +2,7 @@ name: Weekly NeuroCell Agent Run
 
 on:
   schedule:
-    - cron: '0 9 * * 1'  # Runs every Tuesday at 09:00 UTC
+      - cron: '0 10 * * 2'  # 13:00 Israel time every Tuesday
 
 jobs:
   run-agent:
