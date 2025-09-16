@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 import hashlib
 import time
 from typing import List, Dict, Optional
+from dotenv import load_dotenv
+load_dotenv()
 
 # ---------------------
 # Logging configuration
