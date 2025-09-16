@@ -3,6 +3,7 @@ name: Weekly NeuroCell Agent Run
 on:
   schedule:
       - cron: '0 10 * * 2'  # 13:00 Israel time every Tuesday
+  workflow_dispatch:   # <-- add this line to allow manual runs
 
 jobs:
   run-agent:
