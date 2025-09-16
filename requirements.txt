@@ -3,3 +3,4 @@ sentence-transformers
 faiss-cpu
 pandas
 requests
+python-dotenv
