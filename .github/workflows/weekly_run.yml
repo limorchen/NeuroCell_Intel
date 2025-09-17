@@ -15,6 +15,7 @@ jobs:
       RECIPIENT_EMAIL: limor@nurexone.com            # add more by separating with commas if your script supports it
       NCBI_EMAIL: chen.limor@gmail.com
       PUBMED_TERM: "exosomes AND CNS"
+      CLINICALTRIALS_TERM: "exosomes AND neurological"
       MAX_RECORDS: 20
       SMTP_SERVER: smtp.gmail.com
       SMTP_PORT: 465
