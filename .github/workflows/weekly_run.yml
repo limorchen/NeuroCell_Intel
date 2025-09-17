@@ -2,7 +2,7 @@ name: Weekly NeuroCell Agent Run
 
 on:
   schedule:
-    - cron: '30 12 * * 2'  # 15:30 Israel time every Tuesday
+    - cron: '20 08 * * 3'  # 15:30 Israel time every Tuesday
   workflow_dispatch:      # allows manual runs
 
 jobs:
