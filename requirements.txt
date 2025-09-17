@@ -4,3 +4,5 @@ faiss-cpu
 pandas
 requests
 python-dotenv
+beautifulsoup4
+scholarly
