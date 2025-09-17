@@ -4,8 +4,9 @@ import hashlib
 import logging
 import sqlite3
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict
 import pandas as pd
+import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -13,7 +14,6 @@ from email.mime.base import MIMEBase
 from email import encoders
 from dotenv import load_dotenv
 from Bio import Entrez
-from scholarly import scholarly
 
 load_dotenv()
 
@@ -41,15 +41,14 @@ class Config:
     SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
     EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
     PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
-    SCHOLAR_TERM = os.getenv("SCHOLAR_TERM", "exosomes CNS")
+    TRIALS_TERM = os.getenv("TRIALS_TERM", "exosomes CNS")
     MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
-    RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
     DB_FILE = "neurocell_database.db"
 
 config = Config()
 
 # ---------------------
-# Utility functions
+# Utility
 # ---------------------
 def compute_content_hash(text: str) -> str:
     return hashlib.md5(text.encode('utf-8')).hexdigest()
@@ -58,7 +57,7 @@ def current_timestamp() -> str:
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 # ---------------------
-# Database management
+# Database
 # ---------------------
 class NeuroCellDB:
     def __init__(self, db_path=config.DB_FILE):
@@ -75,11 +74,7 @@ class NeuroCellDB:
             authors TEXT,
             publication_date TEXT,
             journal TEXT,
-            volume TEXT,
-            issue TEXT,
-            pages TEXT,
             doi TEXT,
-            keywords TEXT,
             url TEXT,
             is_new INTEGER,
             content_hash TEXT,
@@ -87,37 +82,25 @@ class NeuroCellDB:
         );
         """)
         self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS scholar_articles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        CREATE TABLE IF NOT EXISTS clinical_trials (
+            nct_id TEXT PRIMARY KEY,
             title TEXT,
-            abstract TEXT,
-            authors TEXT,
-            publication_date TEXT,
-            journal TEXT,
+            status TEXT,
+            conditions TEXT,
+            interventions TEXT,
+            start_date TEXT,
+            completion_date TEXT,
             url TEXT,
             is_new INTEGER,
             content_hash TEXT,
             first_seen TEXT
-        );
-        """)
-        self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS consolidated_articles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            abstract TEXT,
-            authors TEXT,
-            publication_date TEXT,
-            journal TEXT,
-            source TEXT,
-            url TEXT,
-            content_hash TEXT
         );
         """)
         self.conn.commit()
 
     def mark_all_old(self):
         self.cursor.execute("UPDATE pubmed_articles SET is_new=0;")
-        self.cursor.execute("UPDATE scholar_articles SET is_new=0;")
+        self.cursor.execute("UPDATE clinical_trials SET is_new=0;")
         self.conn.commit()
 
     def upsert_pubmed_article(self, article):
@@ -128,70 +111,56 @@ class NeuroCellDB:
         if not row:
             self.cursor.execute("""
                 INSERT INTO pubmed_articles
-                (pmid, title, abstract, authors, publication_date, journal, volume, issue, pages, doi, keywords, url, is_new, content_hash, first_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);
+                (pmid, title, abstract, authors, publication_date, journal, doi, url, is_new, content_hash, first_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);
             """, (
-                article['pmid'], article['title'], article['abstract'], article['authors'], article['publication_date'], article['journal'],
-                article['volume'], article['issue'], article['pages'], article['doi'], ",".join(article.get('keywords', [])),
-                article['url'], hash_val, now
+                article['pmid'], article['title'], article['abstract'], article['authors'], article['publication_date'],
+                article['journal'], article['doi'], article['url'], hash_val, now
             ))
             logger.info(f"Added NEW PubMed article: {article['pmid']}")
         else:
             if row[1] != hash_val:
                 self.cursor.execute("""
-                    UPDATE pubmed_articles SET title=?, abstract=?, authors=?, publication_date=?, journal=?, volume=?, issue=?, pages=?, doi=?, keywords=?, url=?, is_new=1, content_hash=? WHERE pmid=?;
+                    UPDATE pubmed_articles
+                    SET title=?, abstract=?, authors=?, publication_date=?, journal=?, doi=?, url=?, is_new=1, content_hash=?
+                    WHERE pmid=?;
                 """, (
-                    article['title'], article['abstract'], article['authors'], article['publication_date'], article['journal'],
-                    article['volume'], article['issue'], article['pages'], article['doi'], ",".join(article.get('keywords', [])),
-                    article['url'], hash_val, article['pmid']
+                    article['title'], article['abstract'], article['authors'], article['publication_date'],
+                    article['journal'], article['doi'], article['url'], hash_val, article['pmid']
                 ))
-                logger.info(f"Updated & marked NEW PubMed article: {article['pmid']}")
+                logger.info(f"Updated PubMed article: {article['pmid']}")
             else:
                 self.cursor.execute("UPDATE pubmed_articles SET is_new=0 WHERE pmid=?;", (article['pmid'],))
         self.conn.commit()
 
-    def upsert_scholar_article(self, article):
-        hash_val = compute_content_hash(article['title'] + article['abstract'])
-        self.cursor.execute("SELECT id, content_hash FROM scholar_articles WHERE title=?", (article['title'],))
+    def upsert_clinical_trial(self, trial):
+        hash_val = compute_content_hash(trial['title'] + trial['status'])
+        self.cursor.execute("SELECT nct_id, content_hash FROM clinical_trials WHERE nct_id=?", (trial['nct_id'],))
         row = self.cursor.fetchone()
         now = current_timestamp()
         if not row:
             self.cursor.execute("""
-                INSERT INTO scholar_articles
-                (title, abstract, authors, publication_date, journal, url, is_new, content_hash, first_seen)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?);
-            """, (article['title'], article['abstract'], article['authors'], article['publication_date'],
-                  article['journal'], article['url'], hash_val, now))
-            logger.info(f"Added NEW Scholar article: {article['title']}")
+                INSERT INTO clinical_trials
+                (nct_id, title, status, conditions, interventions, start_date, completion_date, url, is_new, content_hash, first_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);
+            """, (
+                trial['nct_id'], trial['title'], trial['status'], trial['conditions'], trial['interventions'],
+                trial['start_date'], trial['completion_date'], trial['url'], hash_val, now
+            ))
+            logger.info(f"Added NEW Clinical Trial: {trial['nct_id']}")
         else:
             if row[1] != hash_val:
                 self.cursor.execute("""
-                    UPDATE scholar_articles SET abstract=?, authors=?, publication_date=?, journal=?, url=?, is_new=1, content_hash=? WHERE id=?;
-                """, (article['abstract'], article['authors'], article['publication_date'], article['journal'], article['url'], hash_val, row[0]))
-                logger.info(f"Updated & marked NEW Scholar article: {article['title']}")
+                    UPDATE clinical_trials
+                    SET title=?, status=?, conditions=?, interventions=?, start_date=?, completion_date=?, url=?, is_new=1, content_hash=?
+                    WHERE nct_id=?;
+                """, (
+                    trial['title'], trial['status'], trial['conditions'], trial['interventions'],
+                    trial['start_date'], trial['completion_date'], trial['url'], hash_val, trial['nct_id']
+                ))
+                logger.info(f"Updated Clinical Trial: {trial['nct_id']}")
             else:
-                self.cursor.execute("UPDATE scholar_articles SET is_new=0 WHERE id=?;", (row[0],))
-        self.conn.commit()
-
-    def consolidate_articles(self):
-        self.cursor.execute("DELETE FROM consolidated_articles;")
-        self.cursor.execute("SELECT title, abstract, authors, publication_date, journal, url FROM pubmed_articles;")
-        pubmed_articles = self.cursor.fetchall()
-        self.cursor.execute("SELECT title, abstract, authors, publication_date, journal, url FROM scholar_articles;")
-        scholar_articles = self.cursor.fetchall()
-        combined = pubmed_articles + scholar_articles
-        seen_hashes = set()
-        for art in combined:
-            text_hash = compute_content_hash(art[0] + (art[1] or ""))
-            if text_hash in seen_hashes:
-                continue
-            seen_hashes.add(text_hash)
-            source = "PubMed" if art in pubmed_articles else "Scholar"
-            self.cursor.execute("""
-                INSERT INTO consolidated_articles
-                (title, abstract, authors, publication_date, journal, source, url, content_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-            """, (*art, source, text_hash))
+                self.cursor.execute("UPDATE clinical_trials SET is_new=0 WHERE nct_id=?;", (trial['nct_id'],))
         self.conn.commit()
 
     def export_csv(self, table_name, filename, new_only=False):
@@ -207,13 +176,13 @@ class NeuroCellDB:
         self.conn.close()
 
 # ---------------------
-# PubMed fetcher
+# PubMed Fetcher
 # ---------------------
 class PubMedFetcher:
     def __init__(self, email: str):
         Entrez.email = email
 
-    def fetch_articles(self, term: str, max_records: int = 20, days_back: int = 30) -> List[Dict]:
+    def fetch_articles(self, term: str, max_records: int = 20, days_back: int = 7) -> List[Dict]:
         date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
         search_term = f'{term} AND ("{date_filter}"[Date - Publication] : "3000"[Date - Publication])'
         logger.info(f"Searching PubMed with term: {search_term}")
@@ -245,11 +214,7 @@ class PubMedFetcher:
                     "authors": authors,
                     "publication_date": pub_date,
                     "journal": journal,
-                    "volume": "",
-                    "issue": "",
-                    "pages": "",
                     "doi": "",
-                    "keywords": [],
                     "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
                 })
             return results
@@ -258,28 +223,38 @@ class PubMedFetcher:
             return []
 
 # ---------------------
-# Google Scholar fetcher
+# ClinicalTrials.gov Fetcher
 # ---------------------
-class ScholarFetcher:
-    def fetch_articles(self, term: str, max_records: int = 20) -> List[Dict]:
-        results = []
+class ClinicalTrialsFetcher:
+    def fetch_trials(self, term: str, max_records: int = 20) -> List[Dict]:
+        base_url = "https://clinicaltrials.gov/api/query/study_fields"
+        params = {
+            "expr": term,
+            "fields": "NCTId,BriefTitle,OverallStatus,Condition,InterventionName,StartDate,CompletionDate",
+            "min_rnk": 1,
+            "max_rnk": max_records,
+            "fmt": "json"
+        }
         try:
-            search_query = scholarly.search_pubs(term)
-            for i, pub in enumerate(search_query):
-                if i >= max_records:
-                    break
-                article = pub.fill()
+            response = requests.get(base_url, params=params, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            studies = data["StudyFieldsResponse"]["StudyFields"]
+            results = []
+            for s in studies:
                 results.append({
-                    "title": article.bib.get("title", ""),
-                    "abstract": article.bib.get("abstract", ""),
-                    "authors": ", ".join(article.bib.get("author", [])),
-                    "publication_date": article.bib.get("year", ""),
-                    "journal": article.bib.get("journal", ""),
-                    "url": article.bib.get("url", "")
+                    "nct_id": s["NCTId"][0] if s["NCTId"] else "",
+                    "title": s["BriefTitle"][0] if s["BriefTitle"] else "",
+                    "status": s["OverallStatus"][0] if s["OverallStatus"] else "",
+                    "conditions": ", ".join(s.get("Condition", [])),
+                    "interventions": ", ".join(s.get("InterventionName", [])),
+                    "start_date": s["StartDate"][0] if s["StartDate"] else "",
+                    "completion_date": s["CompletionDate"][0] if s["CompletionDate"] else "",
+                    "url": f"https://clinicaltrials.gov/study/{s['NCTId'][0]}" if s["NCTId"] else ""
                 })
             return results
         except Exception as e:
-            logger.error(f"Error fetching Scholar articles: {e}")
+            logger.error(f"Error fetching ClinicalTrials.gov: {e}")
             return []
 
 # ---------------------
@@ -310,37 +285,33 @@ def send_email(subject: str, body: str, attachments: List[str]):
         logger.error(f"Failed to send email: {e}")
 
 # ---------------------
-# Main execution
+# Main
 # ---------------------
 def main():
     db = NeuroCellDB()
     db.mark_all_old()
 
-    # Fetch PubMed
+    # PubMed
     pubmed_fetcher = PubMedFetcher(config.NCBI_EMAIL)
     pubmed_articles = pubmed_fetcher.fetch_articles(config.PUBMED_TERM, config.MAX_RECORDS)
     for article in pubmed_articles:
         db.upsert_pubmed_article(article)
 
-    # Fetch Google Scholar
-    scholar_fetcher = ScholarFetcher()
-    scholar_articles = scholar_fetcher.fetch_articles(config.SCHOLAR_TERM, config.MAX_RECORDS)
-    for article in scholar_articles:
-        db.upsert_scholar_article(article)
-
-    # Consolidate and remove duplicates
-    db.consolidate_articles()
+    # ClinicalTrials.gov
+    trials_fetcher = ClinicalTrialsFetcher()
+    trials = trials_fetcher.fetch_trials(config.TRIALS_TERM, config.MAX_RECORDS)
+    for trial in trials:
+        db.upsert_clinical_trial(trial)
 
     # Export CSVs
-    pubmed_csv = db.export_csv("pubmed_articles", "pubmed_articles.csv", new_only=True)
-    scholar_csv = db.export_csv("scholar_articles", "scholar_articles.csv", new_only=True)
-    consolidated_csv = db.export_csv("consolidated_articles", "consolidated_articles.csv")
+    pubmed_csv = db.export_csv("pubmed_articles", "new_pubmed_this_week.csv", new_only=True)
+    trials_csv = db.export_csv("clinical_trials", "new_trials_this_week.csv", new_only=True)
 
     # Send email
     send_email(
-        subject="NeuroCell Weekly Article Report",
-        body="Please find attached the latest PubMed and Scholar articles.",
-        attachments=[pubmed_csv, scholar_csv, consolidated_csv]
+        subject="NeuroCell Weekly Report",
+        body="Please find attached the latest PubMed articles and ClinicalTrials.gov studies.",
+        attachments=[pubmed_csv, trials_csv]
     )
 
     db.close()
