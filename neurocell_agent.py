@@ -1,320 +1,250 @@
 import os
-import time
-import hashlib
-import logging
 import sqlite3
-from datetime import datetime, timedelta
-from typing import List, Dict
-import pandas as pd
-import requests
 import smtplib
-from email.mime.text import MIMEText
+import logging
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from dotenv import load_dotenv
+
 from Bio import Entrez
+import requests
+import pandas as pd
 
-load_dotenv()
-
-# ---------------------
-# Logging configuration
-# ---------------------
+# ---------------------------------------------------
+# Logging
+# ---------------------------------------------------
 logging.basicConfig(
+    filename="neurocell_agent.log",
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('neurocell_agent.log'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
 
-# ---------------------
-# Configuration
-# ---------------------
-class Config:
-    NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-    SENDER_EMAIL = os.getenv("SENDER_EMAIL", "limor@nurexone.com")
-    RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "limor@nurexone.com")
-    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
-    EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-    PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
-    TRIALS_TERM = os.getenv("TRIALS_TERM", "exosomes CNS")
-    MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
-    DB_FILE = "neurocell_database.db"
+# ---------------------------------------------------
+# Environment variables
+# ---------------------------------------------------
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+NCBI_EMAIL = os.getenv("NCBI_EMAIL")
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
+MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
 
-config = Config()
+DB_FILE = "neurocell_database.db"
 
-# ---------------------
-# Utility
-# ---------------------
-def compute_content_hash(text: str) -> str:
-    return hashlib.md5(text.encode('utf-8')).hexdigest()
+Entrez.email = NCBI_EMAIL
 
-def current_timestamp() -> str:
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+# ---------------------------------------------------
+# Database setup
+# ---------------------------------------------------
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
 
-# ---------------------
-# Database
-# ---------------------
-class NeuroCellDB:
-    def __init__(self, db_path=config.DB_FILE):
-        self.conn = sqlite3.connect(db_path)
-        self.cursor = self.conn.cursor()
-        self._create_tables()
-
-    def _create_tables(self):
-        self.cursor.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS pubmed_articles (
             pmid TEXT PRIMARY KEY,
             title TEXT,
             abstract TEXT,
-            authors TEXT,
-            publication_date TEXT,
             journal TEXT,
-            doi TEXT,
-            url TEXT,
-            is_new INTEGER,
-            content_hash TEXT,
-            first_seen TEXT
-        );
-        """)
-        self.cursor.execute("""
+            pub_date TEXT,
+            link TEXT,
+            retrieved_at TEXT
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS clinical_trials (
             nct_id TEXT PRIMARY KEY,
             title TEXT,
             status TEXT,
             conditions TEXT,
             interventions TEXT,
-            start_date TEXT,
-            completion_date TEXT,
-            url TEXT,
-            is_new INTEGER,
-            content_hash TEXT,
-            first_seen TEXT
-        );
-        """)
-        self.conn.commit()
+            last_update TEXT,
+            link TEXT,
+            retrieved_at TEXT
+        )
+    """)
 
-    def mark_all_old(self):
-        self.cursor.execute("UPDATE pubmed_articles SET is_new=0;")
-        self.cursor.execute("UPDATE clinical_trials SET is_new=0;")
-        self.conn.commit()
+    conn.commit()
+    conn.close()
 
-    def upsert_pubmed_article(self, article):
-        hash_val = compute_content_hash(article['title'] + article['abstract'])
-        self.cursor.execute("SELECT pmid, content_hash FROM pubmed_articles WHERE pmid=?", (article['pmid'],))
-        row = self.cursor.fetchone()
-        now = current_timestamp()
-        if not row:
-            self.cursor.execute("""
-                INSERT INTO pubmed_articles
-                (pmid, title, abstract, authors, publication_date, journal, doi, url, is_new, content_hash, first_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);
-            """, (
-                article['pmid'], article['title'], article['abstract'], article['authors'], article['publication_date'],
-                article['journal'], article['doi'], article['url'], hash_val, now
-            ))
-            logger.info(f"Added NEW PubMed article: {article['pmid']}")
-        else:
-            if row[1] != hash_val:
-                self.cursor.execute("""
-                    UPDATE pubmed_articles
-                    SET title=?, abstract=?, authors=?, publication_date=?, journal=?, doi=?, url=?, is_new=1, content_hash=?
-                    WHERE pmid=?;
-                """, (
-                    article['title'], article['abstract'], article['authors'], article['publication_date'],
-                    article['journal'], article['doi'], article['url'], hash_val, article['pmid']
-                ))
-                logger.info(f"Updated PubMed article: {article['pmid']}")
-            else:
-                self.cursor.execute("UPDATE pubmed_articles SET is_new=0 WHERE pmid=?;", (article['pmid'],))
-        self.conn.commit()
+# ---------------------------------------------------
+# PubMed fetch
+# ---------------------------------------------------
+def fetch_pubmed(term, days_back=7, max_records=50):
+    logging.info("Fetching PubMed articles...")
+    since_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
 
-    def upsert_clinical_trial(self, trial):
-        hash_val = compute_content_hash(trial['title'] + trial['status'])
-        self.cursor.execute("SELECT nct_id, content_hash FROM clinical_trials WHERE nct_id=?", (trial['nct_id'],))
-        row = self.cursor.fetchone()
-        now = current_timestamp()
-        if not row:
-            self.cursor.execute("""
-                INSERT INTO clinical_trials
-                (nct_id, title, status, conditions, interventions, start_date, completion_date, url, is_new, content_hash, first_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);
-            """, (
-                trial['nct_id'], trial['title'], trial['status'], trial['conditions'], trial['interventions'],
-                trial['start_date'], trial['completion_date'], trial['url'], hash_val, now
-            ))
-            logger.info(f"Added NEW Clinical Trial: {trial['nct_id']}")
-        else:
-            if row[1] != hash_val:
-                self.cursor.execute("""
-                    UPDATE clinical_trials
-                    SET title=?, status=?, conditions=?, interventions=?, start_date=?, completion_date=?, url=?, is_new=1, content_hash=?
-                    WHERE nct_id=?;
-                """, (
-                    trial['title'], trial['status'], trial['conditions'], trial['interventions'],
-                    trial['start_date'], trial['completion_date'], trial['url'], hash_val, trial['nct_id']
-                ))
-                logger.info(f"Updated Clinical Trial: {trial['nct_id']}")
-            else:
-                self.cursor.execute("UPDATE clinical_trials SET is_new=0 WHERE nct_id=?;", (trial['nct_id'],))
-        self.conn.commit()
+    handle = Entrez.esearch(db="pubmed", term=term, retmax=max_records, mindate=since_date, datetype="pdat")
+    record = Entrez.read(handle)
+    handle.close()
 
-    def export_csv(self, table_name, filename, new_only=False):
-        query = f"SELECT * FROM {table_name}"
-        if new_only:
-            query += " WHERE is_new=1"
-        df = pd.read_sql_query(query, self.conn)
-        df.to_csv(filename, index=False)
-        logger.info(f"Exported data from {table_name} to {filename}")
-        return filename
+    ids = record.get("IdList", [])
+    articles = []
 
-    def close(self):
-        self.conn.close()
+    if not ids:
+        logging.info("No PubMed results found.")
+        return []
 
-# ---------------------
-# PubMed Fetcher
-# ---------------------
-class PubMedFetcher:
-    def __init__(self, email: str):
-        Entrez.email = email
+    handle = Entrez.efetch(db="pubmed", id=",".join(ids), rettype="medline", retmode="xml")
+    records = Entrez.read(handle)
+    handle.close()
 
-    def fetch_articles(self, term: str, max_records: int = 20, days_back: int = 7) -> List[Dict]:
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
-        search_term = f'{term} AND ("{date_filter}"[Date - Publication] : "3000"[Date - Publication])'
-        logger.info(f"Searching PubMed with term: {search_term}")
+    for r in records["PubmedArticle"]:
+        pmid = r["MedlineCitation"]["PMID"]
+        title = r["MedlineCitation"]["Article"]["ArticleTitle"]
+        abstract = r["MedlineCitation"]["Article"].get("Abstract", {}).get("AbstractText", [""])[0]
+        journal = r["MedlineCitation"]["Article"]["Journal"]["Title"]
+        pub_date = r["MedlineCitation"]["Article"]["Journal"]["JournalIssue"]["PubDate"].get("Year", "")
+        link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+
+        articles.append((pmid, title, abstract, journal, pub_date, link, datetime.now().isoformat()))
+
+    return articles
+
+# ---------------------------------------------------
+# ClinicalTrials.gov fetch
+# ---------------------------------------------------
+def fetch_clinical_trials(term, days_back=7, max_records=50):
+    logging.info("Fetching ClinicalTrials.gov studies...")
+    base_url = "https://clinicaltrials.gov/api/query/study_fields"
+    since_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
+    params = {
+        "expr": term,
+        "fields": "NCTId,BriefTitle,OverallStatus,Condition,Intervention,LastUpdatePostDate",
+        "min_rnk": 1,
+        "max_rnk": max_records,
+        "fmt": "json"
+    }
+
+    response = requests.get(base_url, params=params)
+    if response.status_code != 200:
+        logging.error(f"ClinicalTrials.gov API error: {response.text}")
+        return []
+
+    studies = response.json().get("StudyFieldsResponse", {}).get("StudyFields", [])
+    results = []
+
+    for s in studies:
+        nct_id = s.get("NCTId", [""])[0]
+        title = s.get("BriefTitle", [""])[0]
+        status = s.get("OverallStatus", [""])[0]
+        conditions = "; ".join(s.get("Condition", []))
+        interventions = "; ".join(s.get("Intervention", []))
+        last_update = s.get("LastUpdatePostDate", [""])[0]
+        link = f"https://clinicaltrials.gov/study/{nct_id}"
+
+        # filter by last update date
         try:
-            handle = Entrez.esearch(db="pubmed", term=search_term, retmax=max_records)
-            record = Entrez.read(handle)
-            handle.close()
-            ids = record.get("IdList", [])
-            if not ids:
-                return []
-            handle = Entrez.efetch(db="pubmed", id=",".join(ids), rettype="xml")
-            articles = Entrez.read(handle).get("PubmedArticle", [])
-            handle.close()
-            results = []
-            for art in articles:
-                pmid = art['MedlineCitation']['PMID']
-                article_data = art['MedlineCitation']['Article']
-                title = article_data.get("ArticleTitle", "")
-                abstract_list = article_data.get("Abstract", {}).get("AbstractText", [])
-                abstract = " ".join(abstract_list) if isinstance(abstract_list, list) else str(abstract_list)
-                authors_list = article_data.get("AuthorList", [])
-                authors = ", ".join([f"{a.get('LastName','')} {a.get('ForeName','')}".strip() for a in authors_list])
-                journal = article_data.get("Journal", {}).get("Title", "")
-                pub_date = article_data.get("Journal", {}).get("JournalIssue", {}).get("PubDate", {}).get("Year", "")
-                results.append({
-                    "pmid": pmid,
-                    "title": title,
-                    "abstract": abstract,
-                    "authors": authors,
-                    "publication_date": pub_date,
-                    "journal": journal,
-                    "doi": "",
-                    "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                })
-            return results
-        except Exception as e:
-            logger.error(f"Error fetching PubMed articles: {e}")
-            return []
+            if last_update and last_update >= since_date:
+                results.append((nct_id, title, status, conditions, interventions, last_update, link, datetime.now().isoformat()))
+        except Exception:
+            pass
 
-# ---------------------
-# ClinicalTrials.gov Fetcher
-# ---------------------
-class ClinicalTrialsFetcher:
-    def fetch_trials(self, term: str, max_records: int = 20) -> List[Dict]:
-        base_url = "https://clinicaltrials.gov/api/query/study_fields"
-        params = {
-            "expr": term,
-            "fields": "NCTId,BriefTitle,OverallStatus,Condition,InterventionName,StartDate,CompletionDate",
-            "min_rnk": 1,
-            "max_rnk": max_records,
-            "fmt": "json"
-        }
-        try:
-            response = requests.get(base_url, params=params, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-            studies = data["StudyFieldsResponse"]["StudyFields"]
-            results = []
-            for s in studies:
-                results.append({
-                    "nct_id": s["NCTId"][0] if s["NCTId"] else "",
-                    "title": s["BriefTitle"][0] if s["BriefTitle"] else "",
-                    "status": s["OverallStatus"][0] if s["OverallStatus"] else "",
-                    "conditions": ", ".join(s.get("Condition", [])),
-                    "interventions": ", ".join(s.get("InterventionName", [])),
-                    "start_date": s["StartDate"][0] if s["StartDate"] else "",
-                    "completion_date": s["CompletionDate"][0] if s["CompletionDate"] else "",
-                    "url": f"https://clinicaltrials.gov/study/{s['NCTId'][0]}" if s["NCTId"] else ""
-                })
-            return results
-        except Exception as e:
-            logger.error(f"Error fetching ClinicalTrials.gov: {e}")
-            return []
+    return results
 
-# ---------------------
-# Email reporting
-# ---------------------
-def send_email(subject: str, body: str, attachments: List[str]):
+# ---------------------------------------------------
+# Save to DB & detect new
+# ---------------------------------------------------
+def save_and_detect_new(data, table, key_field):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    new_records = []
+
+    for row in data:
+        key = row[0]
+        cursor.execute(f"SELECT 1 FROM {table} WHERE {key_field}=?", (key,))
+        if cursor.fetchone() is None:
+            cursor.execute(f"INSERT INTO {table} VALUES ({','.join(['?']*len(row))})", row)
+            new_records.append(row)
+
+    conn.commit()
+    conn.close()
+    return new_records
+
+# ---------------------------------------------------
+# Send email
+# ---------------------------------------------------
+def send_email(new_pubmed, new_trials, stats):
     msg = MIMEMultipart()
-    msg['From'] = config.SENDER_EMAIL
-    msg['To'] = config.RECIPIENT_EMAIL
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = RECIPIENT_EMAIL
+    msg["Subject"] = "Weekly NeuroCell Agent Report"
 
-    for file in attachments:
-        part = MIMEBase('application', 'octet-stream')
-        with open(file, 'rb') as f:
-            part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f"attachment; filename= {os.path.basename(file)}")
-        msg.attach(part)
+    body = f"""
+    Weekly NeuroCell Agent Report
 
-    try:
-        server = smtplib.SMTP_SSL(config.SMTP_SERVER, config.SMTP_PORT)
-        server.login(config.SENDER_EMAIL, config.EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        logger.info("Email sent successfully")
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
+    PubMed:
+    - Total in DB: {stats['pubmed_total']}
+    - New this week: {stats['pubmed_new']}
 
-# ---------------------
+    ClinicalTrials.gov:
+    - Total in DB: {stats['trials_total']}
+    - New this week: {stats['trials_new']}
+
+    See attached CSVs for details (only if new results).
+    """
+    msg.attach(MIMEText(body, "plain"))
+
+    # attach CSVs if new
+    if new_pubmed:
+        df_pubmed = pd.DataFrame(new_pubmed, columns=["PMID", "Title", "Abstract", "Journal", "PubDate", "Link", "RetrievedAt"])
+        df_pubmed.to_csv("new_pubmed_this_week.csv", index=False)
+        attach_file(msg, "new_pubmed_this_week.csv")
+
+    if new_trials:
+        df_trials = pd.DataFrame(new_trials, columns=["NCTId", "Title", "Status", "Conditions", "Interventions", "LastUpdate", "Link", "RetrievedAt"])
+        df_trials.to_csv("new_trials_this_week.csv", index=False)
+        attach_file(msg, "new_trials_this_week.csv")
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(SENDER_EMAIL, EMAIL_PASSWORD)
+        server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL.split(","), msg.as_string())
+
+def attach_file(msg, filepath):
+    with open(filepath, "rb") as f:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(f.read())
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(filepath)}")
+    msg.attach(part)
+
+# ---------------------------------------------------
 # Main
-# ---------------------
+# ---------------------------------------------------
 def main():
-    db = NeuroCellDB()
-    db.mark_all_old()
+    init_db()
 
     # PubMed
-    pubmed_fetcher = PubMedFetcher(config.NCBI_EMAIL)
-    pubmed_articles = pubmed_fetcher.fetch_articles(config.PUBMED_TERM, config.MAX_RECORDS)
-    for article in pubmed_articles:
-        db.upsert_pubmed_article(article)
+    pubmed_results = fetch_pubmed(PUBMED_TERM, days_back=7, max_records=MAX_RECORDS)
+    new_pubmed = save_and_detect_new(pubmed_results, "pubmed_articles", "pmid")
 
-    # ClinicalTrials.gov
-    trials_fetcher = ClinicalTrialsFetcher()
-    trials = trials_fetcher.fetch_trials(config.TRIALS_TERM, config.MAX_RECORDS)
-    for trial in trials:
-        db.upsert_clinical_trial(trial)
+    # ClinicalTrials
+    trials_results = fetch_clinical_trials(PUBMED_TERM, days_back=7, max_records=MAX_RECORDS)
+    new_trials = save_and_detect_new(trials_results, "clinical_trials", "nct_id")
 
-    # Export CSVs
-    pubmed_csv = db.export_csv("pubmed_articles", "new_pubmed_this_week.csv", new_only=True)
-    trials_csv = db.export_csv("clinical_trials", "new_trials_this_week.csv", new_only=True)
+    # Stats
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM pubmed_articles")
+    pubmed_total = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM clinical_trials")
+    trials_total = cursor.fetchone()[0]
+    conn.close()
 
-    # Send email
-    send_email(
-        subject="NeuroCell Weekly Report",
-        body="Please find attached the latest PubMed articles and ClinicalTrials.gov studies.",
-        attachments=[pubmed_csv, trials_csv]
-    )
+    stats = {
+        "pubmed_total": pubmed_total,
+        "pubmed_new": len(new_pubmed),
+        "trials_total": trials_total,
+        "trials_new": len(new_trials)
+    }
 
-    db.close()
+    logging.info(f"Run completed. Stats: {stats}")
+    send_email(new_pubmed, new_trials, stats)
+
 
 if __name__ == "__main__":
     main()
