@@ -110,14 +110,14 @@ def fetch_pubmed(term, days_back=7, max_records=50):
 def fetch_clinical_trials(term, days_back=7, max_records=50):
     logging.info("Fetching ClinicalTrials.gov studies...")
     base_url = "https://clinicaltrials.gov/api/query/study_fields"
-    since_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
     params = {
         "expr": term,
         "fields": "NCTId,BriefTitle,OverallStatus,Condition,Intervention,LastUpdatePostDate",
         "min_rnk": 1,
         "max_rnk": max_records,
-        "fmt": "json"
+        "fmt": "json",
+        "received_in_last": days_back   # ✅ this is what was missing
     }
 
     response = requests.get(base_url, params=params)
@@ -137,13 +137,9 @@ def fetch_clinical_trials(term, days_back=7, max_records=50):
         last_update = s.get("LastUpdatePostDate", [""])[0]
         link = f"https://clinicaltrials.gov/study/{nct_id}"
 
-        # filter by last update date
-        try:
-            if last_update and last_update >= since_date:
-                results.append((nct_id, title, status, conditions, interventions, last_update, link, datetime.now().isoformat()))
-        except Exception:
-            pass
+        results.append((nct_id, title, status, conditions, interventions, last_update, link, datetime.now().isoformat()))
 
+    logging.info(f"Fetched {len(results)} trials from ClinicalTrials.gov")
     return results
 
 # ---------------------------------------------------
