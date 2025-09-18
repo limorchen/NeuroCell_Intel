@@ -30,13 +30,13 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer, util
 import torch
 
-# Load .env if present
-load_dotenv()
+# Load .env_semantic file for manual local runs
+load_dotenv(".env_semantic")
 
 # -------------------------
 # Configuration
 # -------------------------
-DB_FILE = os.getenv("DB_FILE", "neurocell_database.db")
+DB_FILE = os.getenv("DB_FILE", "neurocell_database_semantic.db") # NEW DB FILE NAME
 
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
@@ -60,17 +60,17 @@ SEMANTIC_SEARCH_TERMS = os.getenv(
     "exosomes and nervous system, extracellular vesicles for CNS regeneration"
 ).split(',')
 
-MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
+MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 7))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.34))
 SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.5))
 
 Entrez.email = NCBI_EMAIL
 
-PUBMED_WEEKLY_CSV = "new_pubmed_this_week.csv"
-TRIALS_WEEKLY_CSV = "new_trials_this_week.csv"
-PUBMED_FULL_CSV = "all_pubmed_database.csv"
-TRIALS_FULL_CSV = "all_trials_database.csv"
+PUBMED_WEEKLY_CSV = "new_pubmed_semantic_this_week.csv"
+TRIALS_WEEKLY_CSV = "new_trials_semantic_this_week.csv"
+PUBMED_FULL_CSV = "all_pubmed_semantic_database.csv"
+TRIALS_FULL_CSV = "all_trials_semantic_database.csv"
 
 # -------------------------
 # Logging
@@ -78,7 +78,7 @@ TRIALS_FULL_CSV = "all_trials_database.csv"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("neurocell_agent.log"), logging.StreamHandler()]
+    handlers=[logging.FileHandler("neurocell_agent_semantic.log"), logging.StreamHandler()]
 )
 logger = logging.getLogger("neurocell_agent")
 
@@ -556,7 +556,7 @@ def weekly_update():
     send_email(new_pubmed, new_trials, stats, PUBMED_TERM, CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION)
 
 # -------------------------
-# Entry point
+# Entry point for manual execution
 # -------------------------
 if __name__ == "__main__":
     weekly_update()
