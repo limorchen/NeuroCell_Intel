@@ -3,4 +3,4 @@ requests
 python-dotenv
 sentence-transformers
 faiss-cpu
-faiss-cpu
+
