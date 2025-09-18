@@ -393,59 +393,50 @@ def export_full_csvs(db: str = DB_FILE):
 # -------------------------
 # Email function
 # -------------------------
-def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]], stats: Dict[str,int], pubmed_term: str, trials_term: str) -> bool:
+def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,int]], stats: Dict[str,int], pubmed_term: str, trials_term: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
         logger.error("Email credentials missing - skipping email send")
         return False
-
     recipients = [r.strip() for r in RECIPIENT_EMAIL.split(",")]
-
     msg = MIMEMultipart("mixed")
     msg["From"] = SENDER_EMAIL
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
-
     html = f"<h2>NeuroCell Intelligence Report</h2>"
     html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
     html += f"<p><b>ClinicalTrials search term:</b> {trials_term}</p>"
     html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
     html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
-
     if new_pubmed:
         html += "<ul>"
         for a in new_pubmed:
-             html += f"<li><a href='{a['url']}'>{a['title']}</a></li>"
+            html += f"<li><a href='{a['url']}'>{a['title']}</a></li>"
         html += "</ul>"
-
-    html += f"<p>New ClinicalTrials this week: {stats.get('new_trials', 0)}</p>"
     if new_trials:
         html += "<ul>"
         for t in new_trials:
             html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t.get('status','')})</li>"
         html += "</ul>"
-
     part1 = MIMEText(html, "html")
     msg.attach(part1)
-
     try:
-    attachments = [PUBMED_WEEKLY_CSV, TRIALS_WEEKLY_CSV, PUBMED_FULL_CSV, TRIALS_FULL_CSV]
-    for fname in attachments:
-        if os.path.exists(fname):
-            with open(fname, "rb") as f:
-                part = MIMEBase("application", "octet-stream")
-                part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(fname)}")
-            msg.attach(part)
-    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-        server.login(SENDER_EMAIL, EMAIL_PASSWORD)
-        server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
-    logger.info("Email sent successfully")
-    return True
-except Exception as e:
-    logger.exception("Failed to send email")
-    return False
-
+        attachments = [PUBMED_WEEKLY_CSV, TRIALS_WEEKLY_CSV, PUBMED_FULL_CSV, TRIALS_FULL_CSV]
+        for fname in attachments:
+            if os.path.exists(fname):
+                with open(fname, "rb") as f:
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(fname)}")
+                msg.attach(part)
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(SENDER_EMAIL, EMAIL_PASSWORD)
+            server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
+        logger.info("Email sent successfully")
+        return True
+    except Exception as e:
+        logger.exception("Failed to send email")
+        return False
 
 # -------------------------
 # Main weekly update
