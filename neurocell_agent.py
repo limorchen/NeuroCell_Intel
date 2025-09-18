@@ -428,14 +428,24 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     msg.attach(part1)
 
     try:
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-            server.login(SENDER_EMAIL, EMAIL_PASSWORD)
-            server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
-        logger.info("Email sent successfully")
-        return True
-    except Exception as e:
-        logger.exception("Failed to send email")
-        return False
+    attachments = [PUBMED_WEEKLY_CSV, TRIALS_WEEKLY_CSV, PUBMED_FULL_CSV, TRIALS_FULL_CSV]
+    for fname in attachments:
+        if os.path.exists(fname):
+            with open(fname, "rb") as f:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(fname)}")
+            msg.attach(part)
+    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+        server.login(SENDER_EMAIL, EMAIL_PASSWORD)
+        server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
+    logger.info("Email sent successfully")
+    return True
+except Exception as e:
+    logger.exception("Failed to send email")
+    return False
+
 
 # -------------------------
 # Main weekly update
