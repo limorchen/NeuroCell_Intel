@@ -3,6 +3,7 @@ import requests
 import sqlite3
 import smtplib
 import time
+import csv
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -88,14 +89,11 @@ def fetch_pubmed(term, days_back=7, max_records=20):
 # ---------------------------
 # ClinicalTrials.gov fetching
 # ---------------------------
-def fetch_clinical_trials(term, days_back=7, max_records=20):
+def fetch_clinical_trials(term, max_records=20):
     base_url = "https://clinicaltrials.gov/api/v2/studies"
-    today = datetime.today()
-    start_date = (today - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
     params = {
         "query.term": term,
-        "filter.overallStatus": "Recruiting,Active,Enrolling by invitation",
         "pageSize": max_records,
         "sort": "StudyFirstPostDate desc",
     }
@@ -117,9 +115,9 @@ def fetch_clinical_trials(term, days_back=7, max_records=20):
 
 
 # ---------------------------
-# DB Save and detection
+# DB Save and detection + CSV
 # ---------------------------
-def save_and_detect_new(entries, table, id_field):
+def save_and_detect_new(entries, table, id_field, csv_file):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     new_entries = []
@@ -134,7 +132,20 @@ def save_and_detect_new(entries, table, id_field):
             pass  # already exists
     conn.commit()
     conn.close()
+
+    if new_entries:
+        write_to_csv(new_entries, csv_file, id_field)
+
     return new_entries
+
+
+def write_to_csv(entries, csv_file, id_field):
+    file_exists = os.path.isfile(csv_file)
+    with open(csv_file, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=[id_field, "title", "url", "date"])
+        if not file_exists:
+            writer.writeheader()
+        writer.writerows(entries)
 
 
 # ---------------------------
@@ -193,10 +204,10 @@ def main():
     init_db()
 
     pubmed_results = fetch_pubmed(PUBMED_TERM, days_back=DAYS_BACK, max_records=MAX_RECORDS)
-    new_pubmed = save_and_detect_new(pubmed_results, "pubmed_articles", "pmid")
+    new_pubmed = save_and_detect_new(pubmed_results, "pubmed_articles", "pmid", "pubmed_articles.csv")
 
-    trials_results = fetch_clinical_trials(CLINICALTRIALS_TERM, days_back=DAYS_BACK, max_records=MAX_RECORDS)
-    new_trials = save_and_detect_new(trials_results, "clinical_trials", "nct_id")
+    trials_results = fetch_clinical_trials(CLINICALTRIALS_TERM, max_records=MAX_RECORDS)
+    new_trials = save_and_detect_new(trials_results, "clinical_trials", "nct_id", "clinical_trials.csv")
 
     stats = get_stats()
     send_email(new_pubmed, new_trials, stats)
