@@ -1,0 +1,5 @@
+biopython
+requests
+python-dotenv
+sentence-transformers
+faiss-cpu
