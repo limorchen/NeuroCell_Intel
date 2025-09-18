@@ -25,20 +25,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Create .env file for secrets
+    - name: Create .env file from secrets
       run: |
-        touch .env
-        echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
-        echo "RECIPIENT_EMAIL=${{ secrets.RECIPIENT_EMAIL }}" >> .env
-        echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
-        echo "NCBI_EMAIL=${{ secrets.NCBI_EMAIL }}" >> .env
-        echo "PUBMED_TERM=${{ secrets.PUBMED_TERM }}" >> .env
-        echo "CLINICALTRIALS_INTERVENTION=${{ secrets.CLINICALTRIALS_INTERVENTION }}" >> .env
-        echo "CLINICALTRIALS_CONDITION=${{ secrets.CLINICALTRIALS_CONDITION }}" >> .env
-        echo "SEMANTIC_SEARCH_TERMS=${{ secrets.SEMANTIC_SEARCH_TERMS }}" >> .env
-        echo "MAX_RECORDS=50" >> .env
-        echo "DAYS_BACK=7" >> .env
-        echo "SEMANTIC_THRESHOLD=0.5" >> .env
+        cat <<EOF >> .env
+        SENDER_EMAIL="${{ secrets.SENDER_EMAIL }}"
+        RECIPIENT_EMAIL="${{ secrets.RECIPIENT_EMAIL }}"
+        EMAIL_PASSWORD="${{ secrets.EMAIL_PASSWORD }}"
+        NCBI_EMAIL="${{ secrets.NCBI_EMAIL }}"
+        PUBMED_TERM="${{ secrets.PUBMED_TERM }}"
+        CLINICALTRIALS_INTERVENTION="${{ secrets.CLINICALTRIALS_INTERVENTION }}"
+        CLINICALTRIALS_CONDITION="${{ secrets.CLINICALTRIALS_CONDITION }}"
+        SEMANTIC_SEARCH_TERMS="${{ secrets.SEMANTIC_SEARCH_TERMS }}"
+        MAX_RECORDS=50
+        DAYS_BACK=7
+        SEMANTIC_THRESHOLD=0.5
+        EOF
         
     - name: Run Python script
       run: python neurocell_agent_semantic.py
