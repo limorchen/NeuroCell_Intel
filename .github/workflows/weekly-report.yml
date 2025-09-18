@@ -36,8 +36,8 @@ jobs:
         CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
         SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
         MAX_RECORDS: 50
-         DAYS_BACK: 7
-         SEMANTIC_THRESHOLD: 0.5
+        DAYS_BACK: 7
+        SEMANTIC_THRESHOLD: 0.5
       run: python neurocell_agent_semantic.py
       
     - name: Upload Report Artifacts
