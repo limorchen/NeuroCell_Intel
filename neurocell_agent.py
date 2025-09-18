@@ -412,16 +412,16 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
 
     if new_pubmed:
-        html += "<h3>New PubMed articles:</h3><ul>"
-        for a in new_pubmed[:5]:
-            html += f"<li><a href='{a['url']}'>{a['title']}</a> ({a['publication_date']})</li>"
+        html += "<ul>"
+        for a in new_pubmed:
+             html += f"<li><a href='{a['url']}'>{a['title']}</a></li>"
         html += "</ul>"
 
+    html += f"<p>New ClinicalTrials this week: {stats.get('new_trials', 0)}</p>"
     if new_trials:
-        html += "<h3>New Clinical Trials:</h3><ul>"
-        for t in new_trials[:5]:
-            html += f"<li><a href
- html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t['status']})</li>"
+        html += "<ul>"
+        for t in new_trials:
+            html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t.get('status','')})</li>"
         html += "</ul>"
 
     part1 = MIMEText(html, "html")
