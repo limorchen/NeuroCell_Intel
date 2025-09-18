@@ -7,6 +7,8 @@ import csv
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
 # ---------------------------
 # Configuration
@@ -51,8 +53,6 @@ def init_db():
 def fetch_pubmed(term, days_back=7, max_records=20):
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
     today = datetime.today()
-    start_date = (today - timedelta(days=days_back)).strftime("%Y/%m/%d")
-    end_date = today.strftime("%Y/%m/%d")
 
     search_url = (
         f"{base_url}esearch.fcgi?db=pubmed&term={term}"
@@ -152,17 +152,21 @@ def write_to_csv(entries, csv_file, id_field):
 # Email
 # ---------------------------
 def send_email(new_pubmed, new_trials, stats):
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = "Weekly Scientific Alerts"
     msg["From"] = SENDER_EMAIL
     msg["To"] = RECIPIENT_EMAIL
 
+    body = MIMEMultipart("alternative")
     html = "<h2>Weekly Scientific Alerts</h2>"
 
     html += "<h3>Database Stats</h3><ul>"
     for k, v in stats.items():
         html += f"<li>{k}: {v}</li>"
     html += "</ul>"
+
+    if not new_pubmed and not new_trials:
+        html += "<p><b>No new PubMed or ClinicalTrials.gov results this week.</b></p>"
 
     if new_pubmed:
         html += "<h3>New PubMed Articles</h3><ul>"
@@ -176,7 +180,18 @@ def send_email(new_pubmed, new_trials, stats):
             html += f"<li><a href='{trial['url']}'>{trial['title']}</a> ({trial['date']})</li>"
         html += "</ul>"
 
-    msg.attach(MIMEText(html, "html"))
+    body.attach(MIMEText(html, "html"))
+    msg.attach(body)
+
+    # Attach CSVs
+    for file in ["pubmed_articles.csv", "clinical_trials.csv"]:
+        if os.path.exists(file):
+            with open(file, "rb") as f:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(file)}")
+                msg.attach(part)
 
     with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
         server.login(SENDER_EMAIL, EMAIL_PASSWORD)
