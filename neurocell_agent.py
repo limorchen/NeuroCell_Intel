@@ -40,9 +40,13 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
 PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
-CLINICALTRIALS_TERM = os.getenv(
-    "CLINICALTRIALS_TERM",
-    '(intervention_name:"exosomes" OR intervention_name:"extracellular vesicles") AND (condition:neurology OR condition:"neurologic" OR condition:"neurologic disorder")'
+CLINICALTRIALS_INTERVENTION = os.getenv(
+    "CLINICALTRIALS_INTERVENTION",
+    'exosomes OR "extracellular vesicles"'
+)
+CLINICALTRIALS_CONDITION = os.getenv(
+    "CLINICALTRIALS_CONDITION",
+    'neurology OR "neurologic disorder"'
 )
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 7))
@@ -200,71 +204,107 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
         return []
 
 # -------------------------
-# ClinicalTrials fetcher (last 7 days)
+# ClinicalTrials fetcher - UPDATED FOR V2.0 API
 # -------------------------
-def fetch_clinical_trials(term: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
-    logger.info(f"ClinicalTrials.gov search term: {term} | days_back={days_back} | max_records={max_records}")
-
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=days_back)
-    start_date_str = start_date.strftime("%Y-%m-%d")
-    end_date_str = end_date.strftime("%Y-%m-%d")
-
-    query = f'({term}) AND (firstreceived_date:[{start_date_str} TO {end_date_str}])'
-
-    url = "https://clinicaltrials.gov/api/v2/studies"
+def fetch_clinical_trials(
+    intervention: str,
+    condition: str,
+    days_back: int = DAYS_BACK,
+    max_records: int = MAX_RECORDS
+) -> List[Dict[str, Any]]:
+    """
+    Fetches clinical trials using the new ClinicalTrials.gov API (v2.0).
+    The search uses separate parameters for intervention and condition.
+    """
+    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}', condition='{condition}', days_back={days_back}")
+    
+    base_url = "https://clinicaltrials.gov/api/v2/studies"
+    search_results = []
+    page_token = None
+    
+    date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    
     params = {
-        "q": query,
-        "size": max_records,
-        "fields": "nct_id,title,brief_summary,overall_status,condition,intervention_name,phase,study_type,start_date,completion_date,sponsor,enrollment,minimum_age,maximum_age",
+        'query.intr': intervention,
+        'query.cond': condition,
+        'filter.lastUpdatePostDate': f'CURRENT | {date_cutoff}',
+        'pageSize': 100,
+        'format': 'json',
     }
 
-    try:
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        studies = data.get("studies", [])
-        logger.info(f"ClinicalTrials.gov API returned {len(studies)} studies")
+    while len(search_results) < max_records:
+        if page_token:
+            params['pageToken'] = page_token
+            
+        try:
+            response = requests.get(base_url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            studies = data.get('studies', [])
+            if not studies:
+                break
+                
+            for study in studies:
+                protocol_section = study.get('protocolSection', {})
+                results_section = study.get('resultsSection', {})
+                
+                nct_id = protocol_section.get('identificationModule', {}).get('nctId')
+                title = protocol_section.get('identificationModule', {}).get('briefTitle')
+                summary = protocol_section.get('descriptionModule', {}).get('briefSummary')
+                status = protocol_section.get('statusModule', {}).get('overallStatus')
+                study_type = protocol_section.get('designModule', {}).get('studyType')
+                start_date = protocol_section.get('statusModule', {}).get('startDateStruct', {}).get('date')
+                completion_date = protocol_section.get('statusModule', {}).get('completionDateStruct', {}).get('date')
+                
+                conditions_list = [c.get('name') for c in protocol_section.get('conditionsModule', {}).get('conditions', [])]
+                interventions_list = [i.get('name') for i in protocol_section.get('armsInterventionsModule', {}).get('interventions', [])]
+                phases_list = [p.get('phase') for p in protocol_section.get('designModule', {}).get('phases', [])]
+                
+                sponsor_name = protocol_section.get('sponsorCollaboratorsModule', {}).get('leadSponsor', {}).get('name')
+                
+                enrollment = protocol_section.get('designModule', {}).get('enrollmentInfo', {}).get('count')
+                
+                age_min = protocol_section.get('eligibilityModule', {}).get('minimumAge')
+                age_max = protocol_section.get('eligibilityModule', {}).get('maximumAge')
+                age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
+                
+                url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
+                spinal_hit = 1 if contains_spinal(title, summary) else 0
 
-        results = []
-        for s in studies:
-            nct = s.get("nct_id", "")
-            title = s.get("title", "")
-            status = s.get("overall_status", "")
-            conditions = s.get("condition", [])
-            interventions = s.get("intervention_name", [])
-            start_date = s.get("start_date", "")
-            completion_date = s.get("completion_date", "")
-            brief_summary = s.get("brief_summary", "")
-            phases = s.get("phase", [])
-            study_type = s.get("study_type", "")
-            sponsor = s.get("sponsor", "")
-            enrollment = s.get("enrollment", "")
-            age_range = f"{s.get('minimum_age','')} - {s.get('maximum_age','')}"
-            url_study = f"https://clinicaltrials.gov/study/{nct}" if nct else ""
-            spinal = 1 if contains_spinal(title, brief_summary) else 0
+                search_results.append({
+                    "nct_id": nct_id,
+                    "title": title,
+                    "detailed_description": summary,
+                    "conditions": conditions_list,
+                    "interventions": interventions_list,
+                    "phases": phases_list,
+                    "study_type": study_type,
+                    "status": status,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "sponsor": sponsor_name,
+                    "enrollment": enrollment,
+                    "age_range": age_range,
+                    "url": url_study,
+                    "spinal_hit": spinal_hit,
+                })
+                
+                if len(search_results) >= max_records:
+                    break
+            
+            page_token = data.get('nextPageToken')
+            if not page_token or len(search_results) >= max_records:
+                break
+            
+            time.sleep(RATE_LIMIT_DELAY)
 
-            results.append({
-                "nct_id": nct,
-                "title": title,
-                "detailed_description": brief_summary,
-                "conditions": conditions,
-                "interventions": interventions,
-                "phases": phases,
-                "study_type": study_type,
-                "status": status,
-                "start_date": start_date,
-                "completion_date": completion_date,
-                "sponsor": sponsor,
-                "enrollment": enrollment,
-                "age_range": age_range,
-                "url": url_study,
-                "spinal_hit": spinal
-            })
-        return results
-    except Exception as e:
-        logger.exception("ClinicalTrials.gov fetch error")
-        return []
+        except requests.RequestException as e:
+            logger.error(f"Error fetching data from ClinicalTrials.gov API: {e}")
+            break
+            
+    logger.info(f"Found and parsed {len(search_results)} new clinical trials.")
+    return search_results
 
 # -------------------------
 # DB upsert helpers
@@ -299,10 +339,10 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 (nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date, completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                t["nct_id"], t["title"], t["detailed_description"], ",".join(t.get("conditions", [])),
-                ",".join(t.get("interventions", [])), ",".join(t.get("phases", [])),
+                t["nct_id"], t["title"], t["detailed_description"], "; ".join(t.get("conditions", [])),
+                "; ".join(t.get("interventions", [])), "; ".join(t.get("phases", [])),
                 t.get("study_type", ""), t.get("status", ""), t.get("start_date", ""), t.get("completion_date", ""),
-                t.get("sponsor", ""), t.get("enrollment", ""), t.get("age_range", ""), t.get("url", ""), t.get("spinal_hit", 0), now_ts()
+                t.get("sponsor", ""), str(t.get("enrollment", "")), t.get("age_range", ""), t.get("url", ""), t.get("spinal_hit", 0), now_ts()
             ))
             new_items.append(t)
         except sqlite3.IntegrityError:
@@ -393,7 +433,7 @@ def export_full_csvs(db: str = DB_FILE):
 # -------------------------
 # Email function
 # -------------------------
-def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,int]], stats: Dict[str,int], pubmed_term: str, trials_term: str) -> bool:
+def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,int]], stats: Dict[str,int], pubmed_term: str, trials_intervention: str, trials_condition: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
         logger.error("Email credentials missing - skipping email send")
         return False
@@ -404,7 +444,7 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,int]],
     msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
     html = f"<h2>NeuroCell Intelligence Report</h2>"
     html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
-    html += f"<p><b>ClinicalTrials search term:</b> {trials_term}</p>"
+    html += f"<p><b>ClinicalTrials search terms:</b> {trials_intervention} (Intervention), {trials_condition} (Condition)</p>"
     html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
     html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
     if new_pubmed:
@@ -446,7 +486,7 @@ def weekly_update():
 
     # Fetch new data
     pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS, DAYS_BACK)
-    trials = fetch_clinical_trials(CLINICALTRIALS_TERM, DAYS_BACK, MAX_RECORDS)
+    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION, DAYS_BACK, MAX_RECORDS)
 
     # Upsert into DB and get new items
     new_pubmed = upsert_pubmed(DB_FILE, pubmed_articles)
@@ -461,7 +501,7 @@ def weekly_update():
 
     # Send summary email
     stats = {"new_pubmed": len(new_pubmed), "new_trials": len(new_trials)}
-    send_email(new_pubmed, new_trials, stats, PUBMED_TERM, CLINICALTRIALS_TERM)
+    send_email(new_pubmed, new_trials, stats, PUBMED_TERM, CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION)
 
 # -------------------------
 # Entry point
