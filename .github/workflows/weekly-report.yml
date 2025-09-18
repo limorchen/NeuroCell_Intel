@@ -2,10 +2,10 @@ name: Weekly Semantic Report
 
 on:
   schedule:
-    # Runs at 9:00 AM on Monday every week
+    # Runs at 9:00 AM UTC on Monday every week
     - cron: '0 9 * * 1'
   workflow_dispatch:
-    # Allows for manual triggering of the workflow
+    # This line enables the manual "Run workflow" button in the GitHub UI
 
 jobs:
   run_agent:
@@ -39,7 +39,6 @@ jobs:
         echo "MAX_RECORDS=50" >> .env
         echo "DAYS_BACK=7" >> .env
         echo "SEMANTIC_THRESHOLD=0.5" >> .env
-        # Other variables can be added here if needed
         
     - name: Run Python script
       run: python neurocell_agent_semantic.py
@@ -51,4 +50,4 @@ jobs:
         path: |
           *.csv
           *.db
-          neurocell_agent.log
+          neurocell_agent_semantic.log
