@@ -5,7 +5,7 @@ neurocell_agent.py
 Requirements (pip):
 - biopython
 - requests
-- python-dotenv (if using .env)
+- python-dotenv
 """
 
 import os
@@ -28,12 +28,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------------------
-# Configuration (env / defaults)
+# Configuration
 # -------------------------
 DB_FILE = os.getenv("DB_FILE", "neurocell_database.db")
 
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")  # comma-separated allowed
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
@@ -50,7 +50,6 @@ RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.34))
 
 Entrez.email = NCBI_EMAIL
 
-# CSV filenames
 PUBMED_WEEKLY_CSV = "new_pubmed_this_week.csv"
 TRIALS_WEEKLY_CSV = "new_trials_this_week.csv"
 PUBMED_FULL_CSV = "all_pubmed_database.csv"
@@ -73,7 +72,6 @@ def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def contains_spinal(*texts: List[str]) -> bool:
-    """Case-insensitive check for the word 'spinal' in any provided text."""
     for t in texts:
         if not t:
             continue
@@ -82,7 +80,7 @@ def contains_spinal(*texts: List[str]) -> bool:
     return False
 
 # -------------------------
-# Initialize DB (tables)
+# DB init
 # -------------------------
 def init_db(path: str = DB_FILE):
     conn = sqlite3.connect(path)
@@ -125,7 +123,7 @@ def init_db(path: str = DB_FILE):
     conn.close()
 
 # -------------------------
-# PubMed fetcher (Entrez)
+# PubMed fetcher
 # -------------------------
 def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
     logger.info(f"PubMed search term: {term} | days_back={days_back} | retmax={max_records}")
@@ -202,9 +200,9 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
         return []
 
 # -------------------------
-# ClinicalTrials.gov v2 fetcher (added past 7 days)
+# ClinicalTrials fetcher (last 7 days)
 # -------------------------
-def fetch_clinical_trials_v2(term: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
+def fetch_clinical_trials(term: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
     logger.info(f"ClinicalTrials.gov search term: {term} | days_back={days_back} | max_records={max_records}")
 
     end_date = datetime.today()
@@ -212,7 +210,6 @@ def fetch_clinical_trials_v2(term: str, days_back: int = DAYS_BACK, max_records:
     start_date_str = start_date.strftime("%Y-%m-%d")
     end_date_str = end_date.strftime("%Y-%m-%d")
 
-    # Filter trials first received in last `days_back` days
     query = f'({term}) AND (firstreceived_date:[{start_date_str} TO {end_date_str}])'
 
     url = "https://clinicaltrials.gov/api/v2/studies"
@@ -270,7 +267,7 @@ def fetch_clinical_trials_v2(term: str, days_back: int = DAYS_BACK, max_records:
         return []
 
 # -------------------------
-# DB upsert & CSV helpers
+# DB upsert helpers
 # -------------------------
 def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     conn = sqlite3.connect(db)
@@ -315,12 +312,14 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     logger.info(f"DB upsert_trials: inserted {len(new_items)} new")
     return new_items
 
+# -------------------------
+# CSV helpers
+# -------------------------
 def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
-    if not rows:
-        return
+    if not rows: return
     file_exists = os.path.isfile(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
-        fieldnames = ["pmid", "title", "abstract", "authors", "publication_date", "journal", "doi", "url", "spinal_hit", "first_seen"]
+        fieldnames = ["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
@@ -339,11 +338,10 @@ def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV)
             })
 
 def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV):
-    if not rows:
-        return
+    if not rows: return
     file_exists = os.path.isfile(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
-        fieldnames = ["nct_id", "title", "detailed_description", "conditions", "interventions", "phases", "study_type", "status", "start_date", "completion_date", "sponsor", "enrollment", "age_range", "url", "spinal_hit", "first_seen"]
+        fieldnames = ["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
@@ -355,45 +353,45 @@ def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV)
                 "conditions": "; ".join(r.get("conditions", [])),
                 "interventions": "; ".join(r.get("interventions", [])),
                 "phases": "; ".join(r.get("phases", [])),
-                "study_type": r.get("study_type", ""),
-                "status": r.get("status", ""),
-                "start_date": r.get("start_date", ""),
-                "completion_date": r.get("completion_date", ""),
-                "sponsor": r.get("sponsor", ""),
-                "enrollment": r.get("enrollment", ""),
-                "age_range": r.get("age_range", ""),
-                "url": r.get("url", ""),
+                "study_type": r.get("study_type",""),
+                "status": r.get("status",""),
+                "start_date": r.get("start_date",""),
+                "completion_date": r.get("completion_date",""),
+                "sponsor": r.get("sponsor",""),
+                "enrollment": r.get("enrollment",""),
+                "age_range": r.get("age_range",""),
+                "url": r.get("url",""),
                 "spinal_hit": "YES" if r["spinal_hit"] else "NO",
                 "first_seen": now_ts()
             })
 
 # -------------------------
-# Full DB exports
+# Export full CSVs
 # -------------------------
 def export_full_csvs(db: str = DB_FILE):
     conn = sqlite3.connect(db)
     cur = conn.cursor()
     # PubMed
-    cur.execute("SELECT pmid, title, abstract, authors, publication_date, journal, doi, url, spinal_hit, first_seen FROM pubmed_articles")
+    cur.execute("SELECT pmid,title,abstract,authors,publication_date,journal,doi,url,spinal_hit,first_seen FROM pubmed_articles")
     rows = cur.fetchall()
-    with open(PUBMED_FULL_CSV, "w", newline="", encoding="utf-8") as f:
+    with open(PUBMED_FULL_CSV,"w",newline="",encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["pmid", "title", "abstract", "authors", "publication_date", "journal", "doi", "url", "spinal_hit", "first_seen"])
+        writer.writerow(["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen"])
         for r in rows:
-            writer.writerow([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], "YES" if r[8] else "NO", r[9]])
+            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],"YES" if r[8] else "NO",r[9]])
     # Trials
-    cur.execute("SELECT nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date, completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen FROM clinical_trials")
+    cur.execute("SELECT nct_id,title,detailed_description,conditions,interventions,phases,study_type,status,start_date,completion_date,sponsor,enrollment,age_range,url,spinal_hit,first_seen FROM clinical_trials")
     rows = cur.fetchall()
-    with open(TRIALS_FULL_CSV, "w", newline="", encoding="utf-8") as f:
+    with open(TRIALS_FULL_CSV,"w",newline="",encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["nct_id", "title", "detailed_description", "conditions", "interventions", "phases", "study_type", "status", "start_date", "completion_date", "sponsor", "enrollment", "age_range", "url", "spinal_hit", "first_seen"])
+        writer.writerow(["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen"])
         for r in rows:
-            writer.writerow([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], "YES" if r[14] else "NO", r[15]])
+            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11],r[12],r[13],"YES" if r[14] else "NO",r[15]])
     conn.close()
     logger.info("Exported full DB CSVs")
 
 # -------------------------
-# Email send (HTML + attachments)
+# Email function
 # -------------------------
 def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]], stats: Dict[str,int], pubmed_term: str, trials_term: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
@@ -407,6 +405,65 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
 
-    # HTML body
     html = f"<h2>NeuroCell Intelligence Report</h2>"
-    html += f"<p><b>PubMed search term:</b> {pub
+    html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
+    html += f"<p><b>ClinicalTrials search term:</b> {trials_term}</p>"
+    html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
+    html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
+
+    if new_pubmed:
+        html += "<h3>New PubMed articles:</h3><ul>"
+        for a in new_pubmed[:5]:
+            html += f"<li><a href='{a['url']}'>{a['title']}</a> ({a['publication_date']})</li>"
+        html += "</ul>"
+
+    if new_trials:
+        html += "<h3>New Clinical Trials:</h3><ul>"
+        for t in new_trials[:5]:
+            html += f"<li><a href
+ html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t['status']})</li>"
+        html += "</ul>"
+
+    part1 = MIMEText(html, "html")
+    msg.attach(part1)
+
+    try:
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(SENDER_EMAIL, EMAIL_PASSWORD)
+            server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
+        logger.info("Email sent successfully")
+        return True
+    except Exception as e:
+        logger.exception("Failed to send email")
+        return False
+
+# -------------------------
+# Main weekly update
+# -------------------------
+def weekly_update():
+    init_db()
+
+    # Fetch new data
+    pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS, DAYS_BACK)
+    trials = fetch_clinical_trials(CLINICALTRIALS_TERM, DAYS_BACK, MAX_RECORDS)
+
+    # Upsert into DB and get new items
+    new_pubmed = upsert_pubmed(DB_FILE, pubmed_articles)
+    new_trials = upsert_trials(DB_FILE, trials)
+
+    # Append weekly CSVs
+    append_pubmed_csv(new_pubmed)
+    append_trials_csv(new_trials)
+
+    # Export full CSVs
+    export_full_csvs()
+
+    # Send summary email
+    stats = {"new_pubmed": len(new_pubmed), "new_trials": len(new_trials)}
+    send_email(new_pubmed, new_trials, stats, PUBMED_TERM, CLINICALTRIALS_TERM)
+
+# -------------------------
+# Entry point
+# -------------------------
+if __name__ == "__main__":
+    weekly_update()
