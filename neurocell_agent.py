@@ -40,8 +40,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
 PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
-CLINICALTRIALS_TERM = os.getenv("CLINICALTRIALS_TERM",
-                                '(AREA[InterventionName] "exosomes" OR AREA[InterventionName] "extracellular vesicles") AND (AREA[Condition] neurology OR AREA[Condition] "neurologic" OR AREA[Condition] "neurologic disorder")')
+CLINICALTRIALS_TERM = 'exosomes AND neurology'
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 20))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 7))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.34))
