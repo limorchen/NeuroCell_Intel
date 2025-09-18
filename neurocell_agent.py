@@ -477,7 +477,7 @@ def run_weekly():
 
     # 2) Fetch ClinicalTrials.gov with fielded expr
     # expr already in CLINICALTRIALS_TERM env var; ensure it's URL-safe via requests
-    trials_results = fetch_clinical_trials_fielded(CLINICALTRIALS_TERM, max_records=MAX_RECORDS)
+    trials_results = fetch_clinical_trials_v2(CLINICALTRIALS_TERM, max_records=MAX_RECORDS)
     new_trials = upsert_trials(DB_FILE, trials_results)
     append_trials_csv(new_trials, TRIALS_WEEKLY_CSV)
 
