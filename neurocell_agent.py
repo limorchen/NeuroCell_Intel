@@ -202,41 +202,37 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
 # -------------------------
 # ClinicalTrials.gov fetcher (fielded expr -> study_fields)
 # -------------------------
-def fetch_clinical_trials_fielded(expr: str, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
+def fetch_clinical_trials_v2(query: str, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
     """
-    Use ClinicalTrials.gov study_fields API with 'expr' supporting AREA[...] fielded queries.
-    Example expr:
-    (AREA[InterventionName] "exosomes" OR AREA[InterventionName] "extracellular vesicles")
-    AND (AREA[Condition] neurology OR AREA[Condition] "neurologic" OR AREA[Condition] "neurologic disorder")
+    Fetch clinical trials from ClinicalTrials.gov API v2.
+    Query should be a full-text search string or include AREA[...] fielded expressions.
     """
-    logger.info(f"ClinicalTrials.gov expr: {expr} | pageSize={max_records}")
-    url = "https://clinicaltrials.gov/api/query/study_fields"
+    logger.info(f"ClinicalTrials.gov v2 query: {query} | max_records={max_records}")
+    url = "https://clinicaltrials.gov/api/v2/studies"
     params = {
-        "expr": expr,
-        "fields": "NCTId,BriefTitle,OverallStatus,Condition,InterventionName,StartDate,CompletionDate,BriefSummary,Phase",
-        "min_rnk": 1,
-        "max_rnk": max_records,
-        "fmt": "json"
+        "query.term": query,
+        "pageSize": min(max_records, 100),
+        "format": "json"
     }
+
     try:
         r = requests.get(url, params=params, timeout=30)
-        if r.status_code != 200:
-            logger.error(f"ClinicalTrials.gov API status {r.status_code}: {r.text[:200]}")
-            return []
+        r.raise_for_status()
         data = r.json()
-        studies = data.get("StudyFieldsResponse", {}).get("StudyFields", [])
-        logger.info(f"ClinicalTrials.gov study_fields returned {len(studies)} studies")
+        studies = data.get("studies", [])
+        logger.info(f"ClinicalTrials.gov v2 returned {len(studies)} studies")
+
         results = []
         for s in studies:
-            nct = s.get("NCTId", [""])[0] if s.get("NCTId") else ""
-            title = s.get("BriefTitle", [""])[0] if s.get("BriefTitle") else ""
-            status = s.get("OverallStatus", [""])[0] if s.get("OverallStatus") else ""
-            conditions = s.get("Condition", []) if s.get("Condition") else []
-            interventions = s.get("InterventionName", []) if s.get("InterventionName") else []
-            start_date = s.get("StartDate", [""])[0] if s.get("StartDate") else ""
-            completion_date = s.get("CompletionDate", [""])[0] if s.get("CompletionDate") else ""
-            brief_summary = s.get("BriefSummary", [""])[0] if s.get("BriefSummary") else ""
-            phases = s.get("Phase", []) if s.get("Phase") else []
+            nct = s.get("nctId", "")
+            title = s.get("briefTitle", "")
+            status = s.get("overallStatus", "")
+            conditions = s.get("conditionNames", [])
+            interventions = s.get("interventionNames", [])
+            start_date = s.get("startDate", "")
+            completion_date = s.get("completionDate", "")
+            brief_summary = s.get("briefSummary", "")
+            phases = s.get("phaseList", [])
             url_study = f"https://clinicaltrials.gov/study/{nct}" if nct else ""
             spinal = 1 if contains_spinal(title, brief_summary) else 0
 
@@ -247,19 +243,19 @@ def fetch_clinical_trials_fielded(expr: str, max_records: int = MAX_RECORDS) -> 
                 "conditions": conditions,
                 "interventions": interventions,
                 "phases": phases,
-                "study_type": "",
+                "study_type": s.get("studyType", ""),
                 "status": status,
                 "start_date": start_date,
                 "completion_date": completion_date,
-                "sponsor": "",
-                "enrollment": "",
-                "age_range": "",
+                "sponsor": s.get("sponsorName", ""),
+                "enrollment": s.get("enrollmentCount", ""),
+                "age_range": s.get("minimumAge", "") + "-" + s.get("maximumAge", "") if s.get("minimumAge") and s.get("maximumAge") else "",
                 "url": url_study,
                 "spinal_hit": spinal
             })
         return results
     except Exception as e:
-        logger.exception("ClinicalTrials.gov fetch error")
+        logger.exception("ClinicalTrials.gov v2 fetch error")
         return []
 
 # -------------------------
