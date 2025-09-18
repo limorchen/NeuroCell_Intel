@@ -560,4 +560,4 @@ def weekly_update():
 # -------------------------
 if __name__ == "__main__":
     weekly_update()
-    weekly_update()
+   
