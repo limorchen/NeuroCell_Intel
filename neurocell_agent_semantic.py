@@ -45,7 +45,7 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND CNS")
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND SPINAL")
 CLINICALTRIALS_INTERVENTION = os.getenv(
     "CLINICALTRIALS_INTERVENTION",
     'exosomes OR "extracellular vesicles"'
@@ -57,11 +57,11 @@ CLINICALTRIALS_CONDITION = os.getenv(
 # New semantic search terms
 SEMANTIC_SEARCH_TERMS = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
-    "exosomes and nervous system, extracellular vesicles for CNS regeneration"
+    "exosomes and nervous system, extracellular vesicles in spinal cord"
 ).split(',')
 
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
-DAYS_BACK = int(os.getenv("DAYS_BACK", 7))
+DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.34))
 SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.5))
 
@@ -276,7 +276,7 @@ def fetch_clinical_trials(
     params = {
         'query.intr': intervention,
         'query.cond': condition,
-        'filter.lastUpdatePostDate': f'CURRENT | {date_cutoff}',
+        'filter.lastUpdatePostDate': f'{date_cutoff}..', # This means from the cutoff date to the present.
         'pageSize': 100,
         'format': 'json',
     }
