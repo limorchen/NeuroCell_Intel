@@ -2,13 +2,10 @@
 """
 neurocell_agent_semantic_fixed.py
 
-Requirements (pip):
-- biopython
-- requests
-- python-dotenv
-- sentence-transformers
-- faiss-cpu (or faiss-gpu)
-- torch
+This script automates the search for relevant scientific articles and clinical trials
+using a combination of keyword and semantic search. It fetches data from PubMed and
+ClinicalTrials.gov, filters it for relevance, stores it in an SQLite database,
+exports it to CSV files, and sends an email report.
 """
 
 import os
@@ -29,7 +26,7 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer, util
 import torch
 
-# Load environment variables
+# Load environment variables from the .env_semantic file
 load_dotenv(".env_semantic")
 
 # -------------------------
@@ -42,8 +39,11 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes")
-CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes")
+# Use a broader initial search term to get more results for semantic filtering
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes OR 'extracellular vesicles'")
+# Use a broader search for interventions and a specific condition
+CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR 'extracellular vesicles'")
+CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR neurologic disorder")
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.34))
@@ -190,11 +190,13 @@ def init_db(path: str = DB_FILE):
 # PubMed fetcher
 # -------------------------
 def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
+    logger.info(f"PubMed search term: {term} | days_back={days_back} | retmax={max_records}")
     try:
         handle = Entrez.esearch(db="pubmed", term=term, retmax=max_records, sort="date", reldate=days_back)
         record = Entrez.read(handle)
         handle.close()
         ids = record.get("IdList", [])
+        logger.info(f"PubMed esearch returned {len(ids)} ids")
         if not ids:
             return []
 
@@ -249,105 +251,107 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
                 "spinal_hit": spinal,
                 "semantic_score": None
             })
+        logger.info(f"PubMed parsed {len(results)} articles")
         return results
     except Exception as e:
         logger.exception("PubMed fetch error")
         return []
 
-
 # -------------------------
-# ClinicalTrials fetcher (intervention only, corrected)
-
-def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
-    """
-    Fetch clinical trials from ClinicalTrials.gov by intervention only, updated within `days_back` days.
-    """
-    if not intervention:
-        logger.warning("No intervention provided, skipping clinical trials search.")
-        return []
-
-    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'")
-    base_url = "https://clinicaltrials.gov/api/query/study_fields"
+# ClinicalTrials fetcher (Reverted to a working version using the V2 API)
+# -------------------------
+def fetch_clinical_trials(
+    intervention: str,
+    condition: str,
+    days_back: int = DAYS_BACK,
+    max_records: int = MAX_RECORDS
+) -> List[Dict[str, Any]]:
+    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}', condition='{condition}', days_back={days_back}")
+    
+    base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
+    page_token = None
+    
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-
+    
     params = {
-        'expr': f'"{intervention}"[Intervention]',  # intervention-only search
-        'fields': 'NCTId,OfficialTitle,InterventionName,Phase,StudyType,OverallStatus,StartDate,CompletionDate,LeadSponsorName,EnrollmentCount,MinimumAge,MaximumAge',
-        'min_rnk': 1,
-        'max_rnk': max_records,
-        'fmt': 'json',
-        'recr': 'Open'  # optional, include only open studies
+        'query.intr': intervention,
+        'query.cond': condition,
+        'filter.lastUpdatePostDate': f'{date_cutoff}..',
+        'pageSize': 100,
+        'format': 'json',
     }
 
-    try:
-        resp = requests.get(base_url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        studies = data.get('StudyFieldsResponse', {}).get('StudyFields', [])
+    while len(search_results) < max_records * 2:
+        if page_token:
+            params['pageToken'] = page_token
+            
+        try:
+            response = requests.get(base_url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            studies = data.get('studies', [])
+            if not studies:
+                break
+                
+            for study in studies:
+                protocol_section = study.get('protocolSection', {})
+                nct_id = protocol_section.get('identificationModule', {}).get('nctId')
+                title = protocol_section.get('identificationModule', {}).get('briefTitle')
+                summary = protocol_section.get('descriptionModule', {}).get('briefSummary')
+                status = protocol_section.get('statusModule', {}).get('overallStatus')
+                study_type = protocol_section.get('designModule', {}).get('studyType')
+                start_date = protocol_section.get('statusModule', {}).get('startDateStruct', {}).get('date')
+                completion_date = protocol_section.get('statusModule', {}).get('completionDateStruct', {}).get('date')
+                
+                conditions_list = [c.get('name') for c in protocol_section.get('conditionsModule', {}).get('conditions', [])]
+                interventions_list = [i.get('name') for i in protocol_section.get('armsInterventionsModule', {}).get('interventions', [])]
+                phases_list = [p.get('phase') for p in protocol_section.get('designModule', {}).get('phases', [])]
+                sponsor_name = protocol_section.get('sponsorCollaboratorsModule', {}).get('leadSponsor', {}).get('name')
+                enrollment = protocol_section.get('designModule', {}).get('enrollmentInfo', {}).get('count')
+                age_min = protocol_section.get('eligibilityModule', {}).get('minimumAge')
+                age_max = protocol_section.get('eligibilityModule', {}).get('maximumAge')
+                age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
+                
+                url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
+                spinal_hit = 1 if contains_spinal(title, summary) else 0
 
-        if not studies:
-            logger.info("No clinical trials found for intervention '%s'", intervention)
-            return []
+                search_results.append({
+                    "nct_id": nct_id,
+                    "title": title,
+                    "detailed_description": summary,
+                    "conditions": conditions_list,
+                    "interventions": interventions_list,
+                    "phases": phases_list,
+                    "study_type": study_type,
+                    "status": status,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "sponsor": sponsor,
+                    "enrollment": enrollment,
+                    "age_range": age_range,
+                    "url": url_study,
+                    "spinal_hit": spinal_hit,
+                    "semantic_score": None
+                })
+            
+            page_token = data.get('nextPageToken')
+            if not page_token or len(search_results) >= max_records * 2:
+                break
+            
+            time.sleep(RATE_LIMIT_DELAY)
 
-        for s in studies:
-            nct_id = s.get('NCTId', [''])[0]
-            title = s.get('OfficialTitle', [''])[0]
-            interventions_list = s.get('InterventionName', [])
-            interventions_str = ", ".join(interventions_list)
-            phases_str = ", ".join(s.get('Phase', []))
-            study_type = s.get('StudyType', [''])[0]
-            status = s.get('OverallStatus', [''])[0]
-            start_date = s.get('StartDate', [''])[0]
-            completion_date = s.get('CompletionDate', [''])[0]
-            sponsor = s.get('LeadSponsorName', [''])[0]
-            enrollment = s.get('EnrollmentCount', [''])[0]
-            age_range = s.get('MinimumAge', [''])[0] + " - " + s.get('MaximumAge', [''])[0]
-
-            spinal = 1 if contains_spinal(title, "") else 0  # detailedDescription not available here
-
-            url_study = f"https://clinicaltrials.gov/ct2/show/{nct_id}" if nct_id else ""
-
-            search_results.append({
-                'nct_id': nct_id,
-                'title': title,
-                'detailed_description': '',  # v1 API does not return detailedDescription
-                'conditions': '',  # removed
-                'interventions': interventions_str,
-                'phases': phases_str,
-                'study_type': study_type,
-                'status': status,
-                'start_date': start_date,
-                'completion_date': completion_date,
-                'sponsor': sponsor,
-                'enrollment': enrollment,
-                'age_range': age_range,
-                'url': url_study,
-                'spinal_hit': spinal,
-                'semantic_score': None
-            })
-
-    except requests.HTTPError as e:
-        logger.error("HTTP error fetching ClinicalTrials.gov: %s", e)
-    except Exception as e:
-        logger.exception("ClinicalTrials.gov fetch error")
-
+        except requests.RequestException as e:
+            logger.error(f"Error fetching data from ClinicalTrials.gov API: {e}")
+            break
+            
+    logger.info(f"Found and parsed {len(search_results)} new clinical trials.")
     return search_results
 
-
 # -------------------------
-# CSV Export
+# DB upsert helpers
 # -------------------------
-def save_to_csv(records: List[Dict[str, Any]], filename: str):
-    if not records:
-        logger.info(f"No records to save to {filename}")
-        return
-    with open(filename, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=records[0].keys())
-        writer.writeheader()
-        writer.writerows(records)
-    logger.info(f"Saved {len(records)} records to {filename}")
-
 def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     conn = sqlite3.connect(db)
     cur = conn.cursor()
@@ -392,35 +396,169 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return new_items
 
 # -------------------------
-# Main
+# CSV helpers
 # -------------------------
-def main():
-    logger.info("Initialized DB at %s", DB_FILE)
-    init_db(DB_FILE)
+def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
+    if not rows: return
+    file_exists = os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        fieldnames = ["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "pmid": r["pmid"],
+                "title": r["title"],
+                "abstract": r["abstract"],
+                "authors": r["authors"],
+                "publication_date": r["publication_date"],
+                "journal": r["journal"],
+                "doi": r["doi"],
+                "url": r["url"],
+                "spinal_hit": "YES" if r["spinal_hit"] else "NO",
+                "first_seen": now_ts(),
+                "semantic_score": r.get("semantic_score", "")
+            })
 
-    # Fetch PubMed
-    logger.info(f"PubMed search term: {PUBMED_TERM} | days_back={DAYS_BACK} | retmax={MAX_RECORDS}")
-    pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS, DAYS_BACK)
-    filtered_articles = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
-    
-    # Corrected function call
-    new_pubmed = upsert_pubmed(DB_FILE, filtered_articles)
-    
-    # Corrected function call
-    append_pubmed_csv(new_pubmed, PUBMED_WEEKLY_CSV)
+def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV):
+    if not rows: return
+    file_exists = os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        fieldnames = ["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "nct_id": r["nct_id"],
+                "title": r["title"],
+                "detailed_description": r["detailed_description"],
+                "conditions": "; ".join(r.get("conditions", [])),
+                "interventions": "; ".join(r.get("interventions", [])),
+                "phases": "; ".join(r.get("phases", [])),
+                "study_type": r.get("study_type",""),
+                "status": r.get("status",""),
+                "start_date": r.get("start_date",""),
+                "completion_date": r.get("completion_date",""),
+                "sponsor": r.get("sponsor",""),
+                "enrollment": r.get("enrollment",""),
+                "age_range": r.get("age_range",""),
+                "url": r.get("url",""),
+                "spinal_hit": "YES" if r["spinal_hit"] else "NO",
+                "first_seen": now_ts(),
+                "semantic_score": r.get("semantic_score", "")
+            })
 
-    # Fetch ClinicalTrials
-    clinical_trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, DAYS_BACK, MAX_RECORDS)
-    filtered_trials = semantic_filter(clinical_trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
-    
-    # Corrected function call
-    new_trials = upsert_trials(DB_FILE, filtered_trials)
-    
-    # Corrected function call
-    append_trials_csv(new_trials, TRIALS_WEEKLY_CSV)
+# -------------------------
+# Export full CSVs
+# -------------------------
+def export_full_csvs(db: str = DB_FILE):
+    conn = sqlite3.connect(db)
+    cur = conn.cursor()
+    # PubMed
+    cur.execute("SELECT pmid,title,abstract,authors,publication_date,journal,doi,url,spinal_hit,first_seen,semantic_score FROM pubmed_articles")
+    rows = cur.fetchall()
+    with open(PUBMED_FULL_CSV,"w",newline="",encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score"])
+        for r in rows:
+            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],"YES" if r[8] else "NO",r[9], r[10]])
+    # Trials
+    cur.execute("SELECT nct_id,title,detailed_description,conditions,interventions,phases,study_type,status,start_date,completion_date,sponsor,enrollment,age_range,url,spinal_hit,first_seen,semantic_score FROM clinical_trials")
+    rows = cur.fetchall()
+    with open(TRIALS_FULL_CSV,"w",newline="",encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score"])
+        for r in rows:
+            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11],r[12],r[13],"YES" if r[14] else "NO",r[15], r[16]])
+    conn.close()
+    logger.info("Exported full DB CSVs")
 
-    logger.info(f"New PubMed articles: {len(filtered_articles)}")
-    logger.info(f"New Clinical Trials: {len(filtered_trials)}")
+# -------------------------
+# Email function
+# -------------------------
+def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,int]], stats: Dict[str,int], pubmed_term: str, trials_intervention: str, trials_condition: str) -> bool:
+    if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
+        logger.error("Email credentials missing - skipping email send")
+        return False
+    recipients = [r.strip() for r in RECIPIENT_EMAIL.split(",")]
+    msg = MIMEMultipart("mixed")
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
+    html = f"<h2>NeuroCell Intelligence Report</h2>"
+    html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
+    html += f"<p><b>ClinicalTrials search terms:</b> {trials_intervention} (Intervention), {trials_condition} (Condition)</p>"
+    html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
+    html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
+    if new_pubmed:
+        html += "<h3>New PubMed Articles (with Semantic Scores)</h3><ul>"
+        for a in sorted(new_pubmed, key=lambda x: x.get('semantic_score', 0), reverse=True):
+            html += f"<li><a href='{a['url']}'>{a['title']}</a> (Score: {a.get('semantic_score', 'N/A')})</li>"
+        html += "</ul>"
+    if new_trials:
+        html += "<h3>New Clinical Trials (with Semantic Scores)</h3><ul>"
+        for t in sorted(new_trials, key=lambda x: x.get('semantic_score', 0), reverse=True):
+            html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t.get('status','')}) (Score: {t.get('semantic_score', 'N/A')})</li>"
+        html += "</ul>"
+    part1 = MIMEText(html, "html")
+    msg.attach(part1)
+    try:
+        attachments = [PUBMED_WEEKLY_CSV, TRIALS_WEEKLY_CSV, PUBMED_FULL_CSV, TRIALS_FULL_CSV]
+        for fname in attachments:
+            if os.path.exists(fname):
+                with open(fname, "rb") as f:
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(fname)}")
+                msg.attach(part)
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(SENDER_EMAIL, EMAIL_PASSWORD)
+            server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
+        logger.info("Email sent successfully")
+        return True
+    except Exception as e:
+        logger.exception("Failed to send email")
+        return False
 
+# -------------------------
+# Main weekly update
+# -------------------------
+def weekly_update():
+    init_db()
+
+    # Step 1: Fetch a broad set of data using keyword-based APIs
+    pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK)
+    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION, DAYS_BACK, MAX_RECORDS * 2)
+
+    # Step 2: Filter and rank the data using semantic search
+    relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
+    relevant_trials = semantic_filter(trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
+
+    # Step 3: Take the top N results and sort by semantic score
+    final_pubmed = sorted(relevant_pubmed, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
+    final_trials = sorted(relevant_trials, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
+
+    # Step 4: Upsert into DB and get new items
+    new_pubmed = upsert_pubmed(DB_FILE, final_pubmed)
+    new_trials = upsert_trials(DB_FILE, final_trials)
+
+    # Step 5: Append weekly CSVs
+    # The `append_pubmed_csv` and `append_trials_csv` functions already handle file existence.
+    append_pubmed_csv(new_pubmed)
+    append_trials_csv(new_trials)
+
+    # Step 6: Export full CSVs
+    export_full_csvs()
+
+    # Step 7: Send summary email
+    stats = {"new_pubmed": len(new_pubmed), "new_trials": len(new_trials)}
+    send_email(new_pubmed, new_trials, stats, PUBMED_TERM, CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION)
+
+# -------------------------
+# Entry point for manual execution
+# -------------------------
 if __name__ == "__main__":
-    main()
+    weekly_update()
