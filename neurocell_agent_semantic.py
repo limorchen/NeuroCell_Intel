@@ -45,7 +45,7 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND SPINAL")
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes")
 CLINICALTRIALS_INTERVENTION = os.getenv(
     "CLINICALTRIALS_INTERVENTION",
     'exosomes OR "extracellular vesicles"'
