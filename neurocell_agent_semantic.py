@@ -523,6 +523,58 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,int]],
         logger.exception("Failed to send email")
         return False
 
+def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
+    if not rows: return
+    file_exists = os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        fieldnames = ["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "pmid": r["pmid"],
+                "title": r["title"],
+                "abstract": r["abstract"],
+                "authors": r["authors"],
+                "publication_date": r["publication_date"],
+                "journal": r["journal"],
+                "doi": r["doi"],
+                "url": r["url"],
+                "spinal_hit": "YES" if r["spinal_hit"] else "NO",
+                "first_seen": now_ts(),
+                "semantic_score": r.get("semantic_score", "")
+            })
+
+def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV):
+    if not rows: return
+    file_exists = os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        fieldnames = ["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "nct_id": r["nct_id"],
+                "title": r["title"],
+                "detailed_description": r["detailed_description"],
+                "conditions": "; ".join(r.get("conditions", [])),
+                "interventions": "; ".join(r.get("interventions", [])),
+                "phases": "; ".join(r.get("phases", [])),
+                "study_type": r.get("study_type",""),
+                "status": r.get("status",""),
+                "start_date": r.get("start_date",""),
+                "completion_date": r.get("completion_date",""),
+                "sponsor": r.get("sponsor",""),
+                "enrollment": r.get("enrollment",""),
+                "age_range": r.get("age_range",""),
+                "url": r.get("url",""),
+                "spinal_hit": "YES" if r["spinal_hit"] else "NO",
+                "first_seen": now_ts(),
+                "semantic_score": r.get("semantic_score", "")
+            })
+
 # -------------------------
 # Main weekly update
 # -------------------------
