@@ -257,16 +257,20 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
 
 # -------------------------
 # ClinicalTrials fetcher (intervention only, corrected)
-# -------------------------
+
 def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
     """
     Fetch clinical trials from ClinicalTrials.gov by intervention only, updated within `days_back` days.
     """
+    if not intervention:
+        logger.warning("No intervention provided, skipping clinical trials search.")
+        return []
+
     logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'")
     base_url = "https://clinicaltrials.gov/api/query/study_fields"
     search_results = []
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    
+
     params = {
         'expr': f'"{intervention}"[Intervention]',  # intervention-only search
         'fields': 'NCTId,OfficialTitle,InterventionName,Phase,StudyType,OverallStatus,StartDate,CompletionDate,LeadSponsorName,EnrollmentCount,MinimumAge,MaximumAge',
@@ -281,6 +285,10 @@ def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_rec
         resp.raise_for_status()
         data = resp.json()
         studies = data.get('StudyFieldsResponse', {}).get('StudyFields', [])
+
+        if not studies:
+            logger.info("No clinical trials found for intervention '%s'", intervention)
+            return []
 
         for s in studies:
             nct_id = s.get('NCTId', [''])[0]
@@ -298,7 +306,7 @@ def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_rec
 
             spinal = 1 if contains_spinal(title, "") else 0  # detailedDescription not available here
 
-            url_study = f"https://clinicaltrials.gov/ct2/show/{nct_id}"
+            url_study = f"https://clinicaltrials.gov/ct2/show/{nct_id}" if nct_id else ""
 
             search_results.append({
                 'nct_id': nct_id,
@@ -319,68 +327,13 @@ def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_rec
                 'semantic_score': None
             })
 
+    except requests.HTTPError as e:
+        logger.error("HTTP error fetching ClinicalTrials.gov: %s", e)
     except Exception as e:
         logger.exception("ClinicalTrials.gov fetch error")
 
     return search_results
 
-# -------------------------
-# DB upsert helpers
-# -------------------------
-def upsert_pubmed_articles(articles: List[Dict[str, Any]], db_file: str = DB_FILE):
-    conn = sqlite3.connect(db_file)
-    c = conn.cursor()
-    for art in articles:
-        c.execute("""
-        INSERT OR REPLACE INTO pubmed_articles
-        (pmid, title, abstract, authors, publication_date, journal, doi, url, spinal_hit, first_seen, semantic_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            art.get('pmid'),
-            art.get('title'),
-            art.get('abstract'),
-            art.get('authors'),
-            art.get('publication_date'),
-            art.get('journal'),
-            art.get('doi'),
-            art.get('url'),
-            art.get('spinal_hit', 0),
-            now_ts(),
-            art.get('semantic_score')
-        ))
-    conn.commit()
-    conn.close()
-
-def upsert_clinical_trials(trials: List[Dict[str, Any]], db_file: str = DB_FILE):
-    conn = sqlite3.connect(db_file)
-    c = conn.cursor()
-    for t in trials:
-        c.execute("""
-        INSERT OR REPLACE INTO clinical_trials
-        (nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date,
-         completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen, semantic_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            t.get('nct_id'),
-            t.get('title'),
-            t.get('detailed_description'),
-            t.get('conditions'),
-            t.get('interventions'),
-            t.get('phases'),
-            t.get('study_type'),
-            t.get('status'),
-            t.get('start_date'),
-            t.get('completion_date'),
-            t.get('sponsor'),
-            t.get('enrollment'),
-            t.get('age_range'),
-            t.get('url'),
-            t.get('spinal_hit', 0),
-            now_ts(),
-            t.get('semantic_score')
-        ))
-    conn.commit()
-    conn.close()
 
 # -------------------------
 # CSV Export
