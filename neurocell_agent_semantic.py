@@ -9,7 +9,6 @@ Requirements (pip):
 - faiss-cpu (or faiss-gpu)
 - torch
 """
-
 import os
 import time
 import csv
@@ -80,15 +79,15 @@ logger = logging.getLogger("neurocell_agent")
 logger.info("Loading Sentence-Transformer model 'all-MiniLM-L6-v2' ...")
 try:
     model = SentenceTransformer('all-MiniLM-L6-v2')
-    # sanity check
+    # sanity check embeddings
     test_emb = model.encode("test", convert_to_tensor=True)
     logger.info(f"Sentence-Transformer loaded. Test embedding shape: {test_emb.shape}")
 except Exception as e:
     logger.error(f"Failed to load SentenceTransformer model: {e}")
     model = None
 
-if not model:
-    raise ImportError("Could not load sentence-transformers model! Exiting.")
+if model is None:
+    raise ImportError("Could not load sentence-transformers model! Please check your installation.")
 
 # -------------------------
 # Utils
@@ -104,31 +103,31 @@ def contains_spinal(*texts: List[str]) -> bool:
             return True
     return False
 
+# -------------------------
+# Semantic Filter with Enhanced Logging and Error Handling
+# -------------------------
 def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: float) -> List[Dict[str, Any]]:
-    """
-    Filters documents based on semantic similarity to a list of terms.
-    Ensures 'semantic_score' is always numeric (0.0 if embedding fails or doc is empty).
-    Enhanced with stepwise logging and input validation.
-    """
-    logger.info(f"Semantic terms (from env): {terms}")
+    logger.info(f"Semantic terms received: {terms}")
     if not model:
         logger.warning("Semantic model not loaded — skipping semantic filtering.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
+
     if not docs:
         logger.info("No documents to semantic-filter.")
         return []
     if not terms:
-        logger.error("No semantic search terms provided! Aborting semantic filter.")
+        logger.error("No semantic search terms provided! Skipping semantic filter.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
+
     try:
-        term_embeddings = model.encode(terms, convert_to_tensor=True)
-        logger.info(f"Encoded {len(terms)} semantic search terms. Embedding shape: {term_embeddings.shape}")
+        term_embeddings = model.encode(terms, convert_to_tensor=True, show_progress_bar=False)
+        logger.info(f"Encoded {len(terms)} semantic search terms; embedding tensor shape: {term_embeddings.shape}")
     except Exception as e:
-        logger.error(f"Error encoding semantic terms: {e}")
+        logger.error(f"Exception during semantic term encoding: {e}")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
@@ -137,25 +136,29 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     for doc in docs:
         title = doc.get('title') or ''
         abstract = doc.get('abstract') or ''
-        detailed = doc.get('detailed_description') or ''
-        body = abstract.strip() if abstract.strip() else detailed.strip()
-        doc_text = (title + " " + body).strip()
+        detailed_desc = doc.get('detailed_description') or ''
+        body_text = abstract.strip() if abstract.strip() else detailed_desc.strip()
+        doc_text = (title + " " + body_text).strip()
+
         if not doc_text:
-            logger.debug(f"Skipping doc '{title[:50]}' — no text to embed")
+            logger.debug(f"Skipping doc '{title[:50]}' for embedding: no text present")
             doc['semantic_score'] = 0.0
             continue
+
         try:
-            doc_embedding = model.encode(doc_text, convert_to_tensor=True)
+            doc_embedding = model.encode(doc_text, convert_to_tensor=True, show_progress_bar=False)
             cosine_scores = util.cos_sim(doc_embedding, term_embeddings)[0]
             max_score = float(torch.max(cosine_scores).item())
+            logger.debug(f"Doc '{title[:50]}' max semantic score: {max_score:.4f}")
         except Exception as e:
-            logger.error(f"Error embedding doc '{title[:50]}': {e}")
+            logger.error(f"Error embedding document '{title[:50]}': {e}")
             max_score = 0.0
+
         doc['semantic_score'] = round(max_score, 4)
         if max_score >= threshold:
             filtered_docs.append(doc)
-        logger.debug(f"Doc '{title[:50]}' semantic_score={doc['semantic_score']}")
-    logger.info(f"Semantic filtering kept {len(filtered_docs)} / {len(docs)} documents (threshold={threshold}).")
+
+    logger.info(f"Semantic filtering kept {len(filtered_docs)} out of {len(docs)} documents with threshold {threshold}")
     return filtered_docs
 
 # -------------------------
@@ -397,7 +400,6 @@ def fetch_clinical_trials(
             time.sleep(RATE_LIMIT_DELAY)
     except requests.RequestException as e:
         logger.error(f"Error fetching data from ClinicalTrials.gov API v2: {e}")
-    # If v2 returned nothing, try v1 fallback
     if not search_results:
         expr = f"{intervention} AND {condition}"
         logger.info("Attempting v1 fallback ClinicalTrials.gov query...")
@@ -593,9 +595,9 @@ def weekly_update():
     # Step 1: Fetch a broad set of data using keyword-based APIs
     broad_pubmed_term = 'exosomes OR "extracellular vesicles"'
     broad_trials_condition = '"spinal cord injury" OR "multiple sclerosis"'
-    pubmed_articles = fetch_pubmed(broad_pubmed_term, MAX_RECORDS*2, DAYS_BACK)
+    pubmed_articles = fetch_pubmed(broad_pubmed_term, MAX_RECORDS * 2, DAYS_BACK)
     logger.info(f"Fetched {len(pubmed_articles)} pubmed articles (raw).")
-    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, broad_trials_condition, DAYS_BACK, MAX_RECORDS*2)
+    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, broad_trials_condition, DAYS_BACK, MAX_RECORDS * 2)
     logger.info(f"Fetched {len(trials)} clinical trials (raw).")
     # Step 2: Filter and rank the data using semantic search
     relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
@@ -621,4 +623,6 @@ def weekly_update():
 # Entry point for manual execution
 # -------------------------
 if __name__ == "__main__":
+    weekly_update()
+
     weekly_update()
