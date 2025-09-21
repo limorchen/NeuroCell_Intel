@@ -359,14 +359,22 @@ def main():
     logger.info(f"PubMed search term: {PUBMED_TERM} | days_back={DAYS_BACK} | retmax={MAX_RECORDS}")
     pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS, DAYS_BACK)
     filtered_articles = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
-    upsert_pubmed_articles(filtered_articles)
-    save_to_csv(filtered_articles, PUBMED_WEEKLY_CSV)
+    
+    # Corrected function call
+    new_pubmed = upsert_pubmed(DB_FILE, filtered_articles)
+    
+    # Corrected function call
+    append_pubmed_csv(new_pubmed, PUBMED_WEEKLY_CSV)
 
     # Fetch ClinicalTrials
     clinical_trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, DAYS_BACK, MAX_RECORDS)
     filtered_trials = semantic_filter(clinical_trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
-    upsert_clinical_trials(filtered_trials)
-    save_to_csv(filtered_trials, TRIALS_WEEKLY_CSV)
+    
+    # Corrected function call
+    new_trials = upsert_trials(DB_FILE, filtered_trials)
+    
+    # Corrected function call
+    append_trials_csv(new_trials, TRIALS_WEEKLY_CSV)
 
     logger.info(f"New PubMed articles: {len(filtered_articles)}")
     logger.info(f"New Clinical Trials: {len(filtered_trials)}")
