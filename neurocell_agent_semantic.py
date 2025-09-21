@@ -26,41 +26,32 @@ from email import encoders
 from typing import List, Dict, Any
 from Bio import Entrez
 from dotenv import load_dotenv
-
-# Semantic search libraries
 from sentence_transformers import SentenceTransformer, util
 import torch
 
-# Load .env_semantic file for manual local runs (optional)
+# Load environment variables
 load_dotenv(".env_semantic")
 
 # -------------------------
 # Configuration
 # -------------------------
 DB_FILE = os.getenv("DB_FILE", "neurocell_database_semantic.db")
-
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
-
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
 PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes")
-
 CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes")
-CLINICALTRIALS_CONDITION = ""  # ignore condition for filtering
-
-# New semantic search terms (comma-separated in env)
-SEMANTIC_SEARCH_TERMS = [s.strip() for s in os.getenv(
-    "SEMANTIC_SEARCH_TERMS",
-    "exosomes and nervous system, extracellular vesicles in spinal cord"
-).split(",") if s.strip()]
-
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.34))
 SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.30))
+SEMANTIC_SEARCH_TERMS = [s.strip() for s in os.getenv(
+    "SEMANTIC_SEARCH_TERMS",
+    "exosomes and nervous system, extracellular vesicles in spinal cord"
+).split(",") if s.strip()]
 
 Entrez.email = NCBI_EMAIL
 
@@ -109,16 +100,12 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
         return docs
 
     if not docs:
-        logger.info("No documents to semantic-filter.")
         return []
 
     if not terms:
-        logger.info("No semantic terms provided — skipping semantic filtering.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
-
-    logger.info(f"Performing semantic filtering on {len(docs)} documents with threshold={threshold} ...")
 
     try:
         term_embeddings = model.encode(terms, convert_to_tensor=True)
@@ -131,12 +118,9 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
         title = doc.get('title') or ''
         abstract = doc.get('abstract') or ''
         detailed = doc.get('detailed_description') or ''
-
         body = abstract.strip() if abstract.strip() else detailed.strip()
         doc_text = (title + " " + body).strip()
-
         if not doc_text:
-            logger.debug(f"Skipping doc '{title[:50]}' because no text to embed")
             doc['semantic_score'] = 0.0
             continue
 
@@ -152,13 +136,9 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
             max_score = 0.0
 
         doc['semantic_score'] = round(max_score, 4)
-
         if max_score >= threshold:
             filtered_docs.append(doc)
 
-        logger.debug(f"Doc '{title[:50]}' semantic_score={doc['semantic_score']}")
-
-    logger.info(f"Semantic filtering kept {len(filtered_docs)} / {len(docs)} documents.")
     return filtered_docs
 
 # -------------------------
@@ -205,25 +185,16 @@ def init_db(path: str = DB_FILE):
     """)
     conn.commit()
     conn.close()
-    logger.info(f"Initialized DB at {path}")
 
 # -------------------------
 # PubMed fetcher
 # -------------------------
 def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
-    logger.info(f"PubMed search term: {term} | days_back={days_back} | retmax={max_records}")
     try:
-        handle = Entrez.esearch(
-            db="pubmed",
-            term=term,
-            retmax=max_records,
-            sort="date",
-            reldate=days_back
-        )
+        handle = Entrez.esearch(db="pubmed", term=term, retmax=max_records, sort="date", reldate=days_back)
         record = Entrez.read(handle)
         handle.close()
         ids = record.get("IdList", [])
-        logger.info(f"PubMed esearch returned {len(ids)} ids")
         if not ids:
             return []
 
@@ -263,7 +234,6 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
                 for e in elocs:
                     if hasattr(e, "attributes") and e.attributes.get("EIdType") == "doi":
                         doi = e.attributes.get("text", "") or doi
-
             url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
             spinal = 1 if contains_spinal(title, abstract) else 0
 
@@ -279,16 +249,15 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
                 "spinal_hit": spinal,
                 "semantic_score": None
             })
-        logger.info(f"PubMed parsed {len(results)} articles")
         return results
     except Exception as e:
         logger.exception("PubMed fetch error")
         return []
 
 # -------------------------
-# ClinicalTrials fetcher
+# ClinicalTrials fetcher (intervention only)
 # -------------------------
-def fetch_clinical_trials(intervention: str, condition: str = "", days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
+def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
     logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'")
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
@@ -296,151 +265,139 @@ def fetch_clinical_trials(intervention: str, condition: str = "", days_back: int
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     params = {
         'query.intr': intervention,
-        'format': 'json',
+        'filter.lastUpdatePostDate': f'{date_cutoff}..',
         'pageSize': 100,
+        'format': 'json',
     }
-    if condition:
-        params['query.cond'] = condition
 
     try:
-        while len(search_results) < max_records * 2:
+        while len(search_results) < max_records:
             if page_token:
                 params['pageToken'] = page_token
-            response = requests.get(base_url, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-
+            resp = requests.get(base_url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
             studies = data.get('studies', [])
             if not studies:
-                logger.info("v2 API returned no studies (or structure changed). Breaking to fallback.")
                 break
 
-            for study in studies:
-                protocol_section = study.get('protocolSection', {}) or {}
-                nct_id = protocol_section.get('identificationModule', {}).get('nctId')
-                title = protocol_section.get('identificationModule', {}).get('briefTitle')
-                summary = protocol_section.get('descriptionModule', {}).get('briefSummary')
-                status = protocol_section.get('statusModule', {}).get('overallStatus')
-                study_type = protocol_section.get('designModule', {}).get('studyType')
-                start_date = protocol_section.get('statusModule', {}).get('startDateStruct', {}).get('date')
-                completion_date = protocol_section.get('statusModule', {}).get('completionDateStruct', {}).get('date')
+            for s in studies:
+                nct_id = s.get('protocolSection', {}).get('identificationModule', {}).get('nctId', '')
+                title = s.get('protocolSection', {}).get('identificationModule', {}).get('officialTitle', '')
+                detailed = s.get('protocolSection', {}).get('descriptionModule', {}).get('detailedDescription', '')
+                interventions_list = s.get('protocolSection', {}).get('interventionsModule', {}).get('interventionList', [])
+                interventions_str = ", ".join([i.get('interventionName', str(i)) for i in interventions_list]) if isinstance(interventions_list, list) else ""
+                phases_list = s.get('protocolSection', {}).get('designModule', {}).get('phaseList', [])
+                phases_str = ", ".join([str(p) for p in phases_list]) if isinstance(phases_list, list) else ""
+                study_type = s.get('protocolSection', {}).get('designModule', {}).get('studyType', '')
+                status = s.get('protocolSection', {}).get('statusModule', {}).get('overallStatus', '')
+                start_date = s.get('protocolSection', {}).get('statusModule', {}).get('startDateStruct', {}).get('startDate', '')
+                completion_date = s.get('protocolSection', {}).get('statusModule', {}).get('completionDateStruct', {}).get('completionDate', '')
+                sponsor = s.get('protocolSection', {}).get('sponsorsModule', {}).get('leadSponsor', {}).get('agency', '')
+                enrollment = s.get('protocolSection', {}).get('designModule', {}).get('enrollmentInfo', {}).get('enrollmentCount', '')
+                age_range = s.get('protocolSection', {}).get('eligibilityModule', {}).get('minimumAge', '') + " - " + s.get('protocolSection', {}).get('eligibilityModule', {}).get('maximumAge', '')
 
-                conditions_list = [c.get('name') for c in protocol_section.get('conditionsModule', {}).get('conditions', [])] or []
-                interventions_list = [i.get('name') for i in protocol_section.get('armsInterventionsModule', {}).get('interventions', [])] or []
-                phases_list = [p.get('phase') for p in protocol_section.get('designModule', {}).get('phases', [])] or []
-                sponsor_name = protocol_section.get('sponsorCollaboratorsModule', {}).get('leadSponsor', {}).get('name')
-                enrollment = protocol_section.get('designModule', {}).get('enrollmentInfo', {}).get('count')
-                age_min = protocol_section.get('eligibilityModule', {}).get('minimumAge')
-                age_max = protocol_section.get('eligibilityModule', {}).get('maximumAge')
-                age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
+                spinal = 1 if contains_spinal(title, detailed) else 0
 
                 url_study = f"https://clinicaltrials.gov/study/{nct_id}"
-                spinal = 1 if contains_spinal(title, summary) else 0
 
                 search_results.append({
-                    "nct_id": nct_id,
-                    "title": title,
-                    "detailed_description": summary,
-                    "conditions": ", ".join(conditions_list),
-                    "interventions": ", ".join(interventions_list),
-                    "phases": ", ".join(phases_list),
-                    "study_type": study_type,
-                    "status": status,
-                    "start_date": start_date,
-                    "completion_date": completion_date,
-                    "sponsor": sponsor_name,
-                    "enrollment": enrollment,
-                    "age_range": age_range,
-                    "url": url_study,
-                    "spinal_hit": spinal,
-                    "semantic_score": None
+                    'nct_id': nct_id,
+                    'title': title,
+                    'detailed_description': detailed,
+                    'conditions': '',  # removed
+                    'interventions': interventions_str,
+                    'phases': phases_str,
+                    'study_type': study_type,
+                    'status': status,
+                    'start_date': start_date,
+                    'completion_date': completion_date,
+                    'sponsor': sponsor,
+                    'enrollment': enrollment,
+                    'age_range': age_range,
+                    'url': url_study,
+                    'spinal_hit': spinal,
+                    'semantic_score': None
                 })
-
                 if len(search_results) >= max_records:
                     break
 
-            page_token = data.get("nextPageToken")
+            page_token = data.get('pageToken')
             if not page_token:
                 break
-        logger.info(f"ClinicalTrials.gov fetched {len(search_results)} trials")
-        return search_results
+            time.sleep(RATE_LIMIT_DELAY)
+
     except Exception as e:
         logger.exception("ClinicalTrials.gov fetch error")
-        return []
+
+    return search_results
 
 # -------------------------
 # DB upsert helpers
 # -------------------------
-def upsert_pubmed_articles(articles: List[Dict[str, Any]]):
-    conn = sqlite3.connect(DB_FILE)
+def upsert_pubmed_articles(articles: List[Dict[str, Any]], db_file: str = DB_FILE):
+    conn = sqlite3.connect(db_file)
     c = conn.cursor()
     for art in articles:
         c.execute("""
-        INSERT INTO pubmed_articles
+        INSERT OR REPLACE INTO pubmed_articles
         (pmid, title, abstract, authors, publication_date, journal, doi, url, spinal_hit, first_seen, semantic_score)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(pmid) DO UPDATE SET
-        semantic_score=excluded.semantic_score
         """, (
-            art.get("pmid"),
-            art.get("title"),
-            art.get("abstract"),
-            art.get("authors"),
-            art.get("publication_date"),
-            art.get("journal"),
-            art.get("doi"),
-            art.get("url"),
-            art.get("spinal_hit"),
+            art.get('pmid'),
+            art.get('title'),
+            art.get('abstract'),
+            art.get('authors'),
+            art.get('publication_date'),
+            art.get('journal'),
+            art.get('doi'),
+            art.get('url'),
+            art.get('spinal_hit', 0),
             now_ts(),
-            art.get("semantic_score")
+            art.get('semantic_score')
         ))
     conn.commit()
     conn.close()
-    logger.info(f"Upserted {len(articles)} PubMed articles into DB.")
 
-def upsert_clinical_trials(trials: List[Dict[str, Any]]):
-    conn = sqlite3.connect(DB_FILE)
+def upsert_clinical_trials(trials: List[Dict[str, Any]], db_file: str = DB_FILE):
+    conn = sqlite3.connect(db_file)
     c = conn.cursor()
     for t in trials:
         c.execute("""
-        INSERT INTO clinical_trials
-        (nct_id, title, detailed_description, conditions, interventions, phases, study_type,
-         status, start_date, completion_date, sponsor, enrollment, age_range, url,
-         spinal_hit, first_seen, semantic_score)
+        INSERT OR REPLACE INTO clinical_trials
+        (nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date,
+         completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen, semantic_score)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(nct_id) DO UPDATE SET
-        semantic_score=excluded.semantic_score
         """, (
-            t.get("nct_id"),
-            t.get("title"),
-            t.get("detailed_description"),
-            t.get("conditions"),
-            t.get("interventions"),
-            t.get("phases"),
-            t.get("study_type"),
-            t.get("status"),
-            t.get("start_date"),
-            t.get("completion_date"),
-            t.get("sponsor"),
-            t.get("enrollment"),
-            t.get("age_range"),
-            t.get("url"),
-            t.get("spinal_hit"),
+            t.get('nct_id'),
+            t.get('title'),
+            t.get('detailed_description'),
+            t.get('conditions'),
+            t.get('interventions'),
+            t.get('phases'),
+            t.get('study_type'),
+            t.get('status'),
+            t.get('start_date'),
+            t.get('completion_date'),
+            t.get('sponsor'),
+            t.get('enrollment'),
+            t.get('age_range'),
+            t.get('url'),
+            t.get('spinal_hit', 0),
             now_ts(),
-            t.get("semantic_score")
+            t.get('semantic_score')
         ))
     conn.commit()
     conn.close()
-    logger.info(f"Upserted {len(trials)} clinical trials into DB.")
 
 # -------------------------
-# CSV export
+# CSV Export
 # -------------------------
-def save_csv(filename: str, records: List[Dict[str, Any]]):
+def save_to_csv(records: List[Dict[str, Any]], filename: str):
     if not records:
         logger.info(f"No records to save to {filename}")
         return
-    with open(filename, "w", newline="", encoding="utf-8") as f:
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=records[0].keys())
         writer.writeheader()
         writer.writerows(records)
@@ -450,22 +407,24 @@ def save_csv(filename: str, records: List[Dict[str, Any]]):
 # Main
 # -------------------------
 def main():
-    init_db()
+    logger.info("Initialized DB at %s", DB_FILE)
+    init_db(DB_FILE)
 
-    # 1. Fetch and semantic-filter PubMed
-    new_pubmed = fetch_pubmed(PUBMED_TERM)
-    new_pubmed = semantic_filter(new_pubmed, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
-    upsert_pubmed_articles(new_pubmed)
-    save_csv(PUBMED_WEEKLY_CSV, new_pubmed)
+    # Fetch PubMed
+    logger.info(f"PubMed search term: {PUBMED_TERM} | days_back={DAYS_BACK} | retmax={MAX_RECORDS}")
+    pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS, DAYS_BACK)
+    filtered_articles = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
+    upsert_pubmed_articles(filtered_articles)
+    save_to_csv(filtered_articles, PUBMED_WEEKLY_CSV)
 
-    # 2. Fetch and semantic-filter ClinicalTrials (intervention only)
-    new_trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION)
-    new_trials = semantic_filter(new_trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
-    upsert_clinical_trials(new_trials)
-    save_csv(TRIALS_WEEKLY_CSV, new_trials)
+    # Fetch ClinicalTrials
+    clinical_trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, DAYS_BACK, MAX_RECORDS)
+    filtered_trials = semantic_filter(clinical_trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
+    upsert_clinical_trials(filtered_trials)
+    save_to_csv(filtered_trials, TRIALS_WEEKLY_CSV)
 
-    logger.info(f"New PubMed articles: {len(new_pubmed)}")
-    logger.info(f"New Clinical Trials: {len(new_trials)}")
+    logger.info(f"New PubMed articles: {len(filtered_articles)}")
+    logger.info(f"New Clinical Trials: {len(filtered_trials)}")
 
 if __name__ == "__main__":
     main()
