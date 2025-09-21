@@ -334,7 +334,7 @@ def fetch_clinical_trials(intervention: str, condition: str = "", days_back: int
                 age_max = protocol_section.get('eligibilityModule', {}).get('maximumAge')
                 age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
 
-                                url_study = f"https://clinicaltrials.gov/study/{nct_id}"
+                url_study = f"https://clinicaltrials.gov/study/{nct_id}"
                 spinal = 1 if contains_spinal(title, summary) else 0
 
                 search_results.append({
