@@ -257,14 +257,19 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
 # -------------------------
 # ClinicalTrials fetcher (intervention only)
 # -------------------------
-def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
-    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'")
+# ClinicalTrials fetcher (intervention only)
+# -------------------------
+def fetch_clinical_trials(intervention: str = None, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
+    # Ensure intervention is never empty
+    intervention_term = intervention or "exosomes"
+    logger.info(f"ClinicalTrials.gov search: intervention='{intervention_term}'")
+
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
     page_token = None
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     params = {
-        'query.intr': intervention,
+        'query.intr': intervention_term,  # always use non-empty term
         'filter.lastUpdatePostDate': f'{date_cutoff}..',
         'pageSize': 100,
         'format': 'json',
@@ -282,20 +287,29 @@ def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_rec
                 break
 
             for s in studies:
-                nct_id = s.get('protocolSection', {}).get('identificationModule', {}).get('nctId', '')
-                title = s.get('protocolSection', {}).get('identificationModule', {}).get('officialTitle', '')
-                detailed = s.get('protocolSection', {}).get('descriptionModule', {}).get('detailedDescription', '')
-                interventions_list = s.get('protocolSection', {}).get('interventionsModule', {}).get('interventionList', [])
+                protocol_section = s.get('protocolSection', {})
+                identification_module = protocol_section.get('identificationModule', {})
+                description_module = protocol_section.get('descriptionModule', {})
+                interventions_module = protocol_section.get('interventionsModule', {})
+                design_module = protocol_section.get('designModule', {})
+                status_module = protocol_section.get('statusModule', {})
+                sponsors_module = protocol_section.get('sponsorsModule', {})
+                eligibility_module = protocol_section.get('eligibilityModule', {})
+
+                nct_id = identification_module.get('nctId', '')
+                title = identification_module.get('officialTitle', '')
+                detailed = description_module.get('detailedDescription', '')
+                interventions_list = interventions_module.get('interventionList', [])
                 interventions_str = ", ".join([i.get('interventionName', str(i)) for i in interventions_list]) if isinstance(interventions_list, list) else ""
-                phases_list = s.get('protocolSection', {}).get('designModule', {}).get('phaseList', [])
+                phases_list = design_module.get('phaseList', [])
                 phases_str = ", ".join([str(p) for p in phases_list]) if isinstance(phases_list, list) else ""
-                study_type = s.get('protocolSection', {}).get('designModule', {}).get('studyType', '')
-                status = s.get('protocolSection', {}).get('statusModule', {}).get('overallStatus', '')
-                start_date = s.get('protocolSection', {}).get('statusModule', {}).get('startDateStruct', {}).get('startDate', '')
-                completion_date = s.get('protocolSection', {}).get('statusModule', {}).get('completionDateStruct', {}).get('completionDate', '')
-                sponsor = s.get('protocolSection', {}).get('sponsorsModule', {}).get('leadSponsor', {}).get('agency', '')
-                enrollment = s.get('protocolSection', {}).get('designModule', {}).get('enrollmentInfo', {}).get('enrollmentCount', '')
-                age_range = s.get('protocolSection', {}).get('eligibilityModule', {}).get('minimumAge', '') + " - " + s.get('protocolSection', {}).get('eligibilityModule', {}).get('maximumAge', '')
+                study_type = design_module.get('studyType', '')
+                status = status_module.get('overallStatus', '')
+                start_date = status_module.get('startDateStruct', {}).get('startDate', '')
+                completion_date = status_module.get('completionDateStruct', {}).get('completionDate', '')
+                sponsor = sponsors_module.get('leadSponsor', {}).get('agency', '')
+                enrollment = design_module.get('enrollmentInfo', {}).get('enrollmentCount', '')
+                age_range = eligibility_module.get('minimumAge', '') + " - " + eligibility_module.get('maximumAge', '')
 
                 spinal = 1 if contains_spinal(title, detailed) else 0
 
@@ -305,7 +319,7 @@ def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_rec
                     'nct_id': nct_id,
                     'title': title,
                     'detailed_description': detailed,
-                    'conditions': '',  # removed
+                    'conditions': '',  # removed as requested
                     'interventions': interventions_str,
                     'phases': phases_str,
                     'study_type': study_type,
@@ -331,6 +345,7 @@ def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_rec
         logger.exception("ClinicalTrials.gov fetch error")
 
     return search_results
+
 
 # -------------------------
 # DB upsert helpers
