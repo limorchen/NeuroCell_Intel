@@ -529,16 +529,20 @@ def weekly_update():
     init_db()
 
     # Step 1: Fetch a broad set of data using keyword-based APIs
-    pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS*2, DAYS_BACK)
-    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION, DAYS_BACK, MAX_RECORDS*2)
+    # Use broader search terms to get a larger pool of data
+    broad_pubmed_term = "exosomes OR 'extracellular vesicles'"
+    broad_trials_condition = "'spinal cord injury' OR 'multiple sclerosis'"
+
+    pubmed_articles = fetch_pubmed(broad_pubmed_term, MAX_RECORDS*2, DAYS_BACK)
+    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, broad_trials_condition, DAYS_BACK, MAX_RECORDS*2)
 
     # Step 2: Filter and rank the data using semantic search
     relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
     relevant_trials = semantic_filter(trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
 
     # Step 3: Take the top N results
-    final_pubmed = sorted(relevant_pubmed, key=lambda x: x['semantic_score'], reverse=True)[:MAX_RECORDS]
-    final_trials = sorted(relevant_trials, key=lambda x: x['semantic_score'], reverse=True)[:MAX_RECORDS]
+    final_pubmed = sorted(relevant_pubmed, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
+    final_trials = sorted(relevant_trials, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
 
     # Step 4: Upsert into DB and get new items
     new_pubmed = upsert_pubmed(DB_FILE, final_pubmed)
