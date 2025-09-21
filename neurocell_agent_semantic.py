@@ -39,11 +39,11 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-# Fixed: More specific PubMed search term
-PUBMED_TERM = os.getenv("PUBMED_TERM", "(exosomes[Title/Abstract] OR \"extracellular vesicles\"[Title/Abstract]) AND (nervous system[Title/Abstract] OR spinal cord[Title/Abstract] OR neurological[Title/Abstract] OR neural[Title/Abstract])")
-# Use a broader search for interventions and a specific condition
+# PubMed search using correct MeSH and field syntax for "exosomes AND nerve"
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes[Title/Abstract] AND (nerve[Title/Abstract] OR nerves[Title/Abstract] OR neural[Title/Abstract] OR nervous[Title/Abstract])")
+# ClinicalTrials.gov search for interventions only - no condition restriction
 CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles")
-CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR neurologic disorder")
+CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "")
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
@@ -321,11 +321,11 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
 # -------------------------
 def fetch_clinical_trials(
     intervention: str,
-    condition: str,
+    condition: str = "",
     days_back: int = DAYS_BACK,
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
-    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}', condition='{condition}', days_back={days_back}")
+    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'{', condition=' + repr(condition) if condition else ''}, days_back={days_back}")
     
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
@@ -333,13 +333,17 @@ def fetch_clinical_trials(
     
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     
+    # Build parameters - only include condition if it's not empty
     params = {
         'query.intr': intervention,
-        'query.cond': condition,
         'filter.lastUpdatePostDate': f'{date_cutoff}..',
         'pageSize': min(100, max_records),
         'format': 'json',
     }
+    
+    # Only add condition filter if condition is provided and not empty
+    if condition and condition.strip():
+        params['query.cond'] = condition
 
     try:
         while len(search_results) < max_records:
@@ -505,7 +509,7 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return new_items
 
 # -------------------------
-# CSV helpers (unchanged)
+# CSV helpers
 # -------------------------
 def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
     if not rows: 
@@ -592,7 +596,7 @@ def export_full_csvs(db: str = DB_FILE):
     logger.info("Exported full database to CSV files")
 
 # -------------------------
-# Email function (unchanged)
+# Email function
 # -------------------------
 def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]], stats: Dict[str,int], pubmed_term: str, trials_intervention: str, trials_condition: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
@@ -607,7 +611,7 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     
     html = f"<h2>NeuroCell Intelligence Report</h2>"
     html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
-    html += f"<p><b>ClinicalTrials search terms:</b> {trials_intervention} (Intervention), {trials_condition} (Condition)</p>"
+    html += f"<p><b>ClinicalTrials search terms:</b> {trials_intervention} (Intervention){', ' + trials_condition + ' (Condition)' if trials_condition else ''}</p>"
     html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
     html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
     
@@ -725,7 +729,8 @@ if __name__ == "__main__":
         logger.info("Script completed successfully")
         print("Weekly update completed!")
         print(f"Results: {results}")
+        exit(0)  # Successful exit
     except Exception as e:
         logger.exception("Script failed with error")
         print(f"Script failed: {e}")
-        raise
+        exit(1)  # Exit with error code
