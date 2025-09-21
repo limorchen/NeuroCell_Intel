@@ -254,98 +254,75 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
         logger.exception("PubMed fetch error")
         return []
 
-# -------------------------
-# ClinicalTrials fetcher (intervention only)
-# -------------------------
-# ClinicalTrials fetcher (intervention only)
-# -------------------------
-def fetch_clinical_trials(intervention: str = None, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
-    # Ensure intervention is never empty
-    intervention_term = intervention or "exosomes"
-    logger.info(f"ClinicalTrials.gov search: intervention='{intervention_term}'")
 
-    base_url = "https://clinicaltrials.gov/api/v2/studies"
+# -------------------------
+# ClinicalTrials fetcher (intervention only, corrected)
+# -------------------------
+def fetch_clinical_trials(intervention: str, days_back: int = DAYS_BACK, max_records: int = MAX_RECORDS) -> List[Dict[str, Any]]:
+    """
+    Fetch clinical trials from ClinicalTrials.gov by intervention only, updated within `days_back` days.
+    """
+    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'")
+    base_url = "https://clinicaltrials.gov/api/query/study_fields"
     search_results = []
-    page_token = None
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    
     params = {
-        'query': 'exosomes',
-        'filter.lastUpdatePostDate': f'{date_cutoff}..',
-        'pageSize': 100,
-        'format': 'json',
+        'expr': f'"{intervention}"[Intervention]',  # intervention-only search
+        'fields': 'NCTId,OfficialTitle,InterventionName,Phase,StudyType,OverallStatus,StartDate,CompletionDate,LeadSponsorName,EnrollmentCount,MinimumAge,MaximumAge',
+        'min_rnk': 1,
+        'max_rnk': max_records,
+        'fmt': 'json',
+        'recr': 'Open'  # optional, include only open studies
     }
 
     try:
-        while len(search_results) < max_records:
-            if page_token:
-                params['pageToken'] = page_token
-            resp = requests.get(base_url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            studies = data.get('studies', [])
-            if not studies:
-                break
+        resp = requests.get(base_url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        studies = data.get('StudyFieldsResponse', {}).get('StudyFields', [])
 
-            for s in studies:
-                protocol_section = s.get('protocolSection', {})
-                identification_module = protocol_section.get('identificationModule', {})
-                description_module = protocol_section.get('descriptionModule', {})
-                interventions_module = protocol_section.get('interventionsModule', {})
-                design_module = protocol_section.get('designModule', {})
-                status_module = protocol_section.get('statusModule', {})
-                sponsors_module = protocol_section.get('sponsorsModule', {})
-                eligibility_module = protocol_section.get('eligibilityModule', {})
+        for s in studies:
+            nct_id = s.get('NCTId', [''])[0]
+            title = s.get('OfficialTitle', [''])[0]
+            interventions_list = s.get('InterventionName', [])
+            interventions_str = ", ".join(interventions_list)
+            phases_str = ", ".join(s.get('Phase', []))
+            study_type = s.get('StudyType', [''])[0]
+            status = s.get('OverallStatus', [''])[0]
+            start_date = s.get('StartDate', [''])[0]
+            completion_date = s.get('CompletionDate', [''])[0]
+            sponsor = s.get('LeadSponsorName', [''])[0]
+            enrollment = s.get('EnrollmentCount', [''])[0]
+            age_range = s.get('MinimumAge', [''])[0] + " - " + s.get('MaximumAge', [''])[0]
 
-                nct_id = identification_module.get('nctId', '')
-                title = identification_module.get('officialTitle', '')
-                detailed = description_module.get('detailedDescription', '')
-                interventions_list = interventions_module.get('interventionList', [])
-                interventions_str = ", ".join([i.get('interventionName', str(i)) for i in interventions_list]) if isinstance(interventions_list, list) else ""
-                phases_list = design_module.get('phaseList', [])
-                phases_str = ", ".join([str(p) for p in phases_list]) if isinstance(phases_list, list) else ""
-                study_type = design_module.get('studyType', '')
-                status = status_module.get('overallStatus', '')
-                start_date = status_module.get('startDateStruct', {}).get('startDate', '')
-                completion_date = status_module.get('completionDateStruct', {}).get('completionDate', '')
-                sponsor = sponsors_module.get('leadSponsor', {}).get('agency', '')
-                enrollment = design_module.get('enrollmentInfo', {}).get('enrollmentCount', '')
-                age_range = eligibility_module.get('minimumAge', '') + " - " + eligibility_module.get('maximumAge', '')
+            spinal = 1 if contains_spinal(title, "") else 0  # detailedDescription not available here
 
-                spinal = 1 if contains_spinal(title, detailed) else 0
+            url_study = f"https://clinicaltrials.gov/ct2/show/{nct_id}"
 
-                url_study = f"https://clinicaltrials.gov/study/{nct_id}"
-
-                search_results.append({
-                    'nct_id': nct_id,
-                    'title': title,
-                    'detailed_description': detailed,
-                    'conditions': '',  # removed as requested
-                    'interventions': interventions_str,
-                    'phases': phases_str,
-                    'study_type': study_type,
-                    'status': status,
-                    'start_date': start_date,
-                    'completion_date': completion_date,
-                    'sponsor': sponsor,
-                    'enrollment': enrollment,
-                    'age_range': age_range,
-                    'url': url_study,
-                    'spinal_hit': spinal,
-                    'semantic_score': None
-                })
-                if len(search_results) >= max_records:
-                    break
-
-            page_token = data.get('pageToken')
-            if not page_token:
-                break
-            time.sleep(RATE_LIMIT_DELAY)
+            search_results.append({
+                'nct_id': nct_id,
+                'title': title,
+                'detailed_description': '',  # v1 API does not return detailedDescription
+                'conditions': '',  # removed
+                'interventions': interventions_str,
+                'phases': phases_str,
+                'study_type': study_type,
+                'status': status,
+                'start_date': start_date,
+                'completion_date': completion_date,
+                'sponsor': sponsor,
+                'enrollment': enrollment,
+                'age_range': age_range,
+                'url': url_study,
+                'spinal_hit': spinal,
+                'semantic_score': None
+            })
 
     except Exception as e:
         logger.exception("ClinicalTrials.gov fetch error")
 
     return search_results
-
 
 # -------------------------
 # DB upsert helpers
