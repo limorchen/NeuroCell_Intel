@@ -269,7 +269,7 @@ def fetch_clinical_trials(intervention: str = None, days_back: int = DAYS_BACK, 
     page_token = None
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     params = {
-        'query.intr': intervention_term,  # always use non-empty term
+        'query': f'interventionName:"{intervention_term}"',
         'filter.lastUpdatePostDate': f'{date_cutoff}..',
         'pageSize': 100,
         'format': 'json',
