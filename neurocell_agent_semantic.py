@@ -348,6 +348,49 @@ def save_to_csv(records: List[Dict[str, Any]], filename: str):
         writer.writerows(records)
     logger.info(f"Saved {len(records)} records to {filename}")
 
+def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    conn = sqlite3.connect(db)
+    cur = conn.cursor()
+    new_items = []
+    for a in articles:
+        try:
+            cur.execute("""
+                INSERT INTO pubmed_articles
+                (pmid, title, abstract, authors, publication_date, journal, doi, url, spinal_hit, first_seen, semantic_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (a["pmid"], a["title"], a["abstract"], a["authors"], a["publication_date"], a["journal"], a["doi"], a["url"], a["spinal_hit"], now_ts(), a["semantic_score"]))
+            new_items.append(a)
+        except sqlite3.IntegrityError:
+            continue
+    conn.commit()
+    conn.close()
+    logger.info(f"DB upsert_pubmed: inserted {len(new_items)} new")
+    return new_items
+
+def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    conn = sqlite3.connect(db)
+    cur = conn.cursor()
+    new_items = []
+    for t in trials:
+        try:
+            cur.execute("""
+                INSERT INTO clinical_trials
+                (nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date, completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen, semantic_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                t["nct_id"], t["title"], t["detailed_description"], "; ".join(t.get("conditions", [])),
+                "; ".join(t.get("interventions", [])), "; ".join(t.get("phases", [])),
+                t.get("study_type", ""), t.get("status", ""), t.get("start_date", ""), t.get("completion_date", ""),
+                t.get("sponsor", ""), str(t.get("enrollment", "")), t.get("age_range", ""), t.get("url", ""), t.get("spinal_hit", 0), now_ts(), t["semantic_score"]
+            ))
+            new_items.append(t)
+        except sqlite3.IntegrityError:
+            continue
+    conn.commit()
+    conn.close()
+    logger.info(f"DB upsert_trials: inserted {len(new_items)} new")
+    return new_items
+
 # -------------------------
 # Main
 # -------------------------
