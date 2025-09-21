@@ -110,14 +110,12 @@ def contains_spinal(*texts: List[str]) -> bool:
 def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: float) -> List[Dict[str, Any]]:
     """
     Filters documents based on semantic similarity to a list of terms.
-    Fixed bug: construct doc_text correctly so that detailed_description is used
-    when abstract is empty (previous code used `a + b or c` which has wrong precedence).
+    Ensures 'semantic_score' is always numeric (0.0 if embedding fails or doc is empty).
     """
     if not model:
         logger.warning("Semantic model not loaded — skipping semantic filtering.")
-        # Attach None scores and return docs
         for d in docs:
-            d['semantic_score'] = None
+            d['semantic_score'] = 0.0
         return docs
 
     if not docs:
@@ -127,34 +125,50 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     if not terms:
         logger.info("No semantic terms provided — skipping semantic filtering.")
         for d in docs:
-            d['semantic_score'] = None
+            d['semantic_score'] = 0.0
         return docs
 
     logger.info(f"Performing semantic filtering on {len(docs)} documents with threshold={threshold} ...")
-    term_embeddings = model.encode(terms, convert_to_tensor=True)
+
+    # Encode terms
+    try:
+        term_embeddings = model.encode(terms, convert_to_tensor=True)
+    except Exception as e:
+        logger.error(f"Error encoding semantic terms: {e}")
+        term_embeddings = None
 
     filtered_docs = []
     for doc in docs:
         title = doc.get('title') or ''
         abstract = doc.get('abstract') or ''
         detailed = doc.get('detailed_description') or ''
-        # Use abstract if present, otherwise detailed description
+
+        # Use abstract if available; else detailed description
         body = abstract.strip() if abstract.strip() else detailed.strip()
         doc_text = (title + " " + body).strip()
+
         if not doc_text:
+            logger.debug(f"Skipping doc '{title[:50]}' because no text to embed")
+            doc['semantic_score'] = 0.0
             continue
 
         try:
-            doc_embedding = model.encode(doc_text, convert_to_tensor=True)
-            cosine_scores = util.cos_sim(doc_embedding, term_embeddings)[0]
-            max_score = float(torch.max(cosine_scores).item())
+            if term_embeddings is not None:
+                doc_embedding = model.encode(doc_text, convert_to_tensor=True)
+                cosine_scores = util.cos_sim(doc_embedding, term_embeddings)[0]
+                max_score = float(torch.max(cosine_scores).item())
+            else:
+                max_score = 0.0
         except Exception as e:
-            logger.debug(f"Embedding/score error for doc '{title[:60]}': {e}")
+            logger.error(f"Error embedding doc '{title[:50]}': {e}")
             max_score = 0.0
 
         doc['semantic_score'] = round(max_score, 4)
+
         if max_score >= threshold:
             filtered_docs.append(doc)
+
+        logger.debug(f"Doc '{title[:50]}' semantic_score={doc['semantic_score']}")
 
     logger.info(f"Semantic filtering kept {len(filtered_docs)} / {len(docs)} documents.")
     return filtered_docs
