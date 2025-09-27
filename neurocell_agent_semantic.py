@@ -42,7 +42,7 @@ NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
 # PubMed search using correct MeSH and field syntax for "exosomes AND nerve"
 PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes[Title/Abstract] AND (nerve[Title/Abstract] OR nerves[Title/Abstract] OR neural[Title/Abstract] OR nervous[Title/Abstract])")
 # ClinicalTrials.gov search for interventions only - no condition restriction
-CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles")
+CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes")
 CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "")
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
