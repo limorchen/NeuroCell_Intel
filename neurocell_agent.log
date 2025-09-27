@@ -1,0 +1,110 @@
+2025-09-15 18:12:37,715 - INFO - Use pytorch device_name: cpu
+2025-09-15 18:12:37,715 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-15 18:12:40,033 - WARNING - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2025-09-15 18:12:46,401 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-15 18:22:45,885 - INFO - Use pytorch device_name: cpu
+2025-09-15 18:22:45,886 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-15 18:22:48,561 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-15 18:29:34,156 - INFO - Use pytorch device_name: cpu
+2025-09-15 18:29:34,156 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-15 18:29:36,799 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 10:05:00,577 - INFO - Use pytorch device_name: cpu
+2025-09-16 10:05:00,577 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 10:05:04,018 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 10:23:59,954 - INFO - Use pytorch device_name: cpu
+2025-09-16 10:23:59,955 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 10:24:03,547 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 10:24:03,555 - INFO - Searching PubMed with term: exosomes AND CNS AND ("2025/09/09"[Date - Publication] : "3000"[Date - Publication])
+2025-09-16 10:24:07,759 - INFO - Successfully parsed 3 PubMed articles
+2025-09-16 10:24:07,767 - INFO - Added NEW PubMed article: 40911028
+2025-09-16 10:24:07,788 - INFO - Added NEW PubMed article: 40721664
+2025-09-16 10:24:07,802 - INFO - Added NEW PubMed article: 40580685
+2025-09-16 10:24:07,820 - INFO - Searching ClinicalTrials.gov with query: exosomes AND neurological
+2025-09-16 10:24:08,623 - INFO - Found 20 trials with query: exosomes AND neurological
+2025-09-16 10:24:08,625 - INFO - Added NEW Clinical Trial: NCT05326724
+2025-09-16 10:24:08,634 - INFO - Added NEW Clinical Trial: NCT06007755
+2025-09-16 10:24:08,663 - INFO - Added NEW Clinical Trial: NCT07145502
+2025-09-16 10:24:08,681 - INFO - Added NEW Clinical Trial: NCT06361485
+2025-09-16 10:24:08,705 - INFO - Added NEW Clinical Trial: NCT05286684
+2025-09-16 10:24:08,726 - INFO - Added NEW Clinical Trial: NCT05443711
+2025-09-16 10:24:08,740 - INFO - Added NEW Clinical Trial: NCT06633003
+2025-09-16 10:24:08,753 - INFO - Added NEW Clinical Trial: NCT06279208
+2025-09-16 10:24:08,773 - INFO - Added NEW Clinical Trial: NCT04121065
+2025-09-16 10:24:08,799 - INFO - Added NEW Clinical Trial: NCT07077616
+2025-09-16 10:24:08,825 - INFO - Added NEW Clinical Trial: NCT04202770
+2025-09-16 10:24:08,838 - INFO - Added NEW Clinical Trial: NCT04974463
+2025-09-16 10:24:08,849 - INFO - Added NEW Clinical Trial: NCT06496451
+2025-09-16 10:24:08,868 - INFO - Added NEW Clinical Trial: NCT03419000
+2025-09-16 10:24:08,896 - INFO - Added NEW Clinical Trial: NCT03275363
+2025-09-16 10:24:08,917 - INFO - Added NEW Clinical Trial: NCT03255408
+2025-09-16 10:24:08,932 - INFO - Added NEW Clinical Trial: NCT04202783
+2025-09-16 10:24:08,951 - INFO - Added NEW Clinical Trial: NCT05796232
+2025-09-16 10:24:08,973 - INFO - Added NEW Clinical Trial: NCT04184076
+2025-09-16 10:24:08,993 - INFO - Added NEW Clinical Trial: NCT04714892
+2025-09-16 10:24:09,003 - ERROR - Missing EMAIL_PASSWORD environment variable
+2025-09-16 10:24:09,008 - ERROR - Weekly run encountered errors.
+2025-09-16 11:16:05,661 - INFO - Use pytorch device_name: cpu
+2025-09-16 11:16:05,662 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 11:16:08,434 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 11:16:08,454 - INFO - Searching PubMed with term: exosomes AND CNS AND ("2025/09/09"[Date - Publication] : "3000"[Date - Publication])
+2025-09-16 11:16:11,471 - INFO - Successfully parsed 3 PubMed articles
+2025-09-16 11:16:11,475 - INFO - Searching ClinicalTrials.gov with query: exosomes AND neurological
+2025-09-16 11:16:12,123 - INFO - Found 20 trials with query: exosomes AND neurological
+2025-09-16 11:16:12,149 - INFO - Exported data from pubmed_articles to new_pubmed_this_week.csv
+2025-09-16 11:16:12,155 - INFO - Exported data from clinical_trials to new_trials_this_week.csv
+2025-09-16 11:16:12,160 - INFO - Exported data from pubmed_articles to all_pubmed_database.csv
+2025-09-16 11:16:12,164 - INFO - Exported data from clinical_trials to all_trials_database.csv
+2025-09-16 11:16:13,362 - ERROR - Email sending failed: (535, b'5.7.8 Username and Password not accepted. For more information, go to\n5.7.8  https://support.google.com/mail/?p=BadCredentials ffacd0b85a97d-3e7d9844d24sm15383507f8f.46 - gsmtp')
+2025-09-16 11:16:13,383 - ERROR - Weekly run encountered errors.
+2025-09-16 11:18:24,893 - INFO - Use pytorch device_name: cpu
+2025-09-16 11:18:24,893 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 11:18:27,895 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 11:18:27,900 - INFO - Searching PubMed with term: exosomes AND CNS AND ("2025/09/09"[Date - Publication] : "3000"[Date - Publication])
+2025-09-16 11:18:30,909 - INFO - Successfully parsed 3 PubMed articles
+2025-09-16 11:18:30,914 - INFO - Searching ClinicalTrials.gov with query: exosomes AND neurological
+2025-09-16 11:18:31,460 - INFO - Found 20 trials with query: exosomes AND neurological
+2025-09-16 11:18:31,465 - INFO - Exported data from pubmed_articles to new_pubmed_this_week.csv
+2025-09-16 11:18:31,465 - INFO - Exported data from clinical_trials to new_trials_this_week.csv
+2025-09-16 11:18:31,473 - INFO - Exported data from pubmed_articles to all_pubmed_database.csv
+2025-09-16 11:18:31,475 - INFO - Exported data from clinical_trials to all_trials_database.csv
+2025-09-16 11:18:32,713 - ERROR - Email sending failed: (535, b'5.7.8 Username and Password not accepted. For more information, go to\n5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-45f325b55e3sm11871405e9.3 - gsmtp')
+2025-09-16 11:18:32,713 - ERROR - Weekly run encountered errors.
+2025-09-16 11:42:36,503 - INFO - Use pytorch device_name: cpu
+2025-09-16 11:42:36,503 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 11:42:39,291 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 11:42:39,293 - INFO - Searching PubMed with term: exosomes AND CNS AND ("2025/09/09"[Date - Publication] : "3000"[Date - Publication])
+2025-09-16 11:42:42,221 - INFO - Successfully parsed 3 PubMed articles
+2025-09-16 11:42:42,225 - INFO - Searching ClinicalTrials.gov with query: exosomes AND neurological
+2025-09-16 11:42:42,893 - INFO - Found 20 trials with query: exosomes AND neurological
+2025-09-16 11:42:42,929 - INFO - Exported data from pubmed_articles to new_pubmed_this_week.csv
+2025-09-16 11:42:42,933 - INFO - Exported data from clinical_trials to new_trials_this_week.csv
+2025-09-16 11:42:42,936 - INFO - Exported data from pubmed_articles to all_pubmed_database.csv
+2025-09-16 11:42:42,939 - INFO - Exported data from clinical_trials to all_trials_database.csv
+2025-09-16 11:42:45,166 - INFO - Email report sent successfully
+2025-09-16 11:42:45,184 - INFO - Weekly run completed successfully.
+2025-09-16 12:57:58,754 - INFO - Use pytorch device_name: cpu
+2025-09-16 12:57:58,754 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 12:58:01,724 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 12:58:01,735 - INFO - Searching PubMed with term: exosomes AND CNS AND ("2025/09/09"[Date - Publication] : "3000"[Date - Publication])
+2025-09-16 12:58:09,233 - INFO - Successfully parsed 3 PubMed articles
+2025-09-16 12:58:09,234 - INFO - Searching ClinicalTrials.gov with query: exosomes AND neurological
+2025-09-16 12:58:09,885 - INFO - Found 20 trials with query: exosomes AND neurological
+2025-09-16 12:58:09,915 - INFO - Exported data from pubmed_articles to new_pubmed_this_week.csv
+2025-09-16 12:58:09,929 - INFO - Exported data from clinical_trials to new_trials_this_week.csv
+2025-09-16 12:58:09,934 - INFO - Exported data from pubmed_articles to all_pubmed_database.csv
+2025-09-16 12:58:09,937 - INFO - Exported data from clinical_trials to all_trials_database.csv
+2025-09-16 12:58:12,214 - INFO - Email report sent successfully
+2025-09-16 12:58:12,214 - INFO - Weekly run completed successfully.
+2025-09-16 14:23:50,307 - INFO - Use pytorch device_name: cpu
+2025-09-16 14:23:50,307 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-09-16 14:23:53,204 - INFO - Starting weekly NeuroCell Intelligence Agent run.
+2025-09-16 14:23:53,204 - INFO - Searching PubMed with term: exosomes AND CNS AND ("2025/09/09"[Date - Publication] : "3000"[Date - Publication])
+2025-09-16 14:23:56,350 - INFO - Successfully parsed 3 PubMed articles
+2025-09-16 14:23:56,372 - INFO - Searching ClinicalTrials.gov with query: exosomes AND neurological
+2025-09-16 14:23:57,032 - INFO - Found 20 trials with query: exosomes AND neurological
+2025-09-16 14:23:57,085 - INFO - Exported data from pubmed_articles to new_pubmed_this_week.csv
+2025-09-16 14:23:57,089 - INFO - Exported data from clinical_trials to new_trials_this_week.csv
+2025-09-16 14:23:57,095 - INFO - Exported data from pubmed_articles to all_pubmed_database.csv
+2025-09-16 14:23:57,100 - INFO - Exported data from clinical_trials to all_trials_database.csv
+2025-09-16 14:23:59,452 - INFO - Email report sent successfully
+2025-09-16 14:23:59,473 - INFO - Weekly run completed successfully.
