@@ -23,22 +23,32 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # NOTE: Ensure your requirements.txt includes: sentence-transformers, torch, BioPython, python-dotenv, requests
         pip install -r requirements.txt
-   
+    
     - name: Run Python script
       env:
+        # Email Credentials (Secrets)
         SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
         RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        
+        # API Keys / Credentials (Secrets)
         NCBI_EMAIL: ${{ secrets.NCBI_EMAIL }}
+        
+        # Search Terms (Secrets - Passed from user configuration)
         PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
         CLINICALTRIALS_INTERVENTION: ${{ secrets.CLINICALTRIALS_INTERVENTION }}
         CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
         SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
+        
+        # Runtime Configuration (Explicitly set here or from secrets, for simplicity set here)
+        # Note: These must match the variable names used in your Python script's os.getenv calls.
         MAX_RECORDS: 50
         DAYS_BACK: 7
-        SEMANTIC_THRESHOLD: 0.5
-      run: python neurocell_agent_semantic.py
+        SEMANTIC_THRESHOLD: 0.45  # Matching the stricter threshold recommended
+      # CRITICAL FIX: Update script name if you renamed it to _fixed.py
+      run: python neurocell_agent_semantic_fixed.py 
       
     - name: Upload Report Artifacts
       uses: actions/upload-artifact@v4
