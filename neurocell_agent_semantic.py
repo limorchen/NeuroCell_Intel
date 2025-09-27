@@ -27,6 +27,7 @@ from sentence_transformers import SentenceTransformer, util
 import torch
 
 # Load environment variables from the .env_semantic file
+# NOTE: Ensure your .env_semantic file has the updated PUBMED_TERM and a search term for CLINICALTRIALS_CONDITION
 load_dotenv(".env_semantic")
 
 # -------------------------
@@ -39,19 +40,23 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-# PubMed search using correct MeSH and field syntax for "exosomes AND nerve"
-PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes[Title/Abstract] AND (nerve[Title/Abstract] OR nerves[Title/Abstract] OR neural[Title/Abstract] OR nervous[Title/Abstract])")
-# ClinicalTrials.gov search for interventions only - no condition restriction
-CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes")
-CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "")
+# FIX 1: Broaden/simplify the PubMed term slightly to capture all relevant articles, 
+# relying on the semantic filter for precision. "Exosomes" AND (Nervous System OR Regeneration)
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes[Title/Abstract] AND (nervous system OR regeneration OR spinal cord)")
+# FIX 2: ClinicalTrials.gov search terms updated for clarity and API expression
+CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles")
+CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR neuroregeneration")
+# The full search expression for the API query.intr and query.cond
+CLINICALTRIALS_SEARCH_EXPRESSION = f"intr:({CLINICALTRIALS_INTERVENTION}) AND cond:({CLINICALTRIALS_CONDITION})"
+
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-# Lowered threshold for better filtering
-SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.25))
+# Semantic threshold is now more important with broader search terms
+SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.45)) # Increased threshold for better relevance
 SEMANTIC_SEARCH_TERMS = [s.strip() for s in os.getenv(
     "SEMANTIC_SEARCH_TERMS",
-    "exosomes nervous system, extracellular vesicles spinal cord, neural regeneration, neurological therapy, brain injury treatment, stem cell therapy nervous system"
+    "exosomes spinal cord injury, extracellular vesicles neural repair, targeted neurological therapy, brain injury exosome"
 ).split(",") if s.strip()]
 
 Entrez.email = NCBI_EMAIL
@@ -86,10 +91,11 @@ def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def contains_spinal(*texts: List[str]) -> bool:
+    # A simple keyword hit is retained for easy database filtering.
     for t in texts:
         if not t:
             continue
-        if "spinal" in t.lower():
+        if "spinal" in t.lower() or "sci" in t.lower():
             return True
     return False
 
@@ -122,10 +128,11 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     filtered_docs = []
     for i, doc in enumerate(docs):
         title = doc.get('title') or ''
-        abstract = doc.get('abstract') or ''
-        detailed = doc.get('detailed_description') or ''
-        body = abstract.strip() if abstract.strip() else detailed.strip()
-        doc_text = (title + " " + body).strip()
+        # NOTE: For Trials, using 'detailed_description' or a combined text field for better scoring.
+        abstract = doc.get('abstract') or doc.get('detailed_description') or '' 
+        
+        # Combine title and abstract/description for a rich text body
+        doc_text = (title + " " + abstract).strip()
         
         if not doc_text:
             logger.debug(f"Document {i+1}: Empty text content")
@@ -156,7 +163,7 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     return filtered_docs
 
 # -------------------------
-# DB init
+# DB init (No change required)
 # -------------------------
 def init_db(path: str = DB_FILE):
     conn = sqlite3.connect(path)
@@ -201,7 +208,7 @@ def init_db(path: str = DB_FILE):
     conn.close()
 
 # -------------------------
-# PubMed fetcher (Fixed)
+# PubMed fetcher (No change required)
 # -------------------------
 def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
     logger.info(f"PubMed search term: {term}")
@@ -259,7 +266,7 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
                 authors = []
                 author_list = art.get("AuthorList", [])
                 if isinstance(author_list, list):
-                    for a in author_list[:10]:  # Limit to first 10 authors
+                    for a in author_list[:10]: # Limit to first 10 authors
                         if isinstance(a, dict):
                             if "LastName" in a and "Initials" in a:
                                 authors.append(f"{a.get('LastName','')} {a.get('Initials','')}")
@@ -317,15 +324,16 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
         return []
 
 # -------------------------
-# ClinicalTrials fetcher (Improved error handling)
+# ClinicalTrials fetcher (FIXED)
 # -------------------------
 def fetch_clinical_trials(
-    intervention: str,
-    condition: str = "",
+    search_expression: str, # Use the combined search expression
     days_back: int = DAYS_BACK,
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
-    logger.info(f"ClinicalTrials.gov search: intervention='{intervention}'{', condition=' + repr(condition) if condition else ''}, days_back={days_back}")
+    # FIX: The API query must combine the intervention and condition into a single 'expr' or use the dedicated fields. 
+    # Using 'expr' for the most flexibility.
+    logger.info(f"ClinicalTrials.gov search expression: '{search_expression}', days_back={days_back}")
     
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
@@ -333,18 +341,15 @@ def fetch_clinical_trials(
     
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     
-    # Build parameters - only include condition if it's not empty
+    # Build parameters
     params = {
-        'query.intr': intervention,
-        'filter.lastUpdatePostDate': f'{date_cutoff}..',
+        # FIX: Using 'query.fullSearch' or 'query.term' is better than just 'query.intr' or 'query.cond' alone.
+        'query.term': search_expression, 
+        'filter.lastUpdatePostDate': f'{date_cutoff}..', # We keep the date filter
         'pageSize': min(100, max_records),
         'format': 'json',
     }
     
-    # Only add condition filter if condition is provided and not empty
-    if condition and condition.strip():
-        params['query.cond'] = condition
-
     try:
         while len(search_results) < max_records:
             if page_token:
@@ -370,7 +375,9 @@ def fetch_clinical_trials(
                     title = identification.get('briefTitle', '')
                     
                     description = protocol_section.get('descriptionModule', {})
-                    summary = description.get('briefSummary', '')
+                    # FIX: Use brief summary as detailed_description/summary for semantic filtering input
+                    summary = description.get('briefSummary', '') 
+                    detailed_description = description.get('detailedDescription', '') or summary
                     
                     status_module = protocol_section.get('statusModule', {})
                     status = status_module.get('overallStatus', '')
@@ -382,7 +389,7 @@ def fetch_clinical_trials(
                     enrollment = design.get('enrollmentInfo', {}).get('count', '')
                     
                     conditions_module = protocol_section.get('conditionsModule', {})
-                    conditions_list = [c.get('name', '') for c in conditions_module.get('conditions', [])]
+                    conditions_list = conditions_module.get('conditions', [])
                     
                     interventions_module = protocol_section.get('armsInterventionsModule', {})
                     interventions_list = [i.get('name', '') for i in interventions_module.get('interventions', [])]
@@ -399,13 +406,14 @@ def fetch_clinical_trials(
                     age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
                     
                     url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
-                    spinal_hit = 1 if contains_spinal(title, summary) else 0
+                    # FIX: Include detailed description in spinal hit check
+                    spinal_hit = 1 if contains_spinal(title, summary, detailed_description) else 0
 
                     search_results.append({
                         "nct_id": nct_id,
                         "title": title,
-                        "detailed_description": summary,
-                        "conditions": conditions_list,
+                        "detailed_description": detailed_description,
+                        "conditions": [c.get('name', '') for c in conditions_list],
                         "interventions": interventions_list,
                         "phases": phases_list,
                         "study_type": study_type,
@@ -418,7 +426,7 @@ def fetch_clinical_trials(
                         "url": url_study,
                         "spinal_hit": spinal_hit,
                         "semantic_score": None
-                    })
+                        })
                 except Exception as e:
                     logger.error(f"Error parsing clinical trial: {e}")
                     continue
@@ -436,7 +444,7 @@ def fetch_clinical_trials(
     return search_results[:max_records]
 
 # -------------------------
-# DB upsert helpers
+# DB upsert helpers (No change required)
 # -------------------------
 def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not articles:
@@ -509,7 +517,7 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return new_items
 
 # -------------------------
-# CSV helpers
+# CSV helpers (No change required)
 # -------------------------
 def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
     if not rows: 
@@ -568,7 +576,7 @@ def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV)
             })
 
 # -------------------------
-# Export full CSVs
+# Export full CSVs (No change required)
 # -------------------------
 def export_full_csvs(db: str = DB_FILE):
     conn = sqlite3.connect(db)
@@ -596,7 +604,7 @@ def export_full_csvs(db: str = DB_FILE):
     logger.info("Exported full database to CSV files")
 
 # -------------------------
-# Email function
+# Email function (No change required)
 # -------------------------
 def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]], stats: Dict[str,int], pubmed_term: str, trials_intervention: str, trials_condition: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
@@ -653,7 +661,7 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
         return False
 
 # -------------------------
-# Main weekly update
+# Main weekly update (FIXED)
 # -------------------------
 def weekly_update():
     logger.info("=== Starting Weekly Update ===")
@@ -661,10 +669,12 @@ def weekly_update():
 
     # Step 1: Fetch data using improved searches
     logger.info("Step 1: Fetching PubMed articles...")
+    # NOTE: fetch_pubmed will now use the revised PUBMED_TERM from config
     pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK)
     
     logger.info("Step 2: Fetching Clinical Trials...")
-    trials = fetch_clinical_trials(CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION, DAYS_BACK, MAX_RECORDS * 2)
+    # FIX: Pass the combined search expression to the clinical trials fetcher
+    trials = fetch_clinical_trials(CLINICALTRIALS_SEARCH_EXPRESSION, DAYS_BACK, MAX_RECORDS * 2)
 
     # Step 2: Apply semantic filtering
     logger.info("Step 3: Applying semantic filtering to PubMed articles...")
@@ -729,8 +739,8 @@ if __name__ == "__main__":
         logger.info("Script completed successfully")
         print("Weekly update completed!")
         print(f"Results: {results}")
-        exit(0)  # Successful exit
+        exit(0) # Successful exit
     except Exception as e:
         logger.exception("Script failed with error")
         print(f"Script failed: {e}")
-        exit(1)  # Exit with error code
+        exit(1) # Exit with error code
