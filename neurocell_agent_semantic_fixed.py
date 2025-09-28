@@ -840,7 +840,7 @@ def weekly_update():
     # Step 1: Fetch data using improved searches
     logger.info("Step 1: Fetching PubMed articles...")
     # NOTE: fetch_pubmed will now use the revised PUBMED_TERM from config
-    pubmed_articles = fetch_pubmed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK)
+    pubmed_articles = fetch_pubmed_fixed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK)
     
     logger.info("Step 2: Fetching Clinical Trials...")
     # FIX: Pass the combined search expression to the clinical trials fetcher
