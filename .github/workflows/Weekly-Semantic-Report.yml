@@ -34,7 +34,7 @@ jobs:
         echo "NCBI_EMAIL=${{ secrets.NCBI_EMAIL }}" >> .env
         echo "PUBMED_TERM=${{ secrets.PUBMED_TERM }}" >> .env
         echo "CLINICALTRIALS_INTERVENTION=exosomes" >> .env
-        echo "CLINICALTRIALS_CONDITION=CNS" >> .env
+        echo "CLINICALTRIALS_CONDITION=neurological" >> .env
         echo "SEMANTIC_SEARCH_TERMS=${{ secrets.SEMANTIC_SEARCH_TERMS }}" >> .env
         echo "MAX_RECORDS=50" >> .env
         echo "DAYS_BACK=7" >> .env
