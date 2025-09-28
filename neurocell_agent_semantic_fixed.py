@@ -844,7 +844,7 @@ def weekly_update():
     
     logger.info("Step 2: Fetching Clinical Trials...")
     # FIX: Pass the combined search expression to the clinical trials fetcher
-    trials = fetch_clinical_trials(
+    trials = fetch_clinical_trials_fixed(
        search_intervention=CLINICALTRIALS_INTERVENTION,
        search_condition=CLINICALTRIALS_CONDITION,
        days_back=DAYS_BACK,
