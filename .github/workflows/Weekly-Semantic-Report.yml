@@ -41,7 +41,7 @@ jobs:
         echo "SEMANTIC_THRESHOLD=0.5" >> .env
         
     - name: Run Python script
-      run: python neurocell_agent_semantic.py
+       run: python neurocell_agent_semantic_fixed.py
       
     - name: Upload Report Artifacts
       uses: actions/upload-artifact@v4
