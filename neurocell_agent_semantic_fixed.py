@@ -228,18 +228,27 @@ def init_db(path: str = DB_FILE):
 # -------------------------
 # PubMed fetcher (No change)
 # -------------------------
-def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
-    logger.info(f"PubMed search term: {term}")
+def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
+    """
+    Fixed PubMed search with better query construction and debugging
+    """
+    # ISSUE 1: Your search might be too broad or malformed
+    # Let's add debugging and fix the query structure
+    
+    logger.info(f"PubMed search term (RAW): '{term}'")
     logger.info(f"Parameters: days_back={days_back}, retmax={max_records}")
     
     try:
-        # First, get the IDs
+        # DEBUGGING: Let's see what the actual query looks like
+        logger.info("Attempting PubMed esearch...")
+        
         search_handle = Entrez.esearch(
             db="pubmed", 
             term=term, 
             retmax=max_records, 
             sort="date",
-            reldate=days_back
+            reldate=days_back,
+            usehistory="y"  # Add this for better search handling
         )
         search_record = Entrez.read(search_handle)
         search_handle.close()
@@ -247,215 +256,357 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
         ids = search_record.get("IdList", [])
         logger.info(f"PubMed esearch returned {len(ids)} article IDs")
         
+        # DEBUGGING: Log the first few IDs to verify
+        if ids:
+            logger.info(f"First 5 PMIDs: {ids[:5]}")
+        else:
+            logger.warning("No PubMed articles found - check your search term syntax")
+            # Let's try a simpler version of your search term
+            simple_term = "exosomes AND (nerve OR neural OR CNS)"
+            logger.info(f"Trying simplified search: {simple_term}")
+            
+            search_handle = Entrez.esearch(
+                db="pubmed", 
+                term=simple_term, 
+                retmax=max_records, 
+                sort="date",
+                reldate=days_back
+            )
+            search_record = Entrez.read(search_handle)
+            search_handle.close()
+            ids = search_record.get("IdList", [])
+            logger.info(f"Simplified search returned {len(ids)} article IDs")
+            
         if not ids:
-            logger.warning("No PubMed articles found for the given search criteria")
             return []
 
         time.sleep(RATE_LIMIT_DELAY)
         
-        # Fetch the article details
-        fetch_handle = Entrez.efetch(
-            db="pubmed", 
-            id=",".join(ids), 
-            rettype="abstract", 
-            retmode="xml"
-        )
-        papers = Entrez.read(fetch_handle)
-        fetch_handle.close()
-
-        results = []
-        for i, article in enumerate(papers.get("PubmedArticle", [])):
-            try:
-                med = article.get("MedlineCitation", {})
-                pmid = str(med.get("PMID", ""))
-                art = med.get("Article", {}) or {}
-                
-                # Extract title
-                title = str(art.get("ArticleTitle", "")) or ""
-                
-                # Extract abstract
-                abstract_list = art.get("Abstract", {}).get("AbstractText", [])
-                if isinstance(abstract_list, list):
-                    abstract = " ".join([str(a) for a in abstract_list])
-                else:
-                    abstract = str(abstract_list) if abstract_list else ""
-                
-                # Extract authors
-                authors = []
-                author_list = art.get("AuthorList", [])
-                if isinstance(author_list, list):
-                    for a in author_list[:10]: # Limit to first 10 authors
-                        if isinstance(a, dict):
-                            if "LastName" in a and "Initials" in a:
-                                authors.append(f"{a.get('LastName','')} {a.get('Initials','')}")
-                            elif "CollectiveName" in a:
-                                authors.append(a.get("CollectiveName", ""))
-                authors_str = ", ".join(authors)
-                
-                # Extract journal
-                journal = str(art.get("Journal", {}).get("Title", ""))
-                
-                # Extract publication date
-                pubdate = ""
-                ji = art.get("Journal", {}).get("JournalIssue", {})
-                if ji:
-                    pubdate_struct = ji.get("PubDate", {})
-                    if isinstance(pubdate_struct, dict):
-                        pubdate = str(pubdate_struct.get("Year", "") or pubdate_struct.get("MedlineDate", ""))
-                
-                # Extract DOI
-                doi = "N/A"
-                elocs = art.get("ELocationID", [])
-                if isinstance(elocs, list):
-                    for e in elocs:
-                        if hasattr(e, "attributes") and e.attributes.get("EIdType") == "doi":
-                            doi = str(e) or doi
-                            break
-                
-                url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                spinal = 1 if contains_spinal(title, abstract) else 0
-
-                # Log what we found for debugging
-                logger.debug(f"Article {i+1}: PMID={pmid}, Title='{title[:50]}...', Abstract_length={len(abstract)}")
-
-                results.append({
-                    "pmid": pmid,
-                    "title": title,
-                    "abstract": abstract,
-                    "authors": authors_str,
-                    "publication_date": pubdate,
-                    "journal": journal,
-                    "doi": doi,
-                    "url": url,
-                    "spinal_hit": spinal,
-                    "semantic_score": None
-                })
-            except Exception as e:
-                logger.error(f"Error parsing article {i+1}: {e}")
-                continue
+        # Fetch details in smaller batches to avoid timeouts
+        batch_size = 20
+        all_results = []
         
-        logger.info(f"Successfully parsed {len(results)} PubMed articles")
-        return results
+        for i in range(0, len(ids), batch_size):
+            batch_ids = ids[i:i+batch_size]
+            logger.info(f"Fetching batch {i//batch_size + 1}: PMIDs {batch_ids[0]} to {batch_ids[-1]}")
+            
+            fetch_handle = Entrez.efetch(
+                db="pubmed", 
+                id=",".join(batch_ids), 
+                rettype="abstract", 
+                retmode="xml"
+            )
+            papers = Entrez.read(fetch_handle)
+            fetch_handle.close()
+            
+            batch_results = []
+            for j, article in enumerate(papers.get("PubmedArticle", [])):
+                try:
+                    med = article.get("MedlineCitation", {})
+                    pmid = str(med.get("PMID", ""))
+                    art = med.get("Article", {}) or {}
+                    
+                    title = str(art.get("ArticleTitle", "")) or ""
+                    
+                    # Better abstract extraction
+                    abstract_list = art.get("Abstract", {}).get("AbstractText", [])
+                    if isinstance(abstract_list, list):
+                        abstract = " ".join([str(a) for a in abstract_list])
+                    else:
+                        abstract = str(abstract_list) if abstract_list else ""
+                    
+                    # DEBUGGING: Log what we found
+                    logger.debug(f"Article {i+j+1}: PMID={pmid}")
+                    logger.debug(f"  Title: {title[:100]}...")
+                    logger.debug(f"  Abstract length: {len(abstract)}")
+                    
+                    # Check if this article actually matches our terms
+                    title_lower = title.lower()
+                    abstract_lower = abstract.lower()
+                    
+                    # Look for our key terms
+                    has_exosome = any(term in title_lower or term in abstract_lower 
+                                    for term in ['exosome', 'extracellular vesicle', 'ev'])
+                    has_neuro = any(term in title_lower or term in abstract_lower 
+                                  for term in ['nerve', 'neural', 'neuro', 'cns', 'spinal', 'brain'])
+                    
+                    relevance_score = 0
+                    if has_exosome: relevance_score += 1
+                    if has_neuro: relevance_score += 1
+                    
+                    logger.debug(f"  Relevance check: exosome={has_exosome}, neuro={has_neuro}, score={relevance_score}")
+                    
+                    # Extract other fields...
+                    authors = []
+                    author_list = art.get("AuthorList", [])
+                    if isinstance(author_list, list):
+                        for a in author_list[:10]:
+                            if isinstance(a, dict):
+                                if "LastName" in a and "Initials" in a:
+                                    authors.append(f"{a.get('LastName','')} {a.get('Initials','')}")
+                                elif "CollectiveName" in a:
+                                    authors.append(a.get("CollectiveName", ""))
+                    authors_str = ", ".join(authors)
+                    
+                    journal = str(art.get("Journal", {}).get("Title", ""))
+                    
+                    pubdate = ""
+                    ji = art.get("Journal", {}).get("JournalIssue", {})
+                    if ji:
+                        pubdate_struct = ji.get("PubDate", {})
+                        if isinstance(pubdate_struct, dict):
+                            pubdate = str(pubdate_struct.get("Year", "") or pubdate_struct.get("MedlineDate", ""))
+                    
+                    doi = "N/A"
+                    elocs = art.get("ELocationID", [])
+                    if isinstance(elocs, list):
+                        for e in elocs:
+                            if hasattr(e, "attributes") and e.attributes.get("EIdType") == "doi":
+                                doi = str(e) or doi
+                                break
+                    
+                    url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                    spinal = 1 if contains_spinal(title, abstract) else 0
+
+                    result = {
+                        "pmid": pmid,
+                        "title": title,
+                        "abstract": abstract,
+                        "authors": authors_str,
+                        "publication_date": pubdate,
+                        "journal": journal,
+                        "doi": doi,
+                        "url": url,
+                        "spinal_hit": spinal,
+                        "semantic_score": None,
+                        "relevance_score": relevance_score  # Add this for debugging
+                    }
+                    
+                    batch_results.append(result)
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing article in batch {i//batch_size + 1}, position {j}: {e}")
+                    continue
+            
+            all_results.extend(batch_results)
+            time.sleep(RATE_LIMIT_DELAY)  # Rate limit between batches
+        
+        logger.info(f"Successfully parsed {len(all_results)} PubMed articles")
+        
+        # DEBUGGING: Show relevance distribution
+        relevance_dist = {}
+        for result in all_results:
+            score = result.get('relevance_score', 0)
+            relevance_dist[score] = relevance_dist.get(score, 0) + 1
+        
+        logger.info(f"Relevance score distribution: {relevance_dist}")
+        
+        return all_results
         
     except Exception as e:
         logger.exception(f"PubMed fetch error: {e}")
         return []
 
+
+
 # -------------------------
 # ClinicalTrials fetcher (No change needed since API expression is corrected above)
 # -------------------------
-def fetch_clinical_trials(
+def fetch_clinical_trials_fixed(
     search_intervention: str = "exosomes",
     search_condition: str = "CNS",
     days_back: int = DAYS_BACK,
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
-    logger.info(f"ClinicalTrials.gov search terms: intervention='{search_intervention}', condition='{search_condition}', days_back={days_back}")
+    """
+    Fixed Clinical Trials search with better debugging and fallback strategies
+    """
+    logger.info(f"ClinicalTrials.gov search - intervention: '{search_intervention}', condition: '{search_condition}'")
+    logger.info(f"Days back: {days_back}, Max records: {max_records}")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
     page_token = None
 
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    logger.info(f"Date cutoff: {date_cutoff}")
 
-    params = {
-        'query.intr': search_intervention,
-        'query.cond': search_condition,
-        'filter.lastUpdatePostDate': f'{date_cutoff}..',
-        'pageSize': min(100, max_records),
-        'format': 'json',
-    }
+    # Try different search strategies
+    search_strategies = []
+    
+    # Strategy 1: Your original terms
+    if search_intervention and search_condition:
+        search_strategies.append({
+            'query.intr': search_intervention,
+            'query.cond': search_condition,
+            'name': 'Original terms'
+        })
+    
+    # Strategy 2: Just intervention
+    if search_intervention:
+        search_strategies.append({
+            'query.intr': search_intervention,
+            'name': 'Intervention only'
+        })
+    
+    # Strategy 3: Just condition
+    if search_condition:
+        search_strategies.append({
+            'query.cond': search_condition,
+            'name': 'Condition only'
+        })
+    
+    # Strategy 4: Combined search
+    if search_intervention or search_condition:
+        combined_term = []
+        if search_intervention:
+            combined_term.append(search_intervention)
+        if search_condition:
+            combined_term.append(search_condition)
+        
+        search_strategies.append({
+            'query.term': ' OR '.join(combined_term),
+            'name': 'Combined term search'
+        })
+    
+    # Strategy 5: Fallback broad search
+    search_strategies.append({
+        'query.term': 'exosomes OR "extracellular vesicles"',
+        'name': 'Fallback broad search'
+    })
 
-    try:
-        while len(search_results) < max_records:
-            if page_token:
-                params['pageToken'] = page_token
+    for strategy_idx, strategy_params in enumerate(search_strategies):
+        logger.info(f"Trying strategy {strategy_idx + 1}: {strategy_params['name']}")
+        
+        params = {
+            'pageSize': min(100, max_records),
+            'format': 'json',
+        }
+        
+        # Add the strategy-specific parameters
+        for key, value in strategy_params.items():
+            if key != 'name':
+                params[key] = value
+        
+        # Add date filter (try with and without)
+        params_with_date = params.copy()
+        params_with_date['filter.lastUpdatePostDate'] = f'{date_cutoff}..'
+        
+        for date_filter_name, current_params in [('with date filter', params_with_date), ('without date filter', params)]:
+            logger.info(f"  Trying {date_filter_name}")
+            logger.debug(f"  Request params: {current_params}")
+            
+            try:
+                response = requests.get(base_url, params=current_params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
 
-            logger.debug(f"Request to ClinicalTrials.gov with params: {params}")
-            response = requests.get(base_url, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
+                studies = data.get('studies', [])
+                total_count = data.get('totalCount', 0)
+                
+                logger.info(f"  API Response: {len(studies)} studies returned, totalCount: {total_count}")
+                
+                if studies:
+                    logger.info(f"SUCCESS: Found {len(studies)} studies with {strategy_params['name']} ({date_filter_name})")
+                    
+                    # Process the studies
+                    for study in studies:
+                        try:
+                            protocol_section = study.get('protocolSection', {})
+                            identification = protocol_section.get('identificationModule', {})
+                            nct_id = identification.get('nctId', '')
+                            title = identification.get('briefTitle', '')
 
-            studies = data.get('studies', [])
-            if not studies:
-                logger.info("No more clinical trials found")
-                break
+                            # DEBUGGING: Check relevance
+                            description = protocol_section.get('descriptionModule', {})
+                            summary = description.get('briefSummary', '')
+                            detailed_description = description.get('detailedDescription', '') or summary
+                            
+                            # Check for exosome/EV terms
+                            all_text = (title + " " + summary + " " + detailed_description).lower()
+                            has_exosome = any(term in all_text for term in ['exosome', 'extracellular vesicle', 'ev', 'microvesicle'])
+                            has_neuro = any(term in all_text for term in ['neuro', 'neural', 'nerve', 'cns', 'spinal', 'brain'])
+                            
+                            logger.debug(f"  Study {nct_id}: exosome={has_exosome}, neuro={has_neuro}")
+                            logger.debug(f"    Title: {title[:100]}...")
 
-            logger.info(f"Retrieved {len(studies)} clinical trials from API")
+                            status_module = protocol_section.get('statusModule', {})
+                            status = status_module.get('overallStatus', '')
+                            start_date = status_module.get('startDateStruct', {}).get('date', '')
+                            completion_date = status_module.get('completionDateStruct', {}).get('date', '')
 
-            for study in studies:
-                try:
-                    protocol_section = study.get('protocolSection', {})
-                    identification = protocol_section.get('identificationModule', {})
-                    nct_id = identification.get('nctId', '')
-                    title = identification.get('briefTitle', '')
+                            design = protocol_section.get('designModule', {})
+                            study_type = design.get('studyType', '')
+                            enrollment = design.get('enrollmentInfo', {}).get('count', '')
 
-                    description = protocol_section.get('descriptionModule', {})
-                    summary = description.get('briefSummary', '')
-                    detailed_description = description.get('detailedDescription', '') or summary
+                            conditions_module = protocol_section.get('conditionsModule', {})
+                            conditions_list = conditions_module.get('conditions', [])
 
-                    status_module = protocol_section.get('statusModule', {})
-                    status = status_module.get('overallStatus', '')
-                    start_date = status_module.get('startDateStruct', {}).get('date', '')
-                    completion_date = status_module.get('completionDateStruct', {}).get('date', '')
+                            interventions_module = protocol_section.get('armsInterventionsModule', {})
+                            interventions_list = [i.get('name', '') for i in interventions_module.get('interventions', [])]
 
-                    design = protocol_section.get('designModule', {})
-                    study_type = design.get('studyType', '')
-                    enrollment = design.get('enrollmentInfo', {}).get('count', '')
+                            phases = design.get('phases', [])
+                            phases_list = [p for p in phases if p]
 
-                    conditions_module = protocol_section.get('conditionsModule', {})
-                    conditions_list = conditions_module.get('conditions', [])
+                            sponsor_module = protocol_section.get('sponsorCollaboratorsModule', {})
+                            sponsor_name = sponsor_module.get('leadSponsor', {}).get('name', '')
 
-                    interventions_module = protocol_section.get('armsInterventionsModule', {})
-                    interventions_list = [i.get('name', '') for i in interventions_module.get('interventions', [])]
+                            eligibility = protocol_section.get('eligibilityModule', {})
+                            age_min = eligibility.get('minimumAge', '')
+                            age_max = eligibility.get('maximumAge', '')
+                            age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
 
-                    phases = design.get('phases', [])
-                    phases_list = [p for p in phases if p]
+                            url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
+                            spinal_hit = 1 if contains_spinal(title, summary, detailed_description) else 0
 
-                    sponsor_module = protocol_section.get('sponsorCollaboratorsModule', {})
-                    sponsor_name = sponsor_module.get('leadSponsor', {}).get('name', '')
+                            search_results.append({
+                                "nct_id": nct_id,
+                                "title": title,
+                                "detailed_description": detailed_description,
+                                "conditions": conditions_list,
+                                "interventions": interventions_list,
+                                "phases": phases_list,
+                                "study_type": study_type,
+                                "status": status,
+                                "start_date": start_date,
+                                "completion_date": completion_date,
+                                "sponsor": sponsor_name,
+                                "enrollment": str(enrollment),
+                                "age_range": age_range,
+                                "url": url_study,
+                                "spinal_hit": spinal_hit,
+                                "semantic_score": None,
+                                "search_strategy": strategy_params['name']  # Add for debugging
+                            })
+                        except Exception as e:
+                            logger.error(f"Error parsing clinical trial: {e}")
+                            continue
 
-                    eligibility = protocol_section.get('eligibilityModule', {})
-                    age_min = eligibility.get('minimumAge', '')
-                    age_max = eligibility.get('maximumAge', '')
-                    age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
+                    # If we found results, break out of the strategy loop
+                    if search_results:
+                        break
+                        
+                else:
+                    logger.info(f"  No studies found with {strategy_params['name']} ({date_filter_name})")
+                    
+            except requests.RequestException as e:
+                logger.error(f"  API request failed for {strategy_params['name']} ({date_filter_name}): {e}")
+                continue
+        
+        # If we found results, break out of the strategy loop
+        if search_results:
+            break
 
-                    url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
-                    spinal_hit = 1 if contains_spinal(title, summary, detailed_description) else 0
-
-                    search_results.append({
-                        "nct_id": nct_id,
-                        "title": title,
-                        "detailed_description": detailed_description,
-                        "conditions": [c.get('name', '') for c in conditions_list],
-                        "interventions": interventions_list,
-                        "phases": phases_list,
-                        "study_type": study_type,
-                        "status": status,
-                        "start_date": start_date,
-                        "completion_date": completion_date,
-                        "sponsor": sponsor_name,
-                        "enrollment": str(enrollment),
-                        "age_range": age_range,
-                        "url": url_study,
-                        "spinal_hit": spinal_hit,
-                        "semantic_score": None
-                    })
-                except Exception as e:
-                    logger.error(f"Error parsing clinical trial: {e}")
-                    continue
-
-            page_token = data.get('nextPageToken')
-            if not page_token or len(search_results) >= max_records:
-                break
-
-            time.sleep(RATE_LIMIT_DELAY)
-
-    except requests.RequestException as e:
-        logger.error(f"Error fetching data from ClinicalTrials.gov API: {e}")
-
-    logger.info(f"Found and parsed {len(search_results)} clinical trials.")
+    logger.info(f"Final result: Found {len(search_results)} clinical trials")
+    
+    if search_results:
+        # Show which strategy worked
+        strategies_used = set(result.get('search_strategy', 'Unknown') for result in search_results)
+        logger.info(f"Successful strategies: {strategies_used}")
+    
     return search_results[:max_records]
+
+
 
 # -------------------------
 # DB upsert helpers (No change)
@@ -693,8 +844,13 @@ def weekly_update():
     
     logger.info("Step 2: Fetching Clinical Trials...")
     # FIX: Pass the combined search expression to the clinical trials fetcher
-    trials = fetch_clinical_trials(CLINICALTRIALS_SEARCH_EXPRESSION, DAYS_BACK, MAX_RECORDS * 2)
-
+    trials = fetch_clinical_trials(
+       search_intervention=CLINICALTRIALS_INTERVENTION,
+       search_condition=CLINICALTRIALS_CONDITION,
+       days_back=DAYS_BACK,
+       max_records=MAX_RECORDS * 2
+    )
+    
     # Step 2: Apply semantic filtering
     logger.info("Step 3: Applying semantic filtering to PubMed articles...")
     relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
