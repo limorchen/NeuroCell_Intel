@@ -1,3 +1,0 @@
-git add neurocell_agent_semantic.py
-git add .github/workflows/weekly-semantic-report.yml
-git add requirements_semantic.txt
