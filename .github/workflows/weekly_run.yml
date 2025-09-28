@@ -15,7 +15,9 @@ jobs:
       RECIPIENT_EMAIL: limor@nurexone.com            # add more by separating with commas if your script supports it
       NCBI_EMAIL: chen.limor@gmail.com
       PUBMED_TERM: "exosomes AND CNS"
-      CLINICALTRIALS_TERM: "exosomes AND neurological"
+      CLINICALTRIALS_INTERVENTION: "exosomes"
+      CLINICALTRIALS_CONDITION: "neurological"
+
       MAX_RECORDS: 20
       SMTP_SERVER: smtp.gmail.com
       SMTP_PORT: 465
@@ -27,12 +29,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
+
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Run NeuroCell Agent script
-        run: python neurocell_agent.py
+        run: python neurocell_agent_semantic_fixed.py
+
 
         
