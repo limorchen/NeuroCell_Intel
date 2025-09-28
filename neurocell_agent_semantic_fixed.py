@@ -345,89 +345,82 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
 # ClinicalTrials fetcher (No change needed since API expression is corrected above)
 # -------------------------
 def fetch_clinical_trials(
-    search_expression: str, # Use the combined search expression
+    search_intervention: str = "exosomes",
+    search_condition: str = "CNS",
     days_back: int = DAYS_BACK,
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
-    # FIX: The API query must combine the intervention and condition into a single 'expr' or use the dedicated fields. 
-    # Using 'query.term' for the most flexibility.
-    logger.info(f"ClinicalTrials.gov search expression: '{search_expression}', days_back={days_back}")
-    
-    if not search_expression:
-        logger.warning("ClinicalTrials search expression is empty. Skipping trial search.")
-        return []
+    logger.info(f"ClinicalTrials.gov search terms: intervention='{search_intervention}', condition='{search_condition}', days_back={days_back}")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
     page_token = None
-    
+
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    
-    # Build parameters
+
     params = {
-        'query.term': search_expression, 
-        'filter.lastUpdatePostDate': f'{date_cutoff}..', # We keep the date filter
+        'query.intr': search_intervention,
+        'query.cond': search_condition,
+        'filter.lastUpdatePostDate': f'{date_cutoff}..',
         'pageSize': min(100, max_records),
         'format': 'json',
     }
-    
+
     try:
         while len(search_results) < max_records:
             if page_token:
                 params['pageToken'] = page_token
-                
-            logger.debug(f"Making request to ClinicalTrials.gov with params: {params}")
+
+            logger.debug(f"Request to ClinicalTrials.gov with params: {params}")
             response = requests.get(base_url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
-            
+
             studies = data.get('studies', [])
             if not studies:
                 logger.info("No more clinical trials found")
                 break
-            
+
             logger.info(f"Retrieved {len(studies)} clinical trials from API")
-                
-            for study in study:
+
+            for study in studies:
                 try:
                     protocol_section = study.get('protocolSection', {})
                     identification = protocol_section.get('identificationModule', {})
                     nct_id = identification.get('nctId', '')
                     title = identification.get('briefTitle', '')
-                    
+
                     description = protocol_section.get('descriptionModule', {})
-                    # FIX: Use brief summary as detailed_description/summary for semantic filtering input
-                    summary = description.get('briefSummary', '') 
+                    summary = description.get('briefSummary', '')
                     detailed_description = description.get('detailedDescription', '') or summary
-                    
+
                     status_module = protocol_section.get('statusModule', {})
                     status = status_module.get('overallStatus', '')
                     start_date = status_module.get('startDateStruct', {}).get('date', '')
                     completion_date = status_module.get('completionDateStruct', {}).get('date', '')
-                    
+
                     design = protocol_section.get('designModule', {})
                     study_type = design.get('studyType', '')
                     enrollment = design.get('enrollmentInfo', {}).get('count', '')
-                    
+
                     conditions_module = protocol_section.get('conditionsModule', {})
                     conditions_list = conditions_module.get('conditions', [])
-                    
+
                     interventions_module = protocol_section.get('armsInterventionsModule', {})
                     interventions_list = [i.get('name', '') for i in interventions_module.get('interventions', [])]
-                    
+
                     phases = design.get('phases', [])
                     phases_list = [p for p in phases if p]
-                    
+
                     sponsor_module = protocol_section.get('sponsorCollaboratorsModule', {})
                     sponsor_name = sponsor_module.get('leadSponsor', {}).get('name', '')
-                    
+
                     eligibility = protocol_section.get('eligibilityModule', {})
                     age_min = eligibility.get('minimumAge', '')
                     age_max = eligibility.get('maximumAge', '')
                     age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
-                    
+
                     url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
-                    # FIX: Include detailed description in spinal hit check
                     spinal_hit = 1 if contains_spinal(title, summary, detailed_description) else 0
 
                     search_results.append({
@@ -447,20 +440,20 @@ def fetch_clinical_trials(
                         "url": url_study,
                         "spinal_hit": spinal_hit,
                         "semantic_score": None
-                        })
+                    })
                 except Exception as e:
                     logger.error(f"Error parsing clinical trial: {e}")
                     continue
-            
+
             page_token = data.get('nextPageToken')
             if not page_token or len(search_results) >= max_records:
                 break
-            
+
             time.sleep(RATE_LIMIT_DELAY)
 
     except requests.RequestException as e:
         logger.error(f"Error fetching data from ClinicalTrials.gov API: {e}")
-            
+
     logger.info(f"Found and parsed {len(search_results)} clinical trials.")
     return search_results[:max_records]
 
