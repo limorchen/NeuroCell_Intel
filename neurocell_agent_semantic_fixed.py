@@ -69,7 +69,7 @@ if not CLINICALTRIALS_SEARCH_EXPRESSION:
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.3))
+SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.25))
 # FIX: Ensure SEMANTIC_SEARCH_TERMS is an array of non-empty strings.
 raw_terms = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
