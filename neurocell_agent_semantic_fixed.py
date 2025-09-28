@@ -22,16 +22,23 @@ from email.mime.base import MIMEBase
 from email import encoders
 from typing import List, Dict, Any
 from Bio import Entrez
-from dotenv import load_dotenv
+from dotenv import load_dotenv # Used to load secrets/config locally or in CI/CD
 from sentence_transformers import SentenceTransformer, util
 import torch
 
-# Load environment variables from the .env_semantic file
-# NOTE: Ensure your .env_semantic file has the updated PUBMED_TERM and a search term for CLINICALTRIALS_CONDITION
-load_dotenv(".env_semantic")
+# Load environment variables.
+# FIX: The GitHub Action creates a file named '.env'. This command loads either '.env' (for CI/CD)
+# or '.env_semantic' (for local testing), prioritizing the standard '.env' if present.
+if os.path.exists(".env"):
+    load_dotenv(".env")
+elif os.path.exists(".env_semantic"):
+    load_dotenv(".env_semantic")
+else:
+    # If neither is found, variables will default to hardcoded values or fail.
+    pass
 
 # -------------------------
-# Configuration
+# Configuration (CRITICAL FIXES HERE)
 # -------------------------
 DB_FILE = os.getenv("DB_FILE", "neurocell_database_semantic.db")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
@@ -40,24 +47,35 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
-# FIX 1: Broaden/simplify the PubMed term slightly to capture all relevant articles, 
-# relying on the semantic filter for precision. "Exosomes" AND (Nervous System OR Regeneration)
+
+# Retrieve search terms from environment variables. Use robust defaults.
 PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes[Title/Abstract] AND (nervous system OR regeneration OR spinal cord)")
-# FIX 2: ClinicalTrials.gov search terms updated for clarity and API expression
 CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles")
 CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR neuroregeneration")
-# The full search expression for the API query.intr and query.cond
-CLINICALTRIALS_SEARCH_EXPRESSION = f"intr:({CLINICALTRIALS_INTERVENTION}) AND cond:({CLINICALTRIALS_CONDITION})"
+
+# FIX: Construct the combined search expression dynamically, ensuring terms are not empty.
+# This prevents malformed queries like 'intr:() AND cond:()' when a secret is empty.
+search_parts = []
+if CLINICALTRIALS_INTERVENTION:
+    search_parts.append(f"intr:({CLINICALTRIALS_INTERVENTION})")
+if CLINICALTRIALS_CONDITION:
+    search_parts.append(f"cond:({CLINICALTRIALS_CONDITION})")
+
+CLINICALTRIALS_SEARCH_EXPRESSION = " AND ".join(search_parts) if search_parts else "nervous system regeneration"
+if not CLINICALTRIALS_SEARCH_EXPRESSION:
+    # Fallback to a very general term if all secrets are empty
+    CLINICALTRIALS_SEARCH_EXPRESSION = "nervous system regeneration"
 
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-# Semantic threshold is now more important with broader search terms
-SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.45)) # Increased threshold for better relevance
-SEMANTIC_SEARCH_TERMS = [s.strip() for s in os.getenv(
+SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.45))
+# FIX: Ensure SEMANTIC_SEARCH_TERMS is an array of non-empty strings.
+raw_terms = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
     "exosomes spinal cord injury, extracellular vesicles neural repair, targeted neurological therapy, brain injury exosome"
-).split(",") if s.strip()]
+).split(",")
+SEMANTIC_SEARCH_TERMS = [s.strip() for s in raw_terms if s.strip()]
 
 Entrez.email = NCBI_EMAIL
 
@@ -67,7 +85,7 @@ PUBMED_FULL_CSV = "all_pubmed_semantic_database.csv"
 TRIALS_FULL_CSV = "all_trials_semantic_database.csv"
 
 # -------------------------
-# Logging
+# Logging (No change)
 # -------------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -85,7 +103,7 @@ except Exception as e:
     model = None
 
 # -------------------------
-# Utils
+# Utils (No change)
 # -------------------------
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -110,8 +128,9 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
         logger.info("No documents to filter")
         return []
 
+    # FIX: Check if terms are empty after loading from environment (critical for 0.0 scores)
     if not terms:
-        logger.warning("No semantic search terms provided")
+        logger.warning("No semantic search terms provided from environment/secrets. Scores will be 0.0.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
@@ -128,7 +147,6 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     filtered_docs = []
     for i, doc in enumerate(docs):
         title = doc.get('title') or ''
-        # NOTE: For Trials, using 'detailed_description' or a combined text field for better scoring.
         abstract = doc.get('abstract') or doc.get('detailed_description') or '' 
         
         # Combine title and abstract/description for a rich text body
@@ -163,7 +181,7 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     return filtered_docs
 
 # -------------------------
-# DB init (No change required)
+# DB init (No change)
 # -------------------------
 def init_db(path: str = DB_FILE):
     conn = sqlite3.connect(path)
@@ -208,7 +226,7 @@ def init_db(path: str = DB_FILE):
     conn.close()
 
 # -------------------------
-# PubMed fetcher (No change required)
+# PubMed fetcher (No change)
 # -------------------------
 def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
     logger.info(f"PubMed search term: {term}")
@@ -324,7 +342,7 @@ def fetch_pubmed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAY
         return []
 
 # -------------------------
-# ClinicalTrials fetcher (FIXED)
+# ClinicalTrials fetcher (No change needed since API expression is corrected above)
 # -------------------------
 def fetch_clinical_trials(
     search_expression: str, # Use the combined search expression
@@ -332,9 +350,13 @@ def fetch_clinical_trials(
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
     # FIX: The API query must combine the intervention and condition into a single 'expr' or use the dedicated fields. 
-    # Using 'expr' for the most flexibility.
+    # Using 'query.term' for the most flexibility.
     logger.info(f"ClinicalTrials.gov search expression: '{search_expression}', days_back={days_back}")
     
+    if not search_expression:
+        logger.warning("ClinicalTrials search expression is empty. Skipping trial search.")
+        return []
+
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
     page_token = None
@@ -343,7 +365,6 @@ def fetch_clinical_trials(
     
     # Build parameters
     params = {
-        # FIX: Using 'query.fullSearch' or 'query.term' is better than just 'query.intr' or 'query.cond' alone.
         'query.term': search_expression, 
         'filter.lastUpdatePostDate': f'{date_cutoff}..', # We keep the date filter
         'pageSize': min(100, max_records),
@@ -367,7 +388,7 @@ def fetch_clinical_trials(
             
             logger.info(f"Retrieved {len(studies)} clinical trials from API")
                 
-            for study in studies:
+            for study in study:
                 try:
                     protocol_section = study.get('protocolSection', {})
                     identification = protocol_section.get('identificationModule', {})
@@ -444,7 +465,7 @@ def fetch_clinical_trials(
     return search_results[:max_records]
 
 # -------------------------
-# DB upsert helpers (No change required)
+# DB upsert helpers (No change)
 # -------------------------
 def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not articles:
@@ -517,7 +538,7 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return new_items
 
 # -------------------------
-# CSV helpers (No change required)
+# CSV helpers (No change)
 # -------------------------
 def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
     if not rows: 
@@ -576,7 +597,7 @@ def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV)
             })
 
 # -------------------------
-# Export full CSVs (No change required)
+# Export full CSVs (No change)
 # -------------------------
 def export_full_csvs(db: str = DB_FILE):
     conn = sqlite3.connect(db)
@@ -604,7 +625,7 @@ def export_full_csvs(db: str = DB_FILE):
     logger.info("Exported full database to CSV files")
 
 # -------------------------
-# Email function (No change required)
+# Email function (FIXED)
 # -------------------------
 def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]], stats: Dict[str,int], pubmed_term: str, trials_intervention: str, trials_condition: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
@@ -617,9 +638,14 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
     
+    # FIX: Correct the display of ClinicalTrials search terms in the email body
+    trials_terms_display = f"{trials_intervention} (Intervention)"
+    if trials_condition:
+        trials_terms_display += f" and {trials_condition} (Condition)"
+
     html = f"<h2>NeuroCell Intelligence Report</h2>"
     html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
-    html += f"<p><b>ClinicalTrials search terms:</b> {trials_intervention} (Intervention){', ' + trials_condition + ' (Condition)' if trials_condition else ''}</p>"
+    html += f"<p><b>ClinicalTrials search terms:</b> {trials_terms_display}</p>"
     html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
     html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
     
@@ -661,7 +687,7 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
         return False
 
 # -------------------------
-# Main weekly update (FIXED)
+# Main weekly update (No change)
 # -------------------------
 def weekly_update():
     logger.info("=== Starting Weekly Update ===")
@@ -741,6 +767,6 @@ if __name__ == "__main__":
         print(f"Results: {results}")
         exit(0) # Successful exit
     except Exception as e:
-        logger.exception("Script failed with error")
-        print(f"Script failed: {e}")
-        exit(1) # Exit with error code
+        logger.exception("Script failed unexpectedly")
+        # Ensure a non-zero exit code to alert the GitHub Action runner
+        exit(1)
