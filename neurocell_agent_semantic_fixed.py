@@ -67,9 +67,9 @@ if not CLINICALTRIALS_SEARCH_EXPRESSION:
     CLINICALTRIALS_SEARCH_EXPRESSION = "nervous system regeneration"
 
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
-DAYS_BACK = int(os.getenv("DAYS_BACK", 30))
+DAYS_BACK = int(os.getenv("DAYS_BACK", 7))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.25))
+SEMANTIC_THRESHOLD = float(os.getenv("SEMANTIC_THRESHOLD", 0.28))
 # FIX: Ensure SEMANTIC_SEARCH_TERMS is an array of non-empty strings.
 raw_terms = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
