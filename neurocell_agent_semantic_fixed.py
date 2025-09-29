@@ -119,7 +119,7 @@ def contains_spinal(*texts: List[str]) -> bool:
 
 def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: float) -> List[Dict[str, Any]]:
     if not model:
-        logger.warning("Semantic model not loaded — skipping semantic filtering.")
+        logger.warning("Semantic model not loaded — skipping semantic ing.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
@@ -490,7 +490,7 @@ def fetch_clinical_trials_fixed(
         
         # Add date filter (try with and without)
         params_with_date = params.copy()
-        params_with_date['filter.lastUpdatePostDate'] = f'{date_cutoff}..'
+        params_with_date['filter.advanced'] = f'AREA[LastUpdatePostDate]RANGE[{date_cutoff},MAX]'
         
         for date_filter_name, current_params in [('with date filter', params_with_date), ('without date filter', params)]:
             logger.info(f"  Trying {date_filter_name}")
