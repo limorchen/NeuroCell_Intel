@@ -3,7 +3,7 @@ name: Weekly Semantic Report
 on:
   schedule:
     # Runs at 9:00 AM UTC on Monday every week
-    - cron: '0 9 * * 1'
+    - cron: '0 16 * * 3'
   workflow_dispatch:
     # Enables manual trigger in GitHub UI
 
