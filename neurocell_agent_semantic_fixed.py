@@ -230,7 +230,7 @@ def init_db(path: str = DB_FILE):
 # -------------------------
 # PubMed fetcher (No change)
 # -------------------------
-def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK) -> List[Dict[str, Any]]:
+def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK_PUBMED) -> List[Dict[str, Any]]:
     """
     Fixed PubMed search with better query construction and debugging
     """
@@ -417,7 +417,7 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
 def fetch_clinical_trials_fixed(
     search_intervention: str = "exosomes",
     search_condition: str = "CNS",
-    days_back: int = DAYS_BACK,
+    days_back: int = DAYS_BACK_TRIALS,
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
     """
