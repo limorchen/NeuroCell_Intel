@@ -67,7 +67,8 @@ if not CLINICALTRIALS_SEARCH_EXPRESSION:
     CLINICALTRIALS_SEARCH_EXPRESSION = "nervous system regeneration"
 
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
-DAYS_BACK = int(os.getenv("DAYS_BACK", 7))
+DAYS_BACK_PUBMED = int(os.getenv("DAYS_BACK_PUBMED", 7))
+DAYS_BACK_TRIALS = int(os.getenv("DAYS_BACK_TRIALS", 30))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
 SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD", 0.28))
 SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.26))
@@ -841,7 +842,13 @@ def weekly_update():
     # Step 1: Fetch data using improved searches
     logger.info("Step 1: Fetching PubMed articles...")
     # NOTE: fetch_pubmed will now use the revised PUBMED_TERM from config
-    pubmed_articles = fetch_pubmed_fixed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK)
+    pubmed_articles = fetch_pubmed_fixed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK_PUBMED)
+    trials = fetch_clinical_trials_fixed(
+       search_intervention=CLINICALTRIALS_INTERVENTION,
+       search_condition=CLINICALTRIALS_CONDITION,
+       days_back=DAYS_BACK_TRIALS,
+       max_records=MAX_RECORDS * 2
+    )
     
     logger.info("Step 2: Fetching Clinical Trials...")
     # FIX: Pass the combined search expression to the clinical trials fetcher
