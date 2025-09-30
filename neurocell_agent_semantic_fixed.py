@@ -781,14 +781,14 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     msg = MIMEMultipart("mixed")
     msg["From"] = SENDER_EMAIL
     msg["To"] = ", ".join(recipients)
-    msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"CNS-Exosomes Weekly Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
     
     # Display ClinicalTrials search terms clearly
     trials_terms_display = f"{trials_intervention} (Intervention)"
     if trials_condition:
         trials_terms_display += f" AND {trials_condition} (Condition)"
 
-    html = f"<h2>NeuroCell Intelligence Report</h2>"
+    html = f"<h2>CNS-Exosomes Weekly Intelligence Report</h2>"
     html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
     html += f"<p><b>ClinicalTrials search terms:</b> {trials_terms_display}</p>"
     html += f"<p>New PubMed articles this week: {stats.get('new_pubmed',0)}</p>"
