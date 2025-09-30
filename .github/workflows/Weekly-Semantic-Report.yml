@@ -37,7 +37,8 @@ jobs:
         echo "CLINICALTRIALS_CONDITION=CNS OR central nervous system OR brain OR spinal" >> .env
         echo "SEMANTIC_SEARCH_TERMS=${{ secrets.SEMANTIC_SEARCH_TERMS }}" >> .env
         echo "MAX_RECORDS=50" >> .env
-        echo "DAYS_BACK=7" >> .env
+        echo "DAYS_BACK_PUBMED=7" >> .env
+        echo "DAYS_BACK_TRIALS=30" >> .env
         echo "SEMANTIC_THRESHOLD=0.28" >> .env
         echo "SEMANTIC_THRESHOLD_TRIALS=0.26" >> .env
         
