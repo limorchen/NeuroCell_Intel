@@ -849,16 +849,7 @@ def weekly_update():
        days_back=DAYS_BACK_TRIALS,
        max_records=MAX_RECORDS * 2
     )
-    
-    logger.info("Step 2: Fetching Clinical Trials...")
-    # FIX: Pass the combined search expression to the clinical trials fetcher
-    trials = fetch_clinical_trials_fixed(
-       search_intervention=CLINICALTRIALS_INTERVENTION,
-       search_condition=CLINICALTRIALS_CONDITION,
-       days_back=DAYS_BACK,
-       max_records=MAX_RECORDS * 2
-    )
-    
+
     # Step 2: Apply semantic filtering
     logger.info("Step 3: Applying semantic filtering to PubMed articles...")
     relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_PUBMED)
