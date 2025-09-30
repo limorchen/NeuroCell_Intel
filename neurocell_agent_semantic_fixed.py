@@ -854,10 +854,10 @@ def weekly_update():
     
     # Step 2: Apply semantic filtering
     logger.info("Step 3: Applying semantic filtering to PubMed articles...")
-    relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
+    relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_PUBMED)
     
     logger.info("Step 4: Applying semantic filtering to Clinical Trials...")
-    relevant_trials = semantic_filter(trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD)
+    relevant_trials = semantic_filter(trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_TRIALS)
 
     # Step 3: Take the top N results and sort by semantic score
     logger.info("Step 5: Sorting and limiting results...")
