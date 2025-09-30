@@ -783,10 +783,10 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"NeuroCell Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
     
-    # FIX: Correct the display of ClinicalTrials search terms in the email body
+    # Display ClinicalTrials search terms clearly
     trials_terms_display = f"{trials_intervention} (Intervention)"
     if trials_condition:
-        trials_terms_display += f" and {trials_condition} (Condition)"
+        trials_terms_display += f" AND {trials_condition} (Condition)"
 
     html = f"<h2>NeuroCell Intelligence Report</h2>"
     html += f"<p><b>PubMed search term:</b> {pubmed_term}</p>"
