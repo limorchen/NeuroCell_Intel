@@ -182,6 +182,30 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     logger.info(f"Semantic filtering: {len(filtered_docs)}/{len(docs)} documents passed threshold {threshold}")
     return filtered_docs
 
+# Mandatory exosomes filter 
+
+def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Hard filter to ensure documents contain exosome/EV terminology
+    """
+    exosome_terms = ['exosome', 'exosomes', 'extracellular vesicle', 'extracellular vesicles', 
+                     'ev', 'evs', 'microvesicle', 'exosomal']
+    
+    filtered_docs = []
+    for doc in docs:
+        title = (doc.get('title') or '').lower()
+        abstract = (doc.get('abstract') or doc.get('detailed_description') or '').lower()
+        full_text = title + " " + abstract
+        
+        if any(term in full_text for term in exosome_terms):
+            filtered_docs.append(doc)
+        else:
+            logger.debug(f"Filtered out (no exosome terms): {doc.get('title', '')[:50]}...")
+    
+    logger.info(f"Mandatory exosome filter: {len(filtered_docs)}/{len(docs)} documents contain exosome/EV terms")
+    return filtered_docs
+
+
 # -------------------------
 # DB init (No change)
 # -------------------------
