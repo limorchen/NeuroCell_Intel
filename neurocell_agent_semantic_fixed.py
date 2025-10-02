@@ -874,13 +874,20 @@ def weekly_update():
        max_records=MAX_RECORDS * 2
     )
 
-    # Step 2: Apply semantic filtering
-    logger.info("Step 3: Applying semantic filtering to PubMed articles...")
-    relevant_pubmed = semantic_filter(pubmed_articles, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_PUBMED)
-    
-    logger.info("Step 4: Applying semantic filtering to Clinical Trials...")
-    relevant_trials = semantic_filter(trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_TRIALS)
+    # Step 2: Apply mandatory exosome filter first
+    logger.info("Step 3: Applying mandatory exosome/EV filter to PubMed articles...")
+    exosome_pubmed = mandatory_exosome_filter(pubmed_articles)
 
+    logger.info("Step 4: Applying mandatory exosome/EV filter to Clinical Trials...")
+    exosome_trials = mandatory_exosome_filter(trials)
+
+    # Step 3: Apply semantic filtering
+    logger.info("Step 5: Applying semantic filtering to PubMed articles...")
+    relevant_pubmed = semantic_filter(exosome_pubmed, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_PUBMED)
+
+    logger.info("Step 6: Applying semantic filtering to Clinical Trials...")
+    relevant_trials = semantic_filter(exosome_trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_TRIALS)
+    
     # Step 3: Take the top N results and sort by semantic score
     logger.info("Step 5: Sorting and limiting results...")
     final_pubmed = sorted(relevant_pubmed, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
