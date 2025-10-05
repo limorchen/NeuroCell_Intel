@@ -1,0 +1,30 @@
+name: Monthly Intelligence Agent
+
+on:
+  schedule:
+    - cron: '0 10 1 * *'  # Runs at 10:00 UTC on the 1st of every month
+  workflow_dispatch:      # Allows manual trigger
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the agent
+        env:
+          MY_SECRET_KEY: ${{ secrets.MY_SECRET_KEY }}  # Replace/add your secrets
+        run: |
+          python main.py  # Replace with your script
