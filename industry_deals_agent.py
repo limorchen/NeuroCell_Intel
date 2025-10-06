@@ -148,7 +148,7 @@ def summarize_short(text, max_sent=2):
 # -------------- pipeline --------------
 def run_agent():
     ensure_outdir()
-    since = dt.datetime.utcnow() - dt.timedelta(days=SINCE_DAYS)
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
     collected = []
 
     # 1) RSS
@@ -160,8 +160,12 @@ def run_agent():
                 pub_dt = dateparser.parse(pub) if pub else None
             except Exception:
                 pub_dt = None
-            if pub_dt and pub_dt < since:
-                continue
+            if pub_dt:
+                # Make pub_dt timezone-aware if it isn't
+                if pub_dt.tzinfo is None:
+                pub_dt = pub_dt.replace(tzinfo=dt.timezone.utc)
+                if pub_dt < since:
+                   continue
             collected.append({
                 "title": e.get("title",""),
                 "link": e.get("link",""),
