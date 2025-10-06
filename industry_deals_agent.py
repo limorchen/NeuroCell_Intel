@@ -163,7 +163,7 @@ def run_agent():
             if pub_dt:
                 # Make pub_dt timezone-aware if it isn't
                 if pub_dt.tzinfo is None:
-                pub_dt = pub_dt.replace(tzinfo=dt.timezone.utc)
+                    pub_dt = pub_dt.replace(tzinfo=dt.timezone.utc)
                 if pub_dt < since:
                    continue
             collected.append({
