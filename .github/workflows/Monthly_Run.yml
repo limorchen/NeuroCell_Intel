@@ -1,10 +1,11 @@
 name: Monthly Intelligence Agent
 
 on:
-  schedule:
-    # Runs on the 1st day of every month at 08:00 UTC
-    - cron: '0 8 1 * *'
-  workflow_dispatch:  # allows manual runs
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # enables manual run
+
 
 jobs:
   run-monthly-agent:
