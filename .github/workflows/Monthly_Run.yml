@@ -1,10 +1,10 @@
 name: Monthly Intelligence Agent
 
 on:
+  workflow_dispatch:  # enables manual run on any branch
   push:
     branches:
-      - main
-  workflow_dispatch:  # enables manual run
+      - main  # optional if you still want auto-run on main
 
 
 jobs:
