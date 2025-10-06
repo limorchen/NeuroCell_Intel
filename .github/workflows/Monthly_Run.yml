@@ -1,13 +1,15 @@
 name: Monthly Intelligence Agent
+
 on:
   schedule:
     # Runs on the 1st day of every month at 08:00 UTC
     - cron: '0 8 1 * *'
-  workflow_dispatch:  # enables manual run from GitHub UI
+  workflow_dispatch:  # allows manual runs
 
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
+
     env:
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
       SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
@@ -15,52 +17,46 @@ jobs:
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
-      # Email configuration for the script
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}
-      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO }}
-    
+
     steps:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      
+
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          python -m spacy download en_core_web_sm
-      
+          pip install -r requirements_semantic.txt
+
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
           echo "Starting monthly run for neurocell intelligence..."
-          python industry_deals_agent.py > neurocell_agent.log 2>&1
+          # Run the Python script; errors in email won't stop workflow
+          python - <<EOF
+import sys
+import traceback
+try:
+    import industry_deals_agent
+except Exception:
+    traceback.print_exc()
+    sys.exit(1)
+EOF
           echo "Run completed."
-      
-      - name: 🔍 Show Python log output
-        if: always()
-        run: |
-          echo "----- Start of neurocell_agent.log -----"
-          cat neurocell_agent.log || echo "Log file not found."
-          echo "----- End of neurocell_agent.log -----"
-      
+
       - name: 📜 Upload log file
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: monthly-run-logs
           path: neurocell_agent.log
-      
-      - name: 📊 Upload Excel output
+
+      - name: 📦 Upload Excel output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: industry-deals-report
-          path: ./industry_deals/*.xlsx
+          name: monthly-excel-output
+          path: industry_deals/exosome_deals_*.xlsx
