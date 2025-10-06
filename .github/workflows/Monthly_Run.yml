@@ -1,11 +1,8 @@
 name: Monthly Intelligence Agent
 
+# Trigger only manually, on any branch
 on:
-  workflow_dispatch:  # enables manual run on any branch
-  push:
-    branches:
-      - main  # optional if you still want auto-run on main
-
+  workflow_dispatch:  # enables manual run
 
 jobs:
   run-monthly-agent:
@@ -23,7 +20,7 @@ jobs:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python
+      - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -35,8 +32,7 @@ jobs:
 
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
-          echo "Starting monthly run for neurocell intelligence..."
-          # Run the Python script; errors in email won't stop workflow
+          echo "----- Starting monthly run for NeuroCell Intelligence -----"
           python - <<EOF
 import sys
 import traceback
@@ -46,7 +42,7 @@ except Exception:
     traceback.print_exc()
     sys.exit(1)
 EOF
-          echo "Run completed."
+          echo "----- Run completed -----"
 
       - name: 📜 Upload log file
         if: always()
