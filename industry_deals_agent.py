@@ -271,6 +271,7 @@ def run_agent():
     outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
     # Expand lists to semicolon strings for Excel
     df_export = df.copy()
+    df_export["published_dt"] = df_export["published_dt"].dt.tz_localize(None)
     df_export["companies"] = df_export["companies"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
     df_export["amounts"] = df_export["amounts"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
     df_export["indications"] = df_export["indications"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
