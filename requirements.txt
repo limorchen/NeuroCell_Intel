@@ -1,8 +1,22 @@
-biopython
-sentence-transformers
-faiss-cpu
-pandas
-requests
+# Core dependencies
 python-dotenv
+requests
+python-dateutil
+feedparser
+
+# Web scraping
 beautifulsoup4
-scholarly
+
+# Data processing
+pandas
+openpyxl
+
+# NLP and ML
+spacy
+sentence-transformers
+scikit-learn
+
+# Already included
+biopython
+faiss-cpu
+torch
