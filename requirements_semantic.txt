@@ -4,4 +4,4 @@ python-dotenv
 sentence-transformers
 faiss-cpu
 torch
-
+python-dateutil
