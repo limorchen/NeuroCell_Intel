@@ -15,7 +15,13 @@ jobs:
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
-      # Add more env vars here if you add new secrets later
+      # Email configuration for the script
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
     
     steps:
       - name: 🧩 Checkout repository
@@ -30,6 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          python -m spacy download en_core_web_sm
       
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
@@ -50,3 +57,10 @@ jobs:
         with:
           name: monthly-run-logs
           path: neurocell_agent.log
+      
+      - name: 📊 Upload Excel output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: industry-deals-report
+          path: ./industry_deals/*.xlsx
