@@ -4,19 +4,20 @@ on:
   schedule:
     # Runs on the 1st day of every month at 08:00 UTC
     - cron: '0 8 1 * *'
-  workflow_dispatch:  # allows manual run from GitHub UI
+  workflow_dispatch:  # enables manual run from GitHub UI
 
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
 
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
-      PUBMED_EMAIL: ${{ secrets.PUBMED_EMAIL }}
-      PUBMED_TOOL: ${{ secrets.PUBMED_TOOL }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Add others as needed
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+      RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+      PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
+      CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
+      SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
+      # Add more env vars here if you add new secrets later
 
     steps:
       - name: 🧩 Checkout repository
@@ -34,9 +35,9 @@ jobs:
 
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
-          echo "Starting monthly intelligence run..."
+          echo "Starting monthly run for neurocell intelligence..."
           python industry_deals_agent.py > neurocell_agent.log 2>&1
-          echo "Completed monthly intelligence run."
+          echo "Run completed."
 
       - name: 📜 Upload log file
         uses: actions/upload-artifact@v4
