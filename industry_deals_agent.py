@@ -27,11 +27,11 @@ SINCE_DAYS = 40
 TOP_N_TO_EMAIL = 10
 
 RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=exosome+OR+exosomes+(acquir*+OR+partner*+OR+licens*+OR+funding+OR+collaborat*+OR+deal)+AND+(neurology+OR+neuro+OR+stroke+OR+ALS+OR+Parkinson+OR+regenerat*)&hl=en-US&gl=US&ceid=US:en",
+    # Highly focused exosome searches
+    "https://news.google.com/rss/search?q=(exosome+OR+exosomes+OR+%22extracellular+vesicles%22+OR+%22EV+therapy%22)+(acquisition+OR+partnership+OR+licensing+OR+funding+OR+deal+OR+raised)&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=exosome+(company+OR+biotech+OR+therapeutics)+(funding+OR+investment+OR+series)&hl=en-US&gl=US&ceid=US:en",
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
-    "https://www.prnewswire.com/rss/all-news.xml",
-    "https://www.businesswire.com/rss/home/all-news"
 ]
 
 PR_PAGES = [
@@ -50,6 +50,15 @@ EVENT_KEYWORDS = {
     "funding": ["funding","raised","series a","series b","grant","investment","seed","financ","venture"],
     "deal": ["deal", "agreement","term sheet","option agreement","commercialization"]
 }
+
+# Known exosome/EV companies to track
+EXOSOME_COMPANIES = [
+    "codiak", "evox", "anjarium", "capricor", "cartherics", "evelo", 
+    "exosome diagnostics", "paige.ai", "direct biologics", "kimera labs",
+    "aegle therapeutics", "avalon globocare", "aruna bio", "evotec",
+    "vesigen", "ciloa", "exosomics", "exopharm", "ilias biologics",
+    "exosome therapeutics", "clara biotech", "lonza", "tavec"
+]
 
 # ---------------------------------------
 # 🧠 Load NLP models
