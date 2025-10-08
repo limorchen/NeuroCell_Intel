@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import datetime as dt
 from dateutil import parser as dateparser
 import requests
@@ -18,7 +17,7 @@ from email.message import EmailMessage
 # 🔐 Load environment variables
 # ---------------------------------------
 load_dotenv()
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")  # keep if you need NewsAPI
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")  # optional, keep if needed
 
 # ---------------------------------------
 # 📁 Configuration
@@ -57,37 +56,6 @@ EVENT_KEYWORDS = {
 # ---------------------------------------
 nlp = spacy.load("en_core_web_sm")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
-
-# ---------------------------------------
-# ✉️ Email function
-# ---------------------------------------
-def send_email_with_attachment(subject, body, attachment_path):
-    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-    SMTP_USER = os.getenv("SMTP_USER", "")
-    SMTP_PASS = os.getenv("SMTP_PASS", "")
-    EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
-    EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
-
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = EMAIL_FROM
-    msg['To'] = ", ".join(EMAIL_TO)
-    msg.set_content(body)
-
-    # attach file
-    if attachment_path and os.path.isfile(attachment_path):
-        with open(attachment_path, 'rb') as f:
-            file_data = f.read()
-            file_name = os.path.basename(attachment_path)
-        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
-
-    # send
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-    print("Email sent to", EMAIL_TO)
 
 # ---------------------------------------
 # 🛠 Helper functions
@@ -158,6 +126,41 @@ def detect_indications(text):
 def summarize_short(text, max_sent=2):
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
+
+# ---------------------------------------
+# ✉️ Email function using SSL (port 465)
+# ---------------------------------------
+def send_email_with_attachment(subject, body, attachment_path):
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))  # SSL port
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASS = os.getenv("SMTP_PASS", "")
+    EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+    EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
+
+    if not SMTP_USER or not SMTP_PASS or not EMAIL_TO:
+        print("SMTP credentials or recipients not set. Skipping email.")
+        return
+
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_FROM
+    msg['To'] = ", ".join(EMAIL_TO)
+    msg.set_content(body)
+
+    if attachment_path and os.path.isfile(attachment_path):
+        with open(attachment_path, 'rb') as f:
+            file_data = f.read()
+            file_name = os.path.basename(attachment_path)
+        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
+
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+        print("Email sent to", EMAIL_TO)
+    except Exception as e:
+        print("Failed to send email:", e)
 
 # ---------------------------------------
 # 🧭 Main pipeline
