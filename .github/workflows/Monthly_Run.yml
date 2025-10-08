@@ -1,4 +1,4 @@
-name: Monthly Intelligence Agent
+name: Monthly Intelligence Agent (SMTP 587)
 
 on:
   schedule:
@@ -9,18 +9,18 @@ jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
     env:
-      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-      SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-      RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+      # SMTP 587 credentials
+      SMTP_HOST: ${{ secrets.SMTP_HOST_587 }}
+      SMTP_PORT: 587
+      SMTP_USER: ${{ secrets.SMTP_USER_587 }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS_587 }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM_587 }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO_587 }}
+
+      # Other secrets for the agent
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}
-      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO }}
     
     steps:
       - name: 🧩 Checkout repository
@@ -39,7 +39,7 @@ jobs:
       
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
-          echo "----- Starting monthly run for NeuroCell Intelligence -----"
+          echo "----- Starting monthly run for NeuroCell Intelligence (SMTP 587) -----"
           python industry_deals_agent.py
           echo "----- Run completed -----"
       
@@ -56,3 +56,4 @@ jobs:
         with:
           name: monthly-excel-output
           path: industry_deals/exosome_deals_*.xlsx
+
