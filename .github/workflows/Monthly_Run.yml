@@ -1,6 +1,8 @@
 name: Monthly Intelligence Agent
 
 on:
+  schedule:
+    - cron: '0 10 1 * *'  # Runs at 10:00 UTC on the 1st of every month
   workflow_dispatch:  # enables manual run
 
 jobs:
@@ -13,7 +15,6 @@ jobs:
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
-      # Add SMTP variables that industry_deals_agent.py needs
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
