@@ -1,13 +1,11 @@
 name: Monthly Intelligence Agent
 
-# Trigger only manually, on any branch
 on:
   workflow_dispatch:  # enables manual run
 
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
-
     env:
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
       SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
@@ -15,42 +13,42 @@ jobs:
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
-
+      # Add SMTP variables that industry_deals_agent.py needs
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+    
     steps:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
-
+      
       - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
+      
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements_semantic.txt
-
+          pip install -r requirements.txt
+          python -m spacy download en_core_web_sm
+      
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
           echo "----- Starting monthly run for NeuroCell Intelligence -----"
-          python - <<EOF
-import sys
-import traceback
-try:
-    import industry_deals_agent
-except Exception:
-    traceback.print_exc()
-    sys.exit(1)
-EOF
+          python industry_deals_agent.py
           echo "----- Run completed -----"
-
+      
       - name: 📜 Upload log file
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: monthly-run-logs
           path: neurocell_agent.log
-
+      
       - name: 📦 Upload Excel output
         if: always()
         uses: actions/upload-artifact@v4
