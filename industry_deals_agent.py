@@ -11,7 +11,6 @@ import spacy
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
-from send_email import send_email_with_attachment  # 📨 our new email module
 
 # ---------------------------------------
 # 🔐 Load environment variables
