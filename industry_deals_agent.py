@@ -11,6 +11,8 @@ import spacy
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
+import smtplib
+from email.message import EmailMessage
 
 # ---------------------------------------
 # 🔐 Load environment variables
@@ -55,6 +57,37 @@ EVENT_KEYWORDS = {
 # ---------------------------------------
 nlp = spacy.load("en_core_web_sm")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+# ---------------------------------------
+# ✉️ Email function
+# ---------------------------------------
+def send_email_with_attachment(subject, body, attachment_path):
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASS = os.getenv("SMTP_PASS", "")
+    EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+    EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
+
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_FROM
+    msg['To'] = ", ".join(EMAIL_TO)
+    msg.set_content(body)
+
+    # attach file
+    if attachment_path and os.path.isfile(attachment_path):
+        with open(attachment_path, 'rb') as f:
+            file_data = f.read()
+            file_name = os.path.basename(attachment_path)
+        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
+
+    # send
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
+    print("Email sent to", EMAIL_TO)
 
 # ---------------------------------------
 # 🛠 Helper functions
@@ -275,41 +308,6 @@ def run_agent():
     )
 
     return outfn
-
-# ---------------------------------------
-# ✉️ Email function
-# ---------------------------------------
-import smtplib
-from email.message import EmailMessage
-
-def send_email_with_attachment(subject, body, attachment_path):
-    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-    SMTP_USER = os.getenv("SMTP_USER", "")
-    SMTP_PASS = os.getenv("SMTP_PASS", "")
-    EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
-    EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
-
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = EMAIL_FROM
-    msg['To'] = ", ".join(EMAIL_TO)
-    msg.set_content(body)
-
-    # attach file
-    if attachment_path and os.path.isfile(attachment_path):
-        with open(attachment_path, 'rb') as f:
-            file_data = f.read()
-            file_name = os.path.basename(attachment_path)
-        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
-
-    # send
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-    print("Email sent to", EMAIL_TO)
-
 
 # ---------------------------------------
 # 🚀 Run
