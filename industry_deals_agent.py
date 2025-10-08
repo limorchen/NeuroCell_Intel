@@ -276,41 +276,39 @@ def run_agent():
 
     return outfn
 
+# ---------------------------------------
+# ✉️ Email function
+# ---------------------------------------
 import smtplib
 from email.message import EmailMessage
 
 def send_email_with_attachment(subject, body, attachment_path):
-    SMTP_HOST = os.getenv("SMTP_HOST")
-    SMTP_PORT = int(os.getenv("SMTP_PORT"))
-    SMTP_USER = os.getenv("SMTP_USER")
-    SMTP_PASS = os.getenv("SMTP_PASS")
-    EMAIL_FROM = os.getenv("EMAIL_FROM")
-    EMAIL_TO = os.getenv("EMAIL_TO").split(",")
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASS = os.getenv("SMTP_PASS", "")
+    EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+    EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
 
     msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_FROM
-    msg["To"] = ", ".join(EMAIL_TO)
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_FROM
+    msg['To'] = ", ".join(EMAIL_TO)
     msg.set_content(body)
 
-    # attach Excel file
-    with open(attachment_path, "rb") as f:
-        data = f.read()
-    msg.add_attachment(
-        data,
-        maintype="application",
-        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=os.path.basename(attachment_path)
-    )
+    # attach file
+    if attachment_path and os.path.isfile(attachment_path):
+        with open(attachment_path, 'rb') as f:
+            file_data = f.read()
+            file_name = os.path.basename(attachment_path)
+        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
 
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.send_message(msg)
-        print("Email sent to", EMAIL_TO)
-    except Exception as e:
-        print("Email send failed:", e)
+    # send
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
+    print("Email sent to", EMAIL_TO)
 
 
 # ---------------------------------------
