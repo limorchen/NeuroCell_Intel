@@ -276,6 +276,43 @@ def run_agent():
 
     return outfn
 
+import smtplib
+from email.message import EmailMessage
+
+def send_email_with_attachment(subject, body, attachment_path):
+    SMTP_HOST = os.getenv("SMTP_HOST")
+    SMTP_PORT = int(os.getenv("SMTP_PORT"))
+    SMTP_USER = os.getenv("SMTP_USER")
+    SMTP_PASS = os.getenv("SMTP_PASS")
+    EMAIL_FROM = os.getenv("EMAIL_FROM")
+    EMAIL_TO = os.getenv("EMAIL_TO").split(",")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_FROM
+    msg["To"] = ", ".join(EMAIL_TO)
+    msg.set_content(body)
+
+    # attach Excel file
+    with open(attachment_path, "rb") as f:
+        data = f.read()
+    msg.add_attachment(
+        data,
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=os.path.basename(attachment_path)
+    )
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+        print("Email sent to", EMAIL_TO)
+    except Exception as e:
+        print("Email send failed:", e)
+
+
 # ---------------------------------------
 # 🚀 Run
 # ---------------------------------------
