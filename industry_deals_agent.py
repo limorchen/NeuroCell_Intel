@@ -142,38 +142,55 @@ def summarize_short(text, max_sent=2):
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
 
+def deduplicate_items(items):
+    seen = set()
+    unique = []
+    for item in items:
+        # Use event type + normalized title (without source suffix)
+        key = (
+            item.get("event_type", "").lower(),
+            item.get("title", "").strip().lower().split(" - ")[0]
+        )
+        if key not in seen:
+            unique.append(item)
+            seen.add(key)
+    return unique
+
 # *** ADD THIS HERE ***
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
 
-    # 🧹 BASIC SPAM TERMS
+    # 🧹 SPAM FILTER — reject market fluff / ads / webinars
     SPAM_TERMS = [
         "webinar", "sponsored", "whitepaper", "advertise", "iqvia", "syngene",
         "sign up to read", "subscribe", "newsletter",
         "market research", "market size", "market report", "market insights",
         "pipeline insights", "precedence research", "openpr.com",
-        "download", "reportlinker", "press release"
+        "download", "reportlinker", "press release", "forecast"
     ]
     if any(term in combined for term in SPAM_TERMS):
         return False
 
-    # 🧠 Check for real exosome content
     exosome_terms = [
         "exosome", "exosomes",
         "extracellular vesicle", "extracellular vesicles",
         "exosomal", "ev therapy", "evs"
     ]
+
+    # count hits
     title_hits = sum(term in title.lower() for term in exosome_terms)
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
 
     if title_hits == 0 and not company_match:
         return False
 
-    # 🚫 Filter out very short or junky text
+    # avoid trivial junk text
     if len(text) < 300:
         return False
 
     return True
+
+
 
 # ---------------------------------------
 # ✉️ Email function using SSL (port 465)
