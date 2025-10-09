@@ -27,7 +27,6 @@ SINCE_DAYS = 40
 TOP_N_TO_EMAIL = 10
 
 RSS_FEEDS = [
-    # Highly focused exosome searches
     "https://news.google.com/rss/search?q=(exosome+OR+exosomes+OR+%22extracellular+vesicles%22+OR+%22EV+therapy%22)+(acquisition+OR+partnership+OR+licensing+OR+funding+OR+deal+OR+raised)&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=exosome+(company+OR+biotech+OR+therapeutics)+(funding+OR+investment+OR+series)&hl=en-US&gl=US&ceid=US:en",
     "https://www.fiercebiotech.com/rss.xml",
@@ -51,7 +50,6 @@ EVENT_KEYWORDS = {
     "deal": ["deal", "agreement","term sheet","option agreement","commercialization"]
 }
 
-# Known exosome/EV companies to track
 EXOSOME_COMPANIES = [
     "codiak", "evox", "anjarium", "capricor", "cartherics", "evelo", 
     "exosome diagnostics", "paige.ai", "direct biologics", "kimera labs",
@@ -108,7 +106,6 @@ def extract_companies(text):
             if len(t.split()) > 6:
                 continue
             if any(word.lower() in ["biotech", "cell", "gene", "therapy", "venture", "capital", "diagnostics"] for word in t.lower().split()):
-                # Optional: only skip if it's generic phrase
                 continue
             orgs.append(t)
     return list(dict.fromkeys(orgs))
@@ -146,7 +143,6 @@ def deduplicate_items(items):
     seen = set()
     unique = []
     for item in items:
-        # Use event type + normalized title (without source suffix)
         key = (
             item.get("event_type", "").lower(),
             item.get("title", "").strip().lower().split(" - ")[0]
@@ -156,11 +152,8 @@ def deduplicate_items(items):
             seen.add(key)
     return unique
 
-# *** ADD THIS HERE ***
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
-
-    # 🧹 SPAM FILTER — reject market fluff / ads / webinars
     SPAM_TERMS = [
         "webinar", "sponsored", "whitepaper", "advertise", "iqvia", "syngene",
         "sign up to read", "subscribe", "newsletter",
@@ -177,27 +170,20 @@ def is_exosome_relevant(text, title):
         "exosomal", "ev therapy", "evs"
     ]
 
-    # count hits
     title_hits = sum(term in title.lower() for term in exosome_terms)
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
 
     if title_hits == 0 and not company_match:
         return False
 
-    # avoid trivial junk text
     if len(text) < 300:
         return False
 
     return True
 
-
-
-# ---------------------------------------
-# ✉️ Email function using SSL (port 465)
-# ---------------------------------------
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))  # SSL port
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
     SMTP_USER = os.getenv("SMTP_USER", "")
     SMTP_PASS = os.getenv("SMTP_PASS", "")
     EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
@@ -269,7 +255,9 @@ def run_agent():
         except Exception as e:
             print("PR page error", pr_url, e)
 
-    # Dedupe
+    # ---------------------------
+    # 🔹 Dedupe by link/title first
+    # ---------------------------
     uniq = {}
     for c in collected:
         key = (c.get("link") or c.get("title")).strip()
@@ -277,6 +265,12 @@ def run_agent():
             uniq[key] = c
     collected = list(uniq.values())
     print(f"Collected {len(collected)} candidate items")
+
+    # ---------------------------
+    # 🔹 Dedupe by event type + normalized title
+    # ---------------------------
+    collected = deduplicate_items(collected)
+    print(f"After normalized deduplication: {len(collected)} unique items")
 
     # 3) Process
     processed=[]
@@ -288,7 +282,6 @@ def run_agent():
         text = fetch_article_text(url) if url else ""
         full_text = text if text else summary if summary else title
 
-        # *** ADD THIS CHECK HERE ***
         if not is_exosome_relevant(full_text, title):
             continue  # Skip non-exosome content
 
@@ -302,7 +295,6 @@ def run_agent():
         score += 0.8 if money else 0.0
         score += 0.2 * len(companies)
 
-        # *** ADD THESE TWO LINES HERE ***
         exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
         score += min(exosome_count * 0.3, 2.0)  # Up to 2 bonus points
 
