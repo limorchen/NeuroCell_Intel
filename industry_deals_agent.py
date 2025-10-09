@@ -248,6 +248,11 @@ def run_agent():
         summary = item.get("summary","") or ""
         text = fetch_article_text(url) if url else ""
         full_text = text if text else summary if summary else title
+
+        # *** ADD THIS CHECK HERE ***
+        if not is_exosome_relevant(full_text, title):
+            continue  # Skip non-exosome content
+
         short = summarize_short(full_text, max_sent=2)
         companies = extract_companies(full_text)
         money = extract_money(full_text)
