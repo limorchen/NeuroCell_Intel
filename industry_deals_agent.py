@@ -144,25 +144,33 @@ def summarize_short(text, max_sent=2):
 
 # *** ADD THIS HERE ***
 def is_exosome_relevant(text, title):
-    """Strict filter: require real exosome/EV relevance"""
     combined = (title + " " + text).lower()
 
-    # Require actual keyword hits in title or body
-    exosome_terms = ["exosome", "exosomes", "extracellular vesicle", "extracellular vesicles", "exosomal", "ev therapy"]
+    # 🧹 SPAM FILTER
+    SPAM_TERMS = ["webinar", "sponsored", "whitepaper", "advertise", "iqvia", "syngene"]
+    if any(term in combined for term in SPAM_TERMS):
+        return False
+    exosome_terms = [
+        "exosome", "exosomes",
+        "extracellular vesicle", "extracellular vesicles",
+        "exosomal", "ev therapy", "evs"
+    ]
+
+    # count hits
     title_hits = sum(term in title.lower() for term in exosome_terms)
     text_hits = sum(term in text.lower() for term in exosome_terms)
 
-    if title_hits == 0 and text_hits == 0:
-        # Second chance: known exosome companies
-        if not any(comp.lower() in combined for comp in EXOSOME_COMPANIES):
-            return False
+    # must match title or company list
+    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
 
-    # Optional: minimum length to avoid junk
-    if len(text) < 400:
+    if title_hits == 0 and not company_match:
+        return False
+
+    # avoid trivial junk text
+    if len(text) < 300:
         return False
 
     return True
-
 # ---------------------------------------
 # ✉️ Email function using SSL (port 465)
 # ---------------------------------------
