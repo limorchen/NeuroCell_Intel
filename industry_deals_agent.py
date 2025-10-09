@@ -99,13 +99,19 @@ def fetch_article_text(url, timeout=8):
 
 def extract_companies(text):
     doc = nlp(text)
-    orgs = [ent.text.strip() for ent in doc.ents if ent.label_ == "ORG"]
-    seen = set(); out = []
-    for o in orgs:
-        key = o.lower()
-        if len(o) > 1 and key not in seen:
-            seen.add(key); out.append(o)
-    return out
+    orgs = []
+    for ent in doc.ents:
+        if ent.label_ == "ORG":
+            t = ent.text.strip()
+            if len(t) < 2:
+                continue
+            if len(t.split()) > 6:
+                continue
+            if any(word.lower() in ["biotech", "cell", "gene", "therapy", "venture", "capital", "diagnostics"] for word in t.lower().split()):
+                # Optional: only skip if it's generic phrase
+                continue
+            orgs.append(t)
+    return list(dict.fromkeys(orgs))
 
 def extract_money(text):
     patterns = [
@@ -138,19 +144,23 @@ def summarize_short(text, max_sent=2):
 
 # *** ADD THIS HERE ***
 def is_exosome_relevant(text, title):
-    """Check if content is actually about exosomes/EVs"""
-    combined = (text + " " + title).lower()
-    
-    # Must have exosome/EV keywords
-    exosome_terms = ["exosome", "exosomes", "extracellular vesicle", " ev ", " evs ", "exosomal"]
-    has_exosome = any(term in combined for term in exosome_terms)
-    
-    if not has_exosome:
-        # Check for known exosome companies
-        has_company = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-        if not has_company:
+    """Strict filter: require real exosome/EV relevance"""
+    combined = (title + " " + text).lower()
+
+    # Require actual keyword hits in title or body
+    exosome_terms = ["exosome", "exosomes", "extracellular vesicle", "extracellular vesicles", "exosomal", "ev therapy"]
+    title_hits = sum(term in title.lower() for term in exosome_terms)
+    text_hits = sum(term in text.lower() for term in exosome_terms)
+
+    if title_hits == 0 and text_hits == 0:
+        # Second chance: known exosome companies
+        if not any(comp.lower() in combined for comp in EXOSOME_COMPANIES):
             return False
-    
+
+    # Optional: minimum length to avoid junk
+    if len(text) < 400:
+        return False
+
     return True
 
 # ---------------------------------------
@@ -259,7 +269,7 @@ def run_agent():
         event = classify_event(full_text + " " + title)
         indications = detect_indications(full_text + " " + title)
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
-        score += 1.0 * len(indications)
+        score += 0.5 * len(indications)
         score += 0.8 if money else 0.0
         score += 0.2 * len(companies)
 
