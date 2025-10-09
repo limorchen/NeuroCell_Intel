@@ -55,7 +55,10 @@ EXOSOME_COMPANIES = [
     "exosome diagnostics", "paige.ai", "direct biologics", "kimera labs",
     "aegle therapeutics", "avalon globocare", "aruna bio", "evotec",
     "vesigen", "ciloa", "exosomics", "exopharm", "ilias biologics",
-    "exosome therapeutics", "clara biotech", "lonza", "tavec"
+    "exosome therapeutics", "clara biotech", "lonza", "tavec", 
+    "aegle therapeutics", "roosterbio", "exocobio", "versatope therapeutics",
+    "nanosomix", "aruna bio", "paracrine therapeutics", "exopharm", "exocelbio", 
+    "regeneveda", "swiss derma clinic"
 ]
 
 # ---------------------------------------
