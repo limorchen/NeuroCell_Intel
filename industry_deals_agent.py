@@ -136,6 +136,23 @@ def summarize_short(text, max_sent=2):
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
 
+# *** ADD THIS HERE ***
+def is_exosome_relevant(text, title):
+    """Check if content is actually about exosomes/EVs"""
+    combined = (text + " " + title).lower()
+    
+    # Must have exosome/EV keywords
+    exosome_terms = ["exosome", "exosomes", "extracellular vesicle", " ev ", " evs ", "exosomal"]
+    has_exosome = any(term in combined for term in exosome_terms)
+    
+    if not has_exosome:
+        # Check for known exosome companies
+        has_company = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
+        if not has_company:
+            return False
+    
+    return True
+
 # ---------------------------------------
 # ✉️ Email function using SSL (port 465)
 # ---------------------------------------
@@ -240,6 +257,11 @@ def run_agent():
         score += 1.0 * len(indications)
         score += 0.8 if money else 0.0
         score += 0.2 * len(companies)
+
+        # *** ADD THESE TWO LINES HERE ***
+        exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
+        score += min(exosome_count * 0.3, 2.0)  # Up to 2 bonus points
+
         processed.append({
             "title": title,
             "url": url,
