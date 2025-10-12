@@ -42,6 +42,10 @@ jobs:
           echo "----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----"
           python industry_deals_agent.py
           echo "----- Run completed -----"
+
+      - name: Install dependencies
+        run: |
+          pip install newspaper3k     
       
       - name: 📜 Upload log file
         if: always()
