@@ -27,11 +27,21 @@ OUTPUT_DIR = "./industry_deals"
 SINCE_DAYS = 40
 TOP_N_TO_EMAIL = 10
 
+# Updated RSS feeds - direct sources instead of Google News
 RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=(exosome+OR+exosomes+OR+%22extracellular+vesicles%22+OR+%22EV+therapy%22)+(acquisition+OR+partnership+OR+licensing+OR+funding+OR+deal+OR+raised)&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=exosome+(company+OR+biotech+OR+therapeutics)+(funding+OR+investment+OR+series)&hl=en-US&gl=US&ceid=US:en",
+    # Biotech/pharma specific feeds
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
+    "https://www.biospace.com/rss",
+    "https://www.genengnews.com/feed/",
+    "https://www.labiotech.eu/feed/",
+    
+    # Business wire feeds
+    "https://www.businesswire.com/portal/site/home/news/subject/landing/biotechnology",
+    "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
+    
+    # Keep one focused Google News search
+    "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
 ]
 
 PR_PAGES = []
@@ -112,47 +122,105 @@ def fetch_article_text(url, timeout=10):
         text = re.sub(r'\s+', ' ', text).strip()
         return text[:10000]  # Limit to 10k chars
     except Exception as e:
-        print(f"Fetch error for {url[:50]}...: {str(e)[:50]}")
+        # Silently fail for Google News redirects
         return ""
 
 def extract_companies(text):
-    """Extract company names, filtering out news sources"""
+    """Extract company names with aggressive filtering of news sources"""
     doc = nlp(text)
     orgs = []
     
-    # Common news sources to ignore
+    # Expanded list of terms to ignore
     IGNORE_ORGS = [
         "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
         "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
         "ap", "associated press", "wall street journal", "new york times",
-        "cnn", "bbc", "fox news", "nbc", "cbs", "abc news"
+        "cnn", "bbc", "fox news", "nbc", "cbs", "abc news", "tipranks",
+        "globe newswire", "business wire", "pr newswire", "marketwatch",
+        "seeking alpha", "motley fool", "benzinga", "zacks", "biospace",
+        "genengnews", "labiotech", "fiercepharma"
+    ]
+    
+    # Common suffixes to remove
+    REMOVE_SUFFIXES = [
+        " - tipranks", " tipranks", "the manila times", " - msn",
+        " acquisition", " diagnostics acquisition"
     ]
     
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
+            
+            # Remove suffixes
+            for suffix in REMOVE_SUFFIXES:
+                if t.lower().endswith(suffix):
+                    t = t[:-len(suffix)].strip()
+            
             if len(t) < 2 or len(t.split()) > 6:
                 continue
             if t.lower() in IGNORE_ORGS:
                 continue
             if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
+            
+            # Skip generic terms
+            if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
+                continue
+                
             orgs.append(t)
     
-    return list(dict.fromkeys(orgs))[:8]  # Max 8 companies
+    # Deduplicate preserving order
+    seen = set()
+    unique_orgs = []
+    for org in orgs:
+        if org.lower() not in seen:
+            seen.add(org.lower())
+            unique_orgs.append(org)
+    
+    return unique_orgs[:5]  # Max 5 companies
+
+def extract_acquisition_details(title, text):
+    """Manually extract acquisition details from text"""
+    combined = title + " " + text
+    
+    # Pattern: "Company A acquires/buys Company B"
+    patterns = [
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|announces?|closes?)\s+(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, combined, re.I)
+        if match:
+            acquirer = match.group(1).strip()
+            target = match.group(2).strip() if len(match.groups()) > 1 else ""
+            
+            # Clean up
+            acquirer = re.sub(r'\s+(announces|completes|closes|acquisition).*', '', acquirer, flags=re.I)
+            target = re.sub(r'\s+(from|for|acquisition).*', '', target, flags=re.I)
+            
+            if acquirer and target and len(acquirer) > 2 and len(target) > 2:
+                return [acquirer, target]
+    
+    return []
 
 def extract_money(text):
     """Extract monetary amounts"""
     patterns = [
-        r"\$\s?[0-9\.,]+\s?(million|billion|bn|m|k)?",
-        r"[0-9\.,]+\s?(million|billion|bn|m|k)\s+(usd|dollars|eur|€|\$)?",
-        r"USD\s?[0-9\.,]+\s?(million|billion|m|bn)?"
+        r"\$\s?[0-9\.,]+\s?(?:million|billion|bn|m|k)\b",
+        r"[0-9\.,]+\s?(?:million|billion|bn|m)\s+(?:usd|dollars|eur|€|\$)",
+        r"USD\s?[0-9\.,]+\s?(?:million|billion|m|bn)",
     ]
     matches = []
     for p in patterns:
         for m in re.finditer(p, text, flags=re.I):
-            matches.append(m.group(0))
-    return list(dict.fromkeys(matches))
+            amount = m.group(0).strip()
+            # Normalize format
+            if not amount.startswith('$') and '$' not in amount:
+                amount = '$' + amount
+            matches.append(amount)
+    return list(dict.fromkeys(matches))[:3]  # Max 3 amounts
 
 def classify_event(text):
     tl = text.lower()
@@ -172,24 +240,28 @@ def summarize_short(text, max_sent=2):
     return " ".join(sents[:max_sent]).strip()
 
 def normalize_title(title):
-    """Normalize title for deduplication"""
-    # Remove source attribution (e.g., "- MSN", "- The Manila Times")
-    title = re.split(r'\s*[-–—]\s*[A-Z][a-z]+', title)[0]
+    """Aggressive normalization for deduplication"""
+    # Remove source attribution
+    title = re.split(r'\s*[-–—]\s*', title)[0]
+    # Remove common words
+    for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
+        title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
     # Convert to lowercase and remove punctuation
     title = re.sub(r'[^\w\s]', '', title.lower()).strip()
+    # Remove extra spaces
+    title = re.sub(r'\s+', ' ', title)
     return title
 
 def is_exosome_relevant(text, title):
-    """Check if content is about exosomes/EVs with relaxed requirements"""
+    """Check if content is about exosomes/EVs"""
     combined = (title + " " + text).lower()
     
     # Filter out spam/promotional content
     SPAM_TERMS = [
-        "webinar", "sponsored", "whitepaper", "advertise", "iqvia", "syngene",
+        "webinar", "sponsored", "whitepaper", "advertise", 
         "sign up to read", "subscribe", "newsletter",
         "market research", "market size", "market report", "market insights",
-        "pipeline insights", "precedence research", "openpr.com",
-        "download", "reportlinker", "press release distribution", "forecast"
+        "pipeline insights", "download", "forecast", "market analysis"
     ]
     if any(term in combined for term in SPAM_TERMS):
         return False
@@ -197,22 +269,22 @@ def is_exosome_relevant(text, title):
     exosome_terms = [
         "exosome", "exosomes",
         "extracellular vesicle", "extracellular vesicles",
-        "exosomal", "ev therapy", " evs"
+        "exosomal", "ev therapy", " evs "
     ]
 
     title_hits = sum(term in title.lower() for term in exosome_terms)
+    text_hits = sum(term in text.lower() for term in exosome_terms)
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
 
     # Must have exosome terms in title OR be a known exosome company
     if title_hits == 0 and not company_match:
         return False
 
-    # RELAXED: Accept if we have title match, even with short text
+    # Accept if title match OR (company match with some exosome mention)
     if title_hits > 0:
         return True
     
-    # For company matches, require some content
-    if company_match and len(text) >= 100:  # Reduced from 300
+    if company_match and (text_hits > 0 or len(text) >= 100):
         return True
 
     return False
@@ -307,14 +379,16 @@ def run_agent():
     collected = list(uniq.values())
     print(f"After URL deduplication: {len(collected)} items")
 
-    # Dedupe by normalized title
-    title_map = {}
+    # Dedupe by normalized title + date
+    date_title_map = {}
     for item in collected:
         norm_title = normalize_title(item.get("title", ""))
-        if norm_title and len(norm_title) > 10 and norm_title not in title_map:
-            title_map[norm_title] = item
-    collected = list(title_map.values())
-    print(f"After title deduplication: {len(collected)} items")
+        pub_date = item.get("published", "")[:10] if item.get("published") else "unknown"
+        key = f"{norm_title}_{pub_date}"
+        if key not in date_title_map and norm_title and len(norm_title) > 10:
+            date_title_map[key] = item
+    collected = list(date_title_map.values())
+    print(f"After date+title deduplication: {len(collected)} items")
 
     # 3) Process
     processed = []
@@ -339,24 +413,34 @@ def run_agent():
 
         short = summarize_short(full_text, max_sent=2)
         
-        # Extract companies from both full text and title/summary
-        companies_from_text = extract_companies(full_text)
-        companies_from_title = extract_companies(title + " " + summary)
-        companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+        # Extract companies - try manual extraction first for acquisitions
+        event = classify_event(full_text + " " + title)
         
-        # Extract money from both sources
+        if "acqui" in title.lower() or event == "acquisition":
+            # Try pattern matching for acquisition details
+            companies = extract_acquisition_details(title, full_text)
+            if not companies or len(companies) < 2:
+                # Fallback to NER
+                companies_from_text = extract_companies(full_text)
+                companies_from_title = extract_companies(title + " " + summary)
+                companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+        else:
+            companies_from_text = extract_companies(full_text)
+            companies_from_title = extract_companies(title + " " + summary)
+            companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+        
+        # Extract money from all sources
         money_from_text = extract_money(full_text)
         money_from_title = extract_money(title + " " + summary)
         money = list(dict.fromkeys(money_from_text + money_from_title))[:3]
         
-        event = classify_event(full_text + " " + title)
         indications = detect_indications(full_text + " " + title)
         
         # Scoring
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
         score += 0.5 * len(indications)
         score += 0.8 if money else 0.0
-        score += 0.2 * len(companies)
+        score += 0.3 * len(companies)
         
         exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
         score += min(exosome_count * 0.3, 2.0)
@@ -381,7 +465,7 @@ def run_agent():
         print("No processed items found.")
         return None
 
-    # 4) Dedupe via embeddings (more aggressive)
+    # 4) Dedupe via embeddings
     texts = [p["title"] + " " + p["short_summary"] for p in processed]
     emb = embedder.encode(texts)
     sim = cosine_similarity(emb)
@@ -389,7 +473,7 @@ def run_agent():
     drop = set()
     for i in range(n):
         for j in range(i+1, n):
-            if sim[i,j] > 0.80:  # More aggressive threshold
+            if sim[i,j] > 0.75:  # Even more aggressive
                 if processed[i]["score"] >= processed[j]["score"]:
                     drop.add(j)
                 else:
