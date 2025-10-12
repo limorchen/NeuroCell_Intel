@@ -67,7 +67,11 @@ EXOSOME_COMPANIES = [
     "exosome therapeutics", "clara biotech", "lonza", "tavec", 
     "roosterbio", "exocobio", "versatope therapeutics",
     "nanosomix", "paracrine therapeutics", "exocelbio", 
-    "regeneveda", "mdxhealth", "bio-techne"
+    "regeneveda", "mdxhealth", "bio-techne", "nurexone biologic", "biorestorative therapeutics",
+    "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs", "paracrine therapeutics", 
+    "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
+    "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems"
+    
 ]
 
 # ---------------------------------------
@@ -263,11 +267,12 @@ def is_exosome_relevant(text, title):
     exosome_terms = [
         "exosome", "exosomes",
         "extracellular vesicle", "extracellular vesicles",
-        "exosomal", "ev therapy", " evs "
+        "exosomal", "ev therapy", " evs ", 
     ]
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-    # Only accept if BOTH exosome term and company present
-    if not (any(term in combined for term in exosome_terms) and company_match):
+    exosome_hits = sum(term in combined for term in exosome_terms)
+    # Accept only if: match to company AND at least one exosome keyword, OR two or more exosome keyword hits
+    if not ((company_match and exosome_hits > 0) or (exosome_hits > 1)):
         return False
     if any(term in combined for term in SPAM_TERMS):
         return False
