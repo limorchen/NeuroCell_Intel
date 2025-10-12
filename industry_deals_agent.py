@@ -210,21 +210,22 @@ def extract_acquisition_details(title, text):
     return []
 
 def extract_money(text):
-    """Extract monetary amounts"""
     patterns = [
-        r"\$\s?[0-9\.,]+\s?(?:million|billion|bn|m|k)\b",
-        r"[0-9\.,]+\s?(?:million|billion|bn|m)\s+(?:usd|dollars|eur|€|\$)",
-        r"USD\s?[0-9\.,]+\s?(?:million|billion|m|bn)",
+        r"\$\s?\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|bn|m|k)?\b",
+        r"\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|bn|m|k)?\s?(?:usd|dollars|eur|€|\$)",
+        r"USD\s?\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|bn|m)?",
+        r"\d+\.?\d*\s?(?:million|billion|bn|m|k)?",
     ]
     matches = []
-    for p in patterns:
-        for m in re.finditer(p, text, flags=re.I):
-            amount = m.group(0).strip()
-            # Normalize format
-            if not amount.startswith('$') and '$' not in amount:
-                amount = '$' + amount
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.I):
+            amount = match.group(0).strip()
+            # Normalize amounts to start with $ if not present but currency implied
+            if not amount.startswith("$") and ("usd" in amount.lower() or "dollar" in amount.lower()):
+                amount = "$" + amount
             matches.append(amount)
-    return list(dict.fromkeys(matches))[:3]  # Max 3 amounts
+    # Deduplicate and limit to top 5 amounts
+    return list(dict.fromkeys(matches))[:5]
 
 def classify_event(text):
     tl = text.lower()
