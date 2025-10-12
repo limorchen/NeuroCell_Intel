@@ -12,12 +12,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 import smtplib
 from email.message import EmailMessage
+from html import unescape
 
 # ---------------------------------------
 # 🔐 Load environment variables
 # ---------------------------------------
 load_dotenv()
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")  # optional, keep if needed
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 
 # ---------------------------------------
 # 📁 Configuration
@@ -33,9 +34,7 @@ RSS_FEEDS = [
     "https://endpts.com/feed/",
 ]
 
-PR_PAGES = [
-    # ("CompanyName", "https://company.com/press-releases"),
-]
+PR_PAGES = []
 
 INDICATION_KEYWORDS = [
     "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
@@ -56,9 +55,9 @@ EXOSOME_COMPANIES = [
     "aegle therapeutics", "avalon globocare", "aruna bio", "evotec",
     "vesigen", "ciloa", "exosomics", "exopharm", "ilias biologics",
     "exosome therapeutics", "clara biotech", "lonza", "tavec", 
-    "aegle therapeutics", "roosterbio", "exocobio", "versatope therapeutics",
-    "nanosomix", "aruna bio", "paracrine therapeutics", "exopharm", "exocelbio", 
-    "regeneveda", "swiss derma clinic"
+    "roosterbio", "exocobio", "versatope therapeutics",
+    "nanosomix", "paracrine therapeutics", "exocelbio", 
+    "regeneveda", "mdxhealth", "bio-techne"
 ]
 
 # ---------------------------------------
@@ -108,7 +107,7 @@ def extract_companies(text):
                 continue
             if len(t.split()) > 6:
                 continue
-            if any(word.lower() in ["biotech", "cell", "gene", "therapy", "venture", "capital", "diagnostics"] for word in t.lower().split()):
+            if any(word in t.lower() for word in ["biotech", "cell", "gene", "therapy", "venture", "capital", "diagnostics"]):
                 continue
             orgs.append(t)
     return list(dict.fromkeys(orgs))
@@ -142,27 +141,24 @@ def summarize_short(text, max_sent=2):
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
 
-def deduplicate_items(items):
-    seen = set()
-    unique = []
-    for item in items:
-        key = (
-            item.get("event_type", "").lower(),
-            item.get("title", "").strip().lower().split(" - ")[0]
-        )
-        if key not in seen:
-            unique.append(item)
-            seen.add(key)
-    return unique
+def normalize_title(title):
+    """Normalize title for deduplication"""
+    # Remove source attribution (e.g., "- MSN", "- The Manila Times")
+    title = re.split(r'\s*[-–—]\s*[A-Z][a-z]+', title)[0]
+    # Convert to lowercase and remove punctuation
+    title = re.sub(r'[^\w\s]', '', title.lower()).strip()
+    return title
 
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
+    
+    # Filter out spam/promotional content
     SPAM_TERMS = [
         "webinar", "sponsored", "whitepaper", "advertise", "iqvia", "syngene",
         "sign up to read", "subscribe", "newsletter",
         "market research", "market size", "market report", "market insights",
         "pipeline insights", "precedence research", "openpr.com",
-        "download", "reportlinker", "press release", "forecast"
+        "download", "reportlinker", "press release distribution", "forecast"
     ]
     if any(term in combined for term in SPAM_TERMS):
         return False
@@ -176,9 +172,11 @@ def is_exosome_relevant(text, title):
     title_hits = sum(term in title.lower() for term in exosome_terms)
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
 
+    # Must have exosome terms in title OR be a known exosome company
     if title_hits == 0 and not company_match:
         return False
 
+    # Require minimum content length
     if len(text) < 300:
         return False
 
@@ -224,7 +222,7 @@ def run_agent():
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
     collected = []
 
-    # 1) RSS
+    # 1) RSS - with HTML cleaning
     for rss in RSS_FEEDS:
         entries = fetch_rss_entries(rss)
         for e in entries:
@@ -238,11 +236,16 @@ def run_agent():
                     pub_dt = pub_dt.replace(tzinfo=dt.timezone.utc)
                 if pub_dt < since:
                     continue
+            
+            # Clean HTML from summary
+            raw_summary = e.get("summary","") or e.get("description","")
+            clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text(strip=True)
+            
             collected.append({
                 "title": e.get("title",""),
                 "link": e.get("link",""),
                 "published": pub_dt.isoformat() if pub_dt else None,
-                "summary": e.get("summary","") or e.get("description","")
+                "summary": clean_summary
             })
 
     # 2) PR pages
@@ -258,25 +261,28 @@ def run_agent():
         except Exception as e:
             print("PR page error", pr_url, e)
 
-    # ---------------------------
-    # 🔹 Dedupe by link/title first
-    # ---------------------------
+    print(f"Initial collection: {len(collected)} items")
+
+    # Dedupe by URL first
     uniq = {}
     for c in collected:
         key = (c.get("link") or c.get("title")).strip()
         if key and key not in uniq:
             uniq[key] = c
     collected = list(uniq.values())
-    print(f"Collected {len(collected)} candidate items")
+    print(f"After URL deduplication: {len(collected)} items")
 
-    # ---------------------------
-    # 🔹 Dedupe by event type + normalized title
-    # ---------------------------
-    collected = deduplicate_items(collected)
-    print(f"After normalized deduplication: {len(collected)} unique items")
+    # Dedupe by normalized title
+    title_map = {}
+    for item in collected:
+        norm_title = normalize_title(item.get("title", ""))
+        if norm_title and len(norm_title) > 10 and norm_title not in title_map:
+            title_map[norm_title] = item
+    collected = list(title_map.values())
+    print(f"After title deduplication: {len(collected)} items")
 
     # 3) Process
-    processed=[]
+    processed = []
     for item in collected:
         title = item.get("title","")
         url = item.get("link","")
@@ -285,21 +291,29 @@ def run_agent():
         text = fetch_article_text(url) if url else ""
         full_text = text if text else summary if summary else title
 
+        # Filter non-exosome content
         if not is_exosome_relevant(full_text, title):
-            continue  # Skip non-exosome content
+            continue
 
         short = summarize_short(full_text, max_sent=2)
-        companies = extract_companies(full_text)
+        
+        # Extract companies from both full text and title/summary
+        companies_from_text = extract_companies(full_text)
+        companies_from_title = extract_companies(title + " " + summary)
+        companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]  # Max 5
+        
         money = extract_money(full_text)
         event = classify_event(full_text + " " + title)
         indications = detect_indications(full_text + " " + title)
+        
+        # Scoring with exosome boost
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
         score += 0.5 * len(indications)
         score += 0.8 if money else 0.0
         score += 0.2 * len(companies)
-
+        
         exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
-        score += min(exosome_count * 0.3, 2.0)  # Up to 2 bonus points
+        score += min(exosome_count * 0.3, 2.0)
 
         processed.append({
             "title": title,
@@ -315,25 +329,27 @@ def run_agent():
             "score": score
         })
 
+    print(f"After relevance filtering: {len(processed)} items")
+
     if not processed:
         print("No processed items found.")
         return None
 
-    # 4) Dedupe via embeddings
+    # 4) Dedupe via embeddings (more aggressive)
     texts = [p["title"] + " " + p["short_summary"] for p in processed]
     emb = embedder.encode(texts)
     sim = cosine_similarity(emb)
     n = len(processed)
-    drop=set()
+    drop = set()
     for i in range(n):
         for j in range(i+1, n):
-            if sim[i,j] > 0.90:
+            if sim[i,j] > 0.80:  # More aggressive threshold
                 if processed[i]["score"] >= processed[j]["score"]:
                     drop.add(j)
                 else:
                     drop.add(i)
     filtered = [p for idx,p in enumerate(processed) if idx not in drop]
-    print(f"Filtered {len(processed)-len(filtered)} duplicates; {len(filtered)} items remain")
+    print(f"Filtered {len(processed)-len(filtered)} embedding duplicates; {len(filtered)} items remain")
 
     # 5) DataFrame
     df = pd.DataFrame(filtered)
@@ -360,7 +376,7 @@ def run_agent():
     df_export[["published_dt","title","url","event_type","companies","amounts","indications","short_summary","score"]].to_excel(outfn, index=False)
     print("Wrote", outfn)
 
-    # 7) Compose email summary
+    # 7) Email
     top = df_export.head(TOP_N_TO_EMAIL)
     lines = [f"Exosome Deals — Summary (last {SINCE_DAYS} days)\nGenerated: {dt.datetime.utcnow().isoformat()}\n"]
     for _, r in top.iterrows():
