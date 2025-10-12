@@ -71,7 +71,6 @@ EXOSOME_COMPANIES = [
     "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs", "paracrine therapeutics", 
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems"
-    
 ]
 
 # ---------------------------------------
@@ -100,41 +99,33 @@ def fetch_article_text(url, timeout=10):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        # Allow redirects
         r = requests.get(url, timeout=timeout, headers=headers, allow_redirects=True)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         
-        # Remove script and style elements
         for script in soup(["script", "style"]):
             script.decompose()
         
-        # Try multiple strategies to find content
         article = soup.find('article')
         if article:
             text = article.get_text(" ", strip=True)
         else:
-            # Try main content area
             main = soup.find('main') or soup.find('div', class_=re.compile('content|article|body'))
             if main:
                 text = main.get_text(" ", strip=True)
             else:
-                # Fallback to all paragraphs
                 paras = soup.find_all('p')
                 text = " ".join(p.get_text(" ", strip=True) for p in paras)
         
         text = re.sub(r'\s+', ' ', text).strip()
-        return text[:10000]  # Limit to 10k chars
-    except Exception as e:
-        # Silently fail for Google News redirects
+        return text[:10000]
+    except Exception:
         return ""
 
 def extract_companies(text):
-    """Extract company names with aggressive filtering of news sources"""
     doc = nlp(text)
     orgs = []
     
-    # Expanded list of terms to ignore
     IGNORE_ORGS = [
         "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
         "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
@@ -145,7 +136,6 @@ def extract_companies(text):
         "genengnews", "labiotech", "fiercepharma"
     ]
     
-    # Common suffixes to remove
     REMOVE_SUFFIXES = [
         " - tipranks", " tipranks", "the manila times", " - msn",
         " acquisition", " diagnostics acquisition"
@@ -154,26 +144,19 @@ def extract_companies(text):
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
-            
-            # Remove suffixes
             for suffix in REMOVE_SUFFIXES:
                 if t.lower().endswith(suffix):
                     t = t[:-len(suffix)].strip()
-            
             if len(t) < 2 or len(t.split()) > 6:
                 continue
             if t.lower() in IGNORE_ORGS:
                 continue
             if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
-            
-            # Skip generic terms
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
                 continue
-                
             orgs.append(t)
     
-    # Deduplicate preserving order
     seen = set()
     unique_orgs = []
     for org in orgs:
@@ -181,61 +164,44 @@ def extract_companies(text):
             seen.add(org.lower())
             unique_orgs.append(org)
     
-    return unique_orgs[:5]  # Max 5 companies
+    return unique_orgs[:5]
 
 def extract_acquisition_details(title, text):
-    """Manually extract acquisition details from text"""
     combined = title + " " + text
-    
-    # Pattern: "Company A acquires/buys Company B"
     patterns = [
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|announces?|closes?)\s+(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
     ]
-    
     for pattern in patterns:
         match = re.search(pattern, combined, re.I)
         if match:
             acquirer = match.group(1).strip()
             target = match.group(2).strip() if len(match.groups()) > 1 else ""
-            
-            # Clean up
             acquirer = re.sub(r'\s+(announces|completes|closes|acquisition).*', '', acquirer, flags=re.I)
             target = re.sub(r'\s+(from|for|acquisition).*', '', target, flags=re.I)
-            
             if acquirer and target and len(acquirer) > 2 and len(target) > 2:
                 return [acquirer, target]
-    
     return []
-
-print("DEBUG: Full text snippet (first 1000 chars):", full_text[:1000])
-
-import re
-
-import re
 
 def extract_money(text):
     patterns = [
-        r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",       # e.g. $15 million, $15,000,000
-        r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\s?(usd|dollars|eur|€)?",  # e.g. 15 million dollars
+        r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",
+        r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\s?(usd|dollars|eur|€)?",
         r"USD\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m)?",
-        r"\d+\.?\d*\s?(million|billion|bn|m|k)?",                                # numeric amounts with/without multiplier
+        r"\d+\.?\d*\s?(million|billion|bn|m|k)?",
     ]
     matches = []
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.I):
             amount = match.group(0).strip()
-            # Normalize amounts to start with $ if currency implied but missing $
             if not amount.startswith("$") and ("usd" in amount.lower() or "dollar" in amount.lower()):
                 amount = "$" + amount
-            print("Money extracted:", amount)  # Debug print to show matched amounts
+            print("Money extracted:", amount)
             matches.append(amount)
-    # Deduplicate and limit to top 5 amounts
     unique_matches = list(dict.fromkeys(matches))[:5]
-    print("Unique extracted amounts:", unique_matches)  # Debug final extracted list
+    print("Unique extracted amounts:", unique_matches)
     return unique_matches
-
 
 def classify_event(text):
     tl = text.lower()
@@ -256,14 +222,10 @@ def summarize_short(text, max_sent=2):
 
 def normalize_title(title):
     """Aggressive normalization for deduplication"""
-    # Remove source attribution
     title = re.split(r'\s*[-–—]\s*', title)[0]
-    # Remove common words
     for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
         title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
-    # Convert to lowercase and remove punctuation
     title = re.sub(r'[^\w\s]', '', title.lower()).strip()
-    # Remove extra spaces
     title = re.sub(r'\s+', ' ', title)
     return title
 
@@ -282,27 +244,11 @@ def is_exosome_relevant(text, title):
     ]
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
-    # Accept only if: match to company AND at least one exosome keyword, OR two or more exosome keyword hits
     if not ((company_match and exosome_hits > 0) or (exosome_hits > 1)):
         return False
     if any(term in combined for term in SPAM_TERMS):
         return False
     return True
-
-    if any(term in combined for term in SPAM_TERMS):
-        return False
-
-    exosome_terms = ["exosome", "exosomes", "extracellular vesicle", "ev therapy", " evs "]
-    if any(term in title.lower() or term in text.lower() for term in exosome_terms):
-        return True
-
-    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-    # Accept only if also found some relevant terms
-    if company_match and any(t in combined for t in exosome_terms):
-        return True
-
-    return False
-
 
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
@@ -359,7 +305,6 @@ def run_agent():
                 if pub_dt < since:
                     continue
             
-            # Clean HTML from summary
             raw_summary = e.get("summary","") or e.get("description","")
             clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text(strip=True)
             
@@ -422,6 +367,9 @@ def run_agent():
         else:
             full_text = text
 
+        # Debug print to inspect article content and verify amount presence
+        print("DEBUG: Full text snippet (first 1000 chars):", full_text[:1000])
+
         # Filter non-exosome content
         if not is_exosome_relevant(full_text, title):
             continue
@@ -432,10 +380,8 @@ def run_agent():
         event = classify_event(full_text + " " + title)
         
         if "acqui" in title.lower() or event == "acquisition":
-            # Try pattern matching for acquisition details
             companies = extract_acquisition_details(title, full_text)
             if not companies or len(companies) < 2:
-                # Fallback to NER
                 companies_from_text = extract_companies(full_text)
                 companies_from_title = extract_companies(title + " " + summary)
                 companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
@@ -488,7 +434,7 @@ def run_agent():
     drop = set()
     for i in range(n):
         for j in range(i+1, n):
-            if sim[i,j] > 0.75:  # Even more aggressive
+            if sim[i,j] > 0.75:
                 if processed[i]["score"] >= processed[j]["score"]:
                     drop.add(j)
                 else:
