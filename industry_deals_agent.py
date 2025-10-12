@@ -255,11 +255,27 @@ def normalize_title(title):
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     # Exclude common financial/energy/sports/market/sponsored events
+   def is_exosome_relevant(text, title):
+    combined = (title + " " + text).lower()
     SPAM_TERMS = [
-        "webinar", "sponsored", "whitepaper", "financial literacy", "battery storage", 
-        "nba", "nfl", "power storage", "market research", "market report", "book release",
-        ...
+        "webinar", "sponsored", "whitepaper", "advertise", 
+        "sign up to read", "subscribe", "newsletter",
+        "market research", "market size", "market report", "market insights",
+        "pipeline insights", "download", "forecast", "market analysis"
     ]
+    exosome_terms = [
+        "exosome", "exosomes",
+        "extracellular vesicle", "extracellular vesicles",
+        "exosomal", "ev therapy", " evs "
+    ]
+    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
+    # Only accept if BOTH exosome term and company present
+    if not (any(term in combined for term in exosome_terms) and company_match):
+        return False
+    if any(term in combined for term in SPAM_TERMS):
+        return False
+    return True
+
     if any(term in combined for term in SPAM_TERMS):
         return False
 
