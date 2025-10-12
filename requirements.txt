@@ -6,3 +6,10 @@ requests
 python-dotenv
 beautifulsoup4
 scholarly
+python-dateutil
+feedparser
+newspaper3k
+openpyxl
+spacy
+scikit-learn
+torch
