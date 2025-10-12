@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 import smtplib
 from email.message import EmailMessage
-from newspaper import Article  # newspaper3k library for improved article extraction
+from newspaper import Article
 
 # ---------------------------------------
 # 🔐 Load environment variables
@@ -45,9 +45,25 @@ RSS_FEEDS = [
 
 PR_PAGES = []
 
+# Expanded indication keywords
 INDICATION_KEYWORDS = [
+    # Neurological
     "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
-    "regenerat","regeneration","repair","rejuvenat","therapeutic"
+    
+    # General therapeutic areas
+    "regenerat","regeneration","repair","rejuvenat","therapeutic",
+    "cancer","oncology","tumor","carcinoma",
+    "cardiovascular","cardiac","heart","myocardial",
+    "inflammatory","autoimmune","immune",
+    "kidney","renal","liver","hepatic",
+    "lung","pulmonary","respiratory",
+    
+    # Diagnostic applications
+    "diagnostic","biomarker","detection","screening",
+    "liquid biopsy","early detection",
+    
+    # Drug delivery
+    "drug delivery","therapeutic delivery","targeted therapy"
 ]
 
 EVENT_KEYWORDS = {
@@ -67,7 +83,7 @@ EXOSOME_COMPANIES = [
     "roosterbio", "exocobio", "versatope therapeutics",
     "nanosomix", "paracrine therapeutics", "exocelbio", 
     "regeneveda", "mdxhealth", "bio-techne", "nurexone biologic", "biorestorative therapeutics",
-    "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs", "paracrine therapeutics", 
+    "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs",
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems"
 ]
@@ -92,8 +108,8 @@ def fetch_rss_entries(url):
         print("RSS error", url, e)
         return []
 
-# Use newspaper3k for robust article extraction
 def fetch_article_text(url, timeout=10):
+    """Fetch article text using newspaper3k"""
     try:
         article = Article(url)
         article.download()
@@ -101,14 +117,15 @@ def fetch_article_text(url, timeout=10):
         text = article.text
         if not text or len(text.strip()) == 0:
             return ""
-        return text[:10000]  # limit length
+        return text[:10000]
     except Exception:
-        # fallback to empty string on failure
         return ""
 
 def extract_companies(text):
+    """Extract company names with aggressive filtering"""
     doc = nlp(text)
     orgs = []
+    
     IGNORE_ORGS = [
         "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
         "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
@@ -118,10 +135,12 @@ def extract_companies(text):
         "seeking alpha", "motley fool", "benzinga", "zacks", "biospace",
         "genengnews", "labiotech", "fiercepharma"
     ]
+    
     REMOVE_SUFFIXES = [
         " - tipranks", " tipranks", "the manila times", " - msn",
         " acquisition", " diagnostics acquisition"
     ]
+    
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
@@ -137,21 +156,25 @@ def extract_companies(text):
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
                 continue
             orgs.append(t)
+    
     seen = set()
     unique_orgs = []
     for org in orgs:
         if org.lower() not in seen:
             seen.add(org.lower())
             unique_orgs.append(org)
+    
     return unique_orgs[:5]
 
 def extract_acquisition_details(title, text):
+    """Manually extract acquisition details from text"""
     combined = title + " " + text
     patterns = [
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|announces?|closes?)\s+(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
     ]
+    
     for pattern in patterns:
         match = re.search(pattern, combined, re.I)
         if match:
@@ -161,24 +184,73 @@ def extract_acquisition_details(title, text):
             target = re.sub(r'\s+(from|for|acquisition).*', '', target, flags=re.I)
             if acquirer and target and len(acquirer) > 2 and len(target) > 2:
                 return [acquirer, target]
+    
     return []
 
 def extract_money(text):
+    """Extract monetary amounts with better pattern matching and context"""
     patterns = [
-        r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",
-        r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\s?(usd|dollars|eur|€)?",
-        r"USD\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m)?",
-        r"\d+\.?\d*\s?(million|billion|bn|m|k)?",
+        # $50M, $1.2B format
+        r"\$\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)\b",
+        # 50 million, 1.2 billion format
+        r"\b\d+\.?\d*\s?(?:million|billion|M|B|bn)(?:\s+dollars?|\s+USD)?\b",
+        # Full numbers: $1,200,000
+        r"\$\s?\d{1,3}(?:,\d{3})+(?:\.\d{2})?",
+        # USD 50M format
+        r"USD\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)?\b",
     ]
     matches = []
+    
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.I):
             amount = match.group(0).strip()
-            if not amount.startswith("$") and ("usd" in amount.lower() or "dollar" in amount.lower()):
-                amount = "$" + amount
-            matches.append(amount)
-    unique_matches = list(dict.fromkeys(matches))[:5]
-    return unique_matches
+            
+            # Normalize format
+            if not amount.startswith('$') and 'usd' not in amount.lower():
+                # Check if it's followed by context words
+                match_pos = match.start()
+                context_before = text[max(0, match_pos-50):match_pos].lower()
+                context_after = text[match.end():min(len(text), match.end()+20)].lower()
+                
+                # Only include if there's money context
+                if any(word in context_before or word in context_after 
+                       for word in ['paid', 'raised', 'funding', 'investment', 'deal', 'worth', 'valued', 'acquisition', 'purchase', 'price']):
+                    if not amount.startswith('$'):
+                        amount = '$' + amount
+                    matches.append(amount)
+            else:
+                matches.append(amount)
+    
+    # Deduplicate and limit
+    seen = set()
+    unique = []
+    for m in matches:
+        # Normalize for comparison
+        normalized = re.sub(r'[^\d.]', '', m.lower())
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(m)
+    
+    return unique[:3]
+
+def extract_amount_from_title(title):
+    """Extract amount specifically from title with context"""
+    patterns = [
+        r'for\s+\$?\d+\.?\d*\s?(?:million|billion|M|B|bn)',
+        r'\$\d+\.?\d*\s?(?:million|billion|M|B|bn)',
+        r'\d+\.?\d*\s?(?:million|billion|M|B|bn)\s+(?:deal|funding|investment)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, title, re.I)
+        if match:
+            amount = match.group(0)
+            # Clean up "for" prefix
+            amount = re.sub(r'^for\s+', '', amount, flags=re.I).strip()
+            if not amount.startswith('$'):
+                amount = '$' + amount
+            return [amount]
+    return []
 
 def classify_event(text):
     tl = text.lower()
@@ -198,6 +270,7 @@ def summarize_short(text, max_sent=2):
     return " ".join(sents[:max_sent]).strip()
 
 def normalize_title(title):
+    """Aggressive normalization for deduplication"""
     title = re.split(r'\s*[-–—]\s*', title)[0]
     for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
         title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
@@ -206,24 +279,31 @@ def normalize_title(title):
     return title
 
 def is_exosome_relevant(text, title):
+    """Check if content is about exosomes/EVs"""
     combined = (title + " " + text).lower()
+    
     SPAM_TERMS = [
         "webinar", "sponsored", "whitepaper", "advertise",
         "sign up to read", "subscribe", "newsletter",
         "market research", "market size", "market report", "market insights",
         "pipeline insights", "download", "forecast", "market analysis"
     ]
+    
     exosome_terms = [
         "exosome", "exosomes",
         "extracellular vesicle", "extracellular vesicles",
         "exosomal", "ev therapy", " evs ",
     ]
+    
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
+    
     if not ((company_match and exosome_hits > 0) or (exosome_hits > 1)):
         return False
+    
     if any(term in combined for term in SPAM_TERMS):
         return False
+    
     return True
 
 def send_email_with_attachment(subject, body, attachment_path):
@@ -266,7 +346,7 @@ def run_agent():
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
     collected = []
 
-    # 1) RSS - early filter by deal keywords on title/summary to reduce noise and fetch load
+    # 1) RSS - early filter by deal keywords
     DEAL_KEYWORDS_LOWER = [
         "acquire","acquisition","acquired","merger","merge","buyout","takeover",
         "partner","partnership","collaborate","alliance","strategic relationship",
@@ -281,7 +361,7 @@ def run_agent():
             raw_summary = e.get("summary","") or e.get("description","") or ""
             clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text(strip=True)
             
-            # Early filter: skip if no deal-related keywords in title or summary (lowercased for efficiency)
+            # Early filter: skip if no deal-related keywords
             combined_text = (title + " " + clean_summary).lower()
             if not any(k in combined_text for k in DEAL_KEYWORDS_LOWER):
                 continue
@@ -304,7 +384,7 @@ def run_agent():
                 "summary": clean_summary
             })
 
-    # 2) PR pages (process as before) - you may also add early filter here if needed
+    # 2) PR pages
     for name, pr_url in PR_PAGES:
         try:
             r = requests.get(pr_url, timeout=8)
@@ -319,7 +399,7 @@ def run_agent():
 
     print(f"Initial collection: {len(collected)} items")
 
-    # Dedupe by URL first
+    # Dedupe by URL
     uniq = {}
     for c in collected:
         key = (c.get("link") or c.get("title")).strip()
@@ -362,9 +442,10 @@ def run_agent():
 
         short = summarize_short(full_text, max_sent=2)
         
-        # Extract companies - try manual extraction first for acquisitions
+        # Classify event first
         event = classify_event(full_text + " " + title)
         
+        # Extract companies
         if "acqui" in title.lower() or event == "acquisition":
             companies = extract_acquisition_details(title, full_text)
             if not companies or len(companies) < 2:
@@ -376,12 +457,25 @@ def run_agent():
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
         
-        # Extract money from all sources
+        # Extract money aggressively from all sources
         money_from_text = extract_money(full_text)
-        money_from_title = extract_money(title + " " + summary)
-        money = list(dict.fromkeys(money_from_text + money_from_title))[:3]
+        money_from_title = extract_amount_from_title(title)
+        money_from_summary = extract_money(summary)
+        all_money = money_from_text + money_from_title + money_from_summary
+        money = list(dict.fromkeys(all_money))[:3]
         
-        indications = detect_indications(full_text + " " + title)
+        # Fallback for acquisitions/funding with no amount
+        if not money and event in ["acquisition", "funding"]:
+            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B)\b'
+            fallback_matches = re.findall(fallback_pattern, title + " " + summary, re.I)
+            if fallback_matches:
+                money = ['$' + m for m in fallback_matches[:2]]
+        
+        indications = detect_indications(full_text + " " + title + " " + summary)
+        
+        # Debug logging
+        if event in ["acquisition", "funding"] and not money:
+            print(f"⚠️ No amount found for: {title[:60]}...")
         
         # Scoring
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
