@@ -80,39 +80,69 @@ def fetch_rss_entries(url):
         print("RSS error", url, e)
         return []
 
-def fetch_article_text(url, timeout=8):
+def fetch_article_text(url, timeout=10):
+    """Fetch article text with better redirect and content handling"""
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, timeout=timeout, headers=headers)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        # Allow redirects
+        r = requests.get(url, timeout=timeout, headers=headers, allow_redirects=True)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Try multiple strategies to find content
         article = soup.find('article')
         if article:
             text = article.get_text(" ", strip=True)
         else:
-            paras = soup.find_all('p')
-            text = " ".join(p.get_text(" ", strip=True) for p in paras)
+            # Try main content area
+            main = soup.find('main') or soup.find('div', class_=re.compile('content|article|body'))
+            if main:
+                text = main.get_text(" ", strip=True)
+            else:
+                # Fallback to all paragraphs
+                paras = soup.find_all('p')
+                text = " ".join(p.get_text(" ", strip=True) for p in paras)
+        
         text = re.sub(r'\s+', ' ', text).strip()
-        return text
-    except Exception:
+        return text[:10000]  # Limit to 10k chars
+    except Exception as e:
+        print(f"Fetch error for {url[:50]}...: {str(e)[:50]}")
         return ""
 
 def extract_companies(text):
+    """Extract company names, filtering out news sources"""
     doc = nlp(text)
     orgs = []
+    
+    # Common news sources to ignore
+    IGNORE_ORGS = [
+        "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
+        "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
+        "ap", "associated press", "wall street journal", "new york times",
+        "cnn", "bbc", "fox news", "nbc", "cbs", "abc news"
+    ]
+    
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
-            if len(t) < 2:
+            if len(t) < 2 or len(t.split()) > 6:
                 continue
-            if len(t.split()) > 6:
+            if t.lower() in IGNORE_ORGS:
                 continue
-            if any(word in t.lower() for word in ["biotech", "cell", "gene", "therapy", "venture", "capital", "diagnostics"]):
+            if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
             orgs.append(t)
-    return list(dict.fromkeys(orgs))
+    
+    return list(dict.fromkeys(orgs))[:8]  # Max 8 companies
 
 def extract_money(text):
+    """Extract monetary amounts"""
     patterns = [
         r"\$\s?[0-9\.,]+\s?(million|billion|bn|m|k)?",
         r"[0-9\.,]+\s?(million|billion|bn|m|k)\s+(usd|dollars|eur|€|\$)?",
@@ -150,6 +180,7 @@ def normalize_title(title):
     return title
 
 def is_exosome_relevant(text, title):
+    """Check if content is about exosomes/EVs with relaxed requirements"""
     combined = (title + " " + text).lower()
     
     # Filter out spam/promotional content
@@ -292,8 +323,15 @@ def run_agent():
         url = item.get("link","")
         pub = item.get("published")
         summary = item.get("summary","") or ""
+        
+        # Try to fetch article text
         text = fetch_article_text(url) if url else ""
-        full_text = text if text else summary if summary else title
+        
+        # Use summary if article fetch failed or text too short
+        if not text or len(text) < 200:
+            full_text = summary if len(summary) > 50 else title
+        else:
+            full_text = text
 
         # Filter non-exosome content
         if not is_exosome_relevant(full_text, title):
@@ -304,13 +342,17 @@ def run_agent():
         # Extract companies from both full text and title/summary
         companies_from_text = extract_companies(full_text)
         companies_from_title = extract_companies(title + " " + summary)
-        companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]  # Max 5
+        companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
         
-        money = extract_money(full_text)
+        # Extract money from both sources
+        money_from_text = extract_money(full_text)
+        money_from_title = extract_money(title + " " + summary)
+        money = list(dict.fromkeys(money_from_text + money_from_title))[:3]
+        
         event = classify_event(full_text + " " + title)
         indications = detect_indications(full_text + " " + title)
         
-        # Scoring with exosome boost
+        # Scoring
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
         score += 0.5 * len(indications)
         score += 0.8 if money else 0.0
