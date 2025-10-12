@@ -254,9 +254,6 @@ def normalize_title(title):
 
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
-    # Exclude common financial/energy/sports/market/sponsored events
-   def is_exosome_relevant(text, title):
-    combined = (title + " " + text).lower()
     SPAM_TERMS = [
         "webinar", "sponsored", "whitepaper", "advertise", 
         "sign up to read", "subscribe", "newsletter",
