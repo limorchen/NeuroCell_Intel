@@ -166,7 +166,7 @@ def is_exosome_relevant(text, title):
     exosome_terms = [
         "exosome", "exosomes",
         "extracellular vesicle", "extracellular vesicles",
-        "exosomal", "ev therapy", "evs"
+        "exosomal", "ev therapy", " evs"
     ]
 
     title_hits = sum(term in title.lower() for term in exosome_terms)
@@ -176,11 +176,15 @@ def is_exosome_relevant(text, title):
     if title_hits == 0 and not company_match:
         return False
 
-    # Require minimum content length
-    if len(text) < 300:
-        return False
+    # RELAXED: Accept if we have title match, even with short text
+    if title_hits > 0:
+        return True
+    
+    # For company matches, require some content
+    if company_match and len(text) >= 100:  # Reduced from 300
+        return True
 
-    return True
+    return False
 
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
