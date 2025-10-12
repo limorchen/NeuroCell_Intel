@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 import smtplib
 from email.message import EmailMessage
-from html import unescape
+from newspaper import Article  # newspaper3k library for improved article extraction
 
 # ---------------------------------------
 # 🔐 Load environment variables
@@ -27,7 +27,6 @@ OUTPUT_DIR = "./industry_deals"
 SINCE_DAYS = 40
 TOP_N_TO_EMAIL = 10
 
-# Updated RSS feeds - direct sources instead of Google News
 RSS_FEEDS = [
     # Biotech/pharma specific feeds
     "https://www.fiercebiotech.com/rss.xml",
@@ -40,7 +39,7 @@ RSS_FEEDS = [
     "https://www.businesswire.com/portal/site/home/news/subject/landing/biotechnology",
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
     
-    # Keep one focused Google News search
+    # Google News search focused on exosomes deals
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
 ]
 
@@ -60,7 +59,7 @@ EVENT_KEYWORDS = {
 }
 
 EXOSOME_COMPANIES = [
-    "codiak", "evox", "anjarium", "capricor", "cartherics", "evelo", 
+    "codiak", "evox", "anjarium", "capricor", "cartherics", "evelo",
     "exosome diagnostics", "paige.ai", "direct biologics", "kimera labs",
     "aegle therapeutics", "avalon globocare", "aruna bio", "evotec",
     "vesigen", "ciloa", "exosomics", "exopharm", "ilias biologics",
@@ -93,39 +92,23 @@ def fetch_rss_entries(url):
         print("RSS error", url, e)
         return []
 
+# Use newspaper3k for robust article extraction
 def fetch_article_text(url, timeout=10):
-    """Fetch article text with better redirect and content handling"""
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        r = requests.get(url, timeout=timeout, headers=headers, allow_redirects=True)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        
-        for script in soup(["script", "style"]):
-            script.decompose()
-        
-        article = soup.find('article')
-        if article:
-            text = article.get_text(" ", strip=True)
-        else:
-            main = soup.find('main') or soup.find('div', class_=re.compile('content|article|body'))
-            if main:
-                text = main.get_text(" ", strip=True)
-            else:
-                paras = soup.find_all('p')
-                text = " ".join(p.get_text(" ", strip=True) for p in paras)
-        
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text[:10000]
+        article = Article(url)
+        article.download()
+        article.parse()
+        text = article.text
+        if not text or len(text.strip()) == 0:
+            return ""
+        return text[:10000]  # limit length
     except Exception:
+        # fallback to empty string on failure
         return ""
 
 def extract_companies(text):
     doc = nlp(text)
     orgs = []
-    
     IGNORE_ORGS = [
         "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
         "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
@@ -135,12 +118,10 @@ def extract_companies(text):
         "seeking alpha", "motley fool", "benzinga", "zacks", "biospace",
         "genengnews", "labiotech", "fiercepharma"
     ]
-    
     REMOVE_SUFFIXES = [
         " - tipranks", " tipranks", "the manila times", " - msn",
         " acquisition", " diagnostics acquisition"
     ]
-    
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
@@ -156,14 +137,12 @@ def extract_companies(text):
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
                 continue
             orgs.append(t)
-    
     seen = set()
     unique_orgs = []
     for org in orgs:
         if org.lower() not in seen:
             seen.add(org.lower())
             unique_orgs.append(org)
-    
     return unique_orgs[:5]
 
 def extract_acquisition_details(title, text):
@@ -197,10 +176,8 @@ def extract_money(text):
             amount = match.group(0).strip()
             if not amount.startswith("$") and ("usd" in amount.lower() or "dollar" in amount.lower()):
                 amount = "$" + amount
-            print("Money extracted:", amount)
             matches.append(amount)
     unique_matches = list(dict.fromkeys(matches))[:5]
-    print("Unique extracted amounts:", unique_matches)
     return unique_matches
 
 def classify_event(text):
@@ -221,7 +198,6 @@ def summarize_short(text, max_sent=2):
     return " ".join(sents[:max_sent]).strip()
 
 def normalize_title(title):
-    """Aggressive normalization for deduplication"""
     title = re.split(r'\s*[-–—]\s*', title)[0]
     for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
         title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
@@ -232,7 +208,7 @@ def normalize_title(title):
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     SPAM_TERMS = [
-        "webinar", "sponsored", "whitepaper", "advertise", 
+        "webinar", "sponsored", "whitepaper", "advertise",
         "sign up to read", "subscribe", "newsletter",
         "market research", "market size", "market report", "market insights",
         "pipeline insights", "download", "forecast", "market analysis"
@@ -240,7 +216,7 @@ def is_exosome_relevant(text, title):
     exosome_terms = [
         "exosome", "exosomes",
         "extracellular vesicle", "extracellular vesicles",
-        "exosomal", "ev therapy", " evs ", 
+        "exosomal", "ev therapy", " evs ",
     ]
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
@@ -290,10 +266,26 @@ def run_agent():
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
     collected = []
 
-    # 1) RSS - with HTML cleaning
+    # 1) RSS - early filter by deal keywords on title/summary to reduce noise and fetch load
+    DEAL_KEYWORDS_LOWER = [
+        "acquire","acquisition","acquired","merger","merge","buyout","takeover",
+        "partner","partnership","collaborate","alliance","strategic relationship",
+        "license","licensing","funding","raised","series a","series b","seed","investment","venture",
+        "deal","agreement","term sheet","commercialization"
+    ]
+
     for rss in RSS_FEEDS:
         entries = fetch_rss_entries(rss)
         for e in entries:
+            title = e.get("title","") or ""
+            raw_summary = e.get("summary","") or e.get("description","") or ""
+            clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text(strip=True)
+            
+            # Early filter: skip if no deal-related keywords in title or summary (lowercased for efficiency)
+            combined_text = (title + " " + clean_summary).lower()
+            if not any(k in combined_text for k in DEAL_KEYWORDS_LOWER):
+                continue
+
             pub = e.get("published") or e.get("updated") or e.get("pubDate")
             try:
                 pub_dt = dateparser.parse(pub) if pub else None
@@ -305,17 +297,14 @@ def run_agent():
                 if pub_dt < since:
                     continue
             
-            raw_summary = e.get("summary","") or e.get("description","")
-            clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text(strip=True)
-            
             collected.append({
-                "title": e.get("title",""),
+                "title": title,
                 "link": e.get("link",""),
                 "published": pub_dt.isoformat() if pub_dt else None,
                 "summary": clean_summary
             })
 
-    # 2) PR pages
+    # 2) PR pages (process as before) - you may also add early filter here if needed
     for name, pr_url in PR_PAGES:
         try:
             r = requests.get(pr_url, timeout=8)
@@ -366,9 +355,6 @@ def run_agent():
             full_text = summary if len(summary) > 50 else title
         else:
             full_text = text
-
-        # Debug print to inspect article content and verify amount presence
-        print("DEBUG: Full text snippet (first 1000 chars):", full_text[:1000])
 
         # Filter non-exosome content
         if not is_exosome_relevant(full_text, title):
