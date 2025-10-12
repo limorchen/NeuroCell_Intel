@@ -211,11 +211,11 @@ def extract_acquisition_details(title, text):
 
 def extract_money(text):
     patterns = [
-        r"\$\s?\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|bn|m|k)?\b",
-        r"\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|bn|m|k)?\s?(?:usd|dollars|eur|€|\$)",
-        r"USD\s?\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|bn|m)?",
-        r"\d+\.?\d*\s?(?:million|billion|bn|m|k)?",
-    ]
+    r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",  # e.g. $15 million, $15,000,000
+    r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\s?(usd|dollars|eur|€)?",  # e.g. 15 million dollars
+    r"USD\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m)?",
+    r"\d+\.?\d*\s?(million|billion|bn|m|k)?",  # numeric amounts with or without multiplier
+]
     matches = []
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.I):
