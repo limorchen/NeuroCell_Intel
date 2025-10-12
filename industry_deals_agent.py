@@ -209,23 +209,30 @@ def extract_acquisition_details(title, text):
     
     return []
 
+print("DEBUG: Full text snippet (first 1000 chars):", full_text[:1000])
+
+import re
+
 def extract_money(text):
     patterns = [
-    r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",  # e.g. $15 million, $15,000,000
-    r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\s?(usd|dollars|eur|€)?",  # e.g. 15 million dollars
-    r"USD\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m)?",
-    r"\d+\.?\d*\s?(million|billion|bn|m|k)?",  # numeric amounts with or without multiplier
-]
+        r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",       # e.g. $15 million, $15,000,000
+        r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\s?(usd|dollars|eur|€)?",  # e.g. 15 million dollars
+        r"USD\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m)?",
+        r"\d+\.?\d*\s?(million|billion|bn|m|k)?",                                # numeric amounts with/without multiplier
+    ]
     matches = []
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.I):
             amount = match.group(0).strip()
-            # Normalize amounts to start with $ if not present but currency implied
+            # Normalize amounts to start with $ if currency implied but missing $
             if not amount.startswith("$") and ("usd" in amount.lower() or "dollar" in amount.lower()):
                 amount = "$" + amount
+            print("Money extracted:", amount)  # Debug print to show matched amounts
             matches.append(amount)
     # Deduplicate and limit to top 5 amounts
-    return list(dict.fromkeys(matches))[:5]
+    unique_matches = list(dict.fromkeys(matches))[:5]
+    print("Unique extracted amounts:", unique_matches)  # Debug final extracted list
+    return unique_matches
 
 def classify_event(text):
     tl = text.lower()
