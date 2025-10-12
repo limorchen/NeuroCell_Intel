@@ -213,6 +213,8 @@ print("DEBUG: Full text snippet (first 1000 chars):", full_text[:1000])
 
 import re
 
+import re
+
 def extract_money(text):
     patterns = [
         r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(million|billion|bn|m|k)?\b",       # e.g. $15 million, $15,000,000
@@ -233,6 +235,7 @@ def extract_money(text):
     unique_matches = list(dict.fromkeys(matches))[:5]
     print("Unique extracted amounts:", unique_matches)  # Debug final extracted list
     return unique_matches
+
 
 def classify_event(text):
     tl = text.lower()
