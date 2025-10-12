@@ -253,41 +253,27 @@ def normalize_title(title):
     return title
 
 def is_exosome_relevant(text, title):
-    """Check if content is about exosomes/EVs"""
     combined = (title + " " + text).lower()
-    
-    # Filter out spam/promotional content
+    # Exclude common financial/energy/sports/market/sponsored events
     SPAM_TERMS = [
-        "webinar", "sponsored", "whitepaper", "advertise", 
-        "sign up to read", "subscribe", "newsletter",
-        "market research", "market size", "market report", "market insights",
-        "pipeline insights", "download", "forecast", "market analysis"
+        "webinar", "sponsored", "whitepaper", "financial literacy", "battery storage", 
+        "nba", "nfl", "power storage", "market research", "market report", "book release",
+        ...
     ]
     if any(term in combined for term in SPAM_TERMS):
         return False
 
-    exosome_terms = [
-        "exosome", "exosomes",
-        "extracellular vesicle", "extracellular vesicles",
-        "exosomal", "ev therapy", " evs "
-    ]
-
-    title_hits = sum(term in title.lower() for term in exosome_terms)
-    text_hits = sum(term in text.lower() for term in exosome_terms)
-    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-
-    # Must have exosome terms in title OR be a known exosome company
-    if title_hits == 0 and not company_match:
-        return False
-
-    # Accept if title match OR (company match with some exosome mention)
-    if title_hits > 0:
+    exosome_terms = ["exosome", "exosomes", "extracellular vesicle", "ev therapy", " evs "]
+    if any(term in title.lower() or term in text.lower() for term in exosome_terms):
         return True
-    
-    if company_match and (text_hits > 0 or len(text) >= 100):
+
+    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
+    # Accept only if also found some relevant terms
+    if company_match and any(t in combined for t in exosome_terms):
         return True
 
     return False
+
 
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
