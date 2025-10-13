@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 import smtplib
 from email.message import EmailMessage
-from newspaper import Article
+import trafilatura
 
 # ---------------------------------------
 # 🔐 Load environment variables
@@ -109,16 +109,16 @@ def fetch_rss_entries(url):
         return []
 
 def fetch_article_text(url, timeout=10):
-    """Fetch article text using newspaper3k"""
+    """Fetch article text using trafilatura - more reliable than newspaper3k"""
     try:
-        article = Article(url)
-        article.download()
-        article.parse()
-        text = article.text
-        if not text or len(text.strip()) == 0:
-            return ""
-        return text[:10000]
-    except Exception:
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded:
+            text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            if text and len(text) > 100:
+                return text[:10000]  # Limit to 10k chars
+        return ""
+    except Exception as e:
+        print(f"Article fetch failed for {url[:50]}...: {str(e)[:30]}")
         return ""
 
 def extract_companies(text):
@@ -172,7 +172,7 @@ def extract_acquisition_details(title, text):
     patterns = [
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|announces?|closes?)\s+(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
-        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:of|by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
     ]
     
     for pattern in patterns:
@@ -192,12 +192,14 @@ def extract_money(text):
     patterns = [
         # $50M, $1.2B format
         r"\$\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)\b",
-        # 50 million, 1.2 billion format
+        # 50 million, 1.2 billion format  
         r"\b\d+\.?\d*\s?(?:million|billion|M|B|bn)(?:\s+dollars?|\s+USD)?\b",
         # Full numbers: $1,200,000
         r"\$\s?\d{1,3}(?:,\d{3})+(?:\.\d{2})?",
         # USD 50M format
         r"USD\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)?\b",
+        # Euro format
+        r"€\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)\b",
     ]
     matches = []
     
@@ -206,16 +208,18 @@ def extract_money(text):
             amount = match.group(0).strip()
             
             # Normalize format
-            if not amount.startswith('$') and 'usd' not in amount.lower():
+            if not amount.startswith(('$', '€')) and 'usd' not in amount.lower():
                 # Check if it's followed by context words
                 match_pos = match.start()
-                context_before = text[max(0, match_pos-50):match_pos].lower()
-                context_after = text[match.end():min(len(text), match.end()+20)].lower()
+                context_before = text[max(0, match_pos-70):match_pos].lower()
+                context_after = text[match.end():min(len(text), match.end()+30)].lower()
                 
                 # Only include if there's money context
                 if any(word in context_before or word in context_after 
-                       for word in ['paid', 'raised', 'funding', 'investment', 'deal', 'worth', 'valued', 'acquisition', 'purchase', 'price']):
-                    if not amount.startswith('$'):
+                       for word in ['paid', 'raised', 'funding', 'investment', 'deal', 'worth', 
+                                   'valued', 'acquisition', 'purchase', 'price', 'cost', 'total',
+                                   'transaction', 'amount', 'sum', 'proceeds']):
+                    if not amount.startswith(('$', '€')):
                         amount = '$' + amount
                     matches.append(amount)
             else:
@@ -227,7 +231,7 @@ def extract_money(text):
     for m in matches:
         # Normalize for comparison
         normalized = re.sub(r'[^\d.]', '', m.lower())
-        if normalized and normalized not in seen:
+        if normalized and normalized not in seen and len(normalized) > 0:
             seen.add(normalized)
             unique.append(m)
     
@@ -238,7 +242,8 @@ def extract_amount_from_title(title):
     patterns = [
         r'for\s+\$?\d+\.?\d*\s?(?:million|billion|M|B|bn)',
         r'\$\d+\.?\d*\s?(?:million|billion|M|B|bn)',
-        r'\d+\.?\d*\s?(?:million|billion|M|B|bn)\s+(?:deal|funding|investment)',
+        r'\d+\.?\d*\s?(?:million|billion|M|B|bn)\s+(?:deal|funding|investment|acquisition)',
+        r'€\d+\.?\d*\s?(?:million|billion|M|B|bn)',
     ]
     
     for pattern in patterns:
@@ -247,7 +252,7 @@ def extract_amount_from_title(title):
             amount = match.group(0)
             # Clean up "for" prefix
             amount = re.sub(r'^for\s+', '', amount, flags=re.I).strip()
-            if not amount.startswith('$'):
+            if not amount.startswith(('$', '€')):
                 amount = '$' + amount
             return [amount]
     return []
@@ -427,14 +432,16 @@ def run_agent():
         pub = item.get("published")
         summary = item.get("summary","") or ""
         
-        # Try to fetch article text
+        # Try to fetch article text with trafilatura
         text = fetch_article_text(url) if url else ""
         
         # Use summary if article fetch failed or text too short
         if not text or len(text) < 200:
             full_text = summary if len(summary) > 50 else title
+            print(f"📰 Using summary for: {title[:50]}...")
         else:
             full_text = text
+            print(f"✅ Fetched article ({len(text)} chars): {title[:50]}...")
 
         # Filter non-exosome content
         if not is_exosome_relevant(full_text, title):
@@ -467,15 +474,18 @@ def run_agent():
         # Fallback for acquisitions/funding with no amount
         if not money and event in ["acquisition", "funding"]:
             fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B)\b'
-            fallback_matches = re.findall(fallback_pattern, title + " " + summary, re.I)
+            fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
             if fallback_matches:
                 money = ['$' + m for m in fallback_matches[:2]]
         
         indications = detect_indications(full_text + " " + title + " " + summary)
         
         # Debug logging
-        if event in ["acquisition", "funding"] and not money:
-            print(f"⚠️ No amount found for: {title[:60]}...")
+        if event in ["acquisition", "funding"]:
+            if money:
+                print(f"💰 Found amount: {money} for {title[:50]}...")
+            else:
+                print(f"⚠️ No amount found for: {title[:60]}...")
         
         # Scoring
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
