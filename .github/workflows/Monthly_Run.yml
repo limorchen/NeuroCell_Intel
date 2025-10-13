@@ -35,8 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install lxml[html_clean] newspaper3k
-          pip install newspaper3k
+          pip install lxml[html_clean] newspaper3k trafilatura
           python -m spacy download en_core_web_sm
 
       - name: 🚀 Run Monthly Intelligence Agent
