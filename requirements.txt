@@ -1,15 +1,23 @@
-biopython
-sentence-transformers
-faiss-cpu
-pandas
-requests
+# Core dependencies
 python-dotenv
-beautifulsoup4
-scholarly
+requests
 python-dateutil
 feedparser
-newspaper3k
+
+# Web scraping - using trafilatura instead of newspaper3k
+beautifulsoup4
+trafilatura
+
+# Data processing
+pandas
 openpyxl
+
+# NLP and ML
 spacy
+sentence-transformers
 scikit-learn
+
+# Biology/Bioinformatics
+biopython
+faiss-cpu
 torch
