@@ -224,15 +224,22 @@ def normalize_amount(text):
     except Exception:
         return None
 
-def extract_money(text):
-    """Extract monetary amounts with better pattern matching and context.
-       Returns list of amount strings (as found/normalized) — e.g. ['$15 million', '$5 million']"""
+# ---------------------------------------
+# 💰 Improved amount extraction
+# ---------------------------------------
+def extract_amounts(text):
+    """
+    Extract monetary amounts from text.
+    Returns a list of normalized strings like ['$15 million', '$5 million', '€10M'].
+    Handles $ / USD / € / EUR, with million/billion/thousand/k/M/B/bn suffixes.
+    Deduplicates based on numeric value.
+    """
     if not text:
         return []
-    # Patterns to capture:
+
     patterns = [
         # $15 million, $15M, $15.5M, $1,200,000.00
-        r'(\$\s?\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|thousand|M|B|k|bn)?)',
+        r'(\$\s?\d{1,3}(?:[,\d{3}]*)?(?:\.\d+)?\s?(?:million|billion|thousand|M|B|k|bn)?)',
         # USD 15 million
         r'((?:USD|usd)\s?\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|M|B|bn|k)?)',
         # €10M or EUR 10 million
@@ -240,48 +247,42 @@ def extract_money(text):
         # 15 million USD / 15 million dollars
         r'(\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|M|B|bn|k)\s?(?:usd|dollars?)?)',
     ]
+
     matches = []
-    lowered = text  # preserve original for matched substrings
     for pat in patterns:
-        for m in re.finditer(pat, lowered, flags=re.I):
+        for m in re.finditer(pat, text, flags=re.I):
             amt = m.group(0).strip()
-            # normalize whitespace
-            amt = re.sub(r'\s+', ' ', amt)
+            amt = re.sub(r'\s+', ' ', amt)  # normalize spaces
+            # prepend $ if missing and USD implied
+            if not amt.startswith(('$', '€')) and re.search(r'\b(usd|dollars?)\b', amt, flags=re.I):
+                amt = '$' + amt
             matches.append(amt)
-    # deduplicate preserving order
+
+    # deduplicate based on numeric value
     seen = set()
     unique = []
     for m in matches:
-        key = re.sub(r'[^0-9]', '', m)  # rough key by digits
-        if key not in seen:
+        # remove non-digits for comparison
+        key = re.sub(r'[^\d.]', '', m)
+        if key not in seen and key:
             seen.add(key)
             unique.append(m)
-    return unique[:5]
 
-def extract_amount_from_title(title):
-    """Extract amount specifically from title with context and return normalized strings."""
-    if not title:
-        return []
-    patterns = [
-        r'for\s+\$?\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b',
-        r'\$\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b',
-        r'\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\s+(?:deal|funding|investment|acquisition|raise|raised)',
-        r'€\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b',
-        r'USD\s?\d+\.?\d*\s?(?:million|billion|M|B|bn|k)?\b',
-    ]
-    found = []
-    for pat in patterns:
-        m = re.search(pat, title, flags=re.I)
-        if m:
-            amt = m.group(0)
-            # remove leading "for "
-            amt = re.sub(r'^\s*for\s+', '', amt, flags=re.I)
-            amt = amt.strip()
-            if not amt.startswith(('$', '€')) and not re.search(r'\b(usd|eur)\b', amt, flags=re.I):
-                # if missing symbol, prepend $ for consistency — but keep in mind this is heuristic
-                amt = '$' + amt
-            found.append(amt)
-    return found
+    return unique[:5]  # limit to top 5
+
+# ---------------------------------------
+# 🔗 Integration in main processing loop
+# ---------------------------------------
+# Replace previous:
+# money_from_text = extract_money(full_text)
+# money_from_title = extract_amount_from_title(title)
+# money_from_summary = extract_money(summary)
+# all_money = money_from_text + money_from_title + money_from_summary
+# money = list(dict.fromkeys(all_money))[:3]
+
+# With:
+all_money = extract_amounts(full_text) + extract_amounts(title) + extract_amounts(summary)
+money = list(dict.fromkeys(all_money))[:3]  # deduplicate & limit to 3
 
 # -----------------------------------------------------------------------
 
