@@ -513,32 +513,43 @@ def run_agent():
     filtered = [p for idx,p in enumerate(processed) if idx not in drop]
     print(f"Filtered {len(processed)-len(filtered)} embedding duplicates; {len(filtered)} items remain")
 
-    # -----------------
-    # 5) DataFrame & export
-    # -----------------
-    df = pd.DataFrame(filtered)
-    def parse_dt(x):
-        if not x: return pd.NaT
+   # -----------------
+# 5) DataFrame & export
+# -----------------
+df = pd.DataFrame(filtered)
+def parse_dt(x):
+    if not x: return pd.NaT
+    try:
+        return pd.to_datetime(x)
+    except Exception:
         try:
-            return pd.to_datetime(x)
+            return pd.to_datetime(dateparser.parse(x))
         except Exception:
-            try:
-                return pd.to_datetime(dateparser.parse(x))
-            except Exception:
-                return pd.NaT
-    df["published_dt"] = df["published"].apply(parse_dt)
-    df = df.sort_values(["published_dt","score"], ascending=[False,False])
+            return pd.NaT
+df["published_dt"] = df["published"].apply(parse_dt)
+df = df.sort_values(["published_dt","score"], ascending=[False,False])
 
-    ensure_outdir()
-    outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
-    df_export = df.copy()
-    df_export["published_dt"] = df_export["published_dt"].dt.tz_localize(None)
-    df_export["companies"] = df_export["companies"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
-    df_export["amounts"] = df_export["amounts"].apply(lambda x: "; ".join(map(str,x)) if isinstance(x,list) else x)
-    df_export["amounts_numeric"] = df_export["amounts_numeric"].apply(lambda x: "; ".join(map(str,x)) if isinstance(x,list) else x)
-    df_export.to_excel(outfn, index=False)
-    print("Exported to", outfn)
-    return df_export
+ensure_outdir()
+outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
+df_export = df.copy()
+
+# Convert lists to clean strings
+list_columns = ["companies", "amounts", "amounts_numeric", "indications"]
+for col in list_columns:
+    df_export[col] = df_export[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
+
+# Short summary should just be text
+df_export["short_summary"] = df_export["short_summary"].apply(lambda x: str(x) if x else "")
+
+# Full text truncated to avoid huge cells
+df_export["full_text"] = df_export["full_text"].apply(lambda x: x[:1000] if x else "")
+
+# Ensure published_dt is clean (no timezone info)
+df_export["published_dt"] = pd.to_datetime(df_export["published_dt"]).dt.tz_localize(None)
+
+# Save Excel
+df_export.to_excel(outfn, index=False)
+print("Exported to", outfn)
 
 # -----------------
 # Run the agent
@@ -546,13 +557,32 @@ def run_agent():
 if __name__ == "__main__":
     df_export = run_agent()
     if df_export is not None and not df_export.empty:
-        # Compose email
-        subject = f"NeuroCell Intelligence - Exosome Deals {dt.datetime.utcnow().strftime('%Y-%m-%d')}"
-        body_lines = [f"{len(df_export)} exosome deal(s) found in the last {SINCE_DAYS} days."]
-        # Include top N items in the body
-        for _, row in df_export.head(TOP_N_TO_EMAIL).iterrows():
+        # Compose email in "old style" detailed format
+        subject = f"Exosome Deals — Summary (last {SINCE_DAYS} days)"
+        body_lines = [
+            f"Exosome Deals — Summary (last {SINCE_DAYS} days)",
+            f"Generated: {dt.datetime.utcnow().isoformat()}",
+            ""
+        ]
+        
+        for _, row in df_export.iterrows():
+            event_label = row['event_type'].upper() if row['event_type'] else "NEWS"
+            date_str = row['published_dt'].strftime('%Y-%m-%d') if pd.notnull(row['published_dt']) else "Unknown"
             companies = row['companies'] if isinstance(row['companies'], str) else "; ".join(row['companies'])
-            body_lines.append(f"- {row['title']} ({companies if companies else 'N/A'})")
+            amounts = row['amounts'] if isinstance(row['amounts'], str) else "; ".join(map(str, row['amounts']))
+            indications = row['indications'] if isinstance(row['indications'], str) else "; ".join(row['indications'])
+            summary = row['short_summary'] if row['short_summary'] else ""
+            link = row['url'] if row['url'] else ""
+            
+            body_lines.append(f"- [{event_label}] {row['title']}")
+            body_lines.append(f"  Date: {date_str}")
+            body_lines.append(f"  Companies: {companies}")
+            body_lines.append(f"  Amounts: {amounts}")
+            body_lines.append(f"  Indications: {indications}")
+            body_lines.append(f"  Summary: {summary}")
+            body_lines.append(f"  Link: {link}")
+            body_lines.append("")  # blank line between entries
+        
         body = "\n".join(body_lines)
 
         # Send the email with the Excel attachment
