@@ -170,7 +170,7 @@ def extract_acquisition_details(title, text):
     """Manually extract acquisition details from text"""
     combined = title + " " + text
     patterns = [
-        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|announces?|closes?)\s+(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|closes?|announces?)\s+(?:the\s+)?(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:of|by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
     ]
@@ -187,75 +187,103 @@ def extract_acquisition_details(title, text):
     
     return []
 
+# ---------- NEW and IMPROVED amount extraction + normalization ----------
+def normalize_amount(text):
+    """
+    Normalize amount strings to integer number of USD (approx):
+    e.g. "$15 million" -> 15000000
+          "$5M" -> 5000000
+          "€10M" -> None (we do not convert currencies automatically, return None or keep as-is)
+    Returns int or None when cannot normalize.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    t = text.lower().strip()
+    # remove currency symbols for numeric extraction but keep currency marker
+    is_usd = '$' in t or 'usd' in t
+    # find numeric part
+    num_match = re.search(r'(\d+(?:,\d{3})*(?:\.\d+)?)', t)
+    if not num_match:
+        return None
+    num_str = num_match.group(1).replace(',', '')
+    try:
+        num = float(num_str)
+    except Exception:
+        return None
+    # multipliers
+    if re.search(r'\b(billion|bn|b)\b', t):
+        num *= 1_000_000_000
+    elif re.search(r'\b(million|m)\b', t):
+        num *= 1_000_000
+    elif re.search(r'\b(thousand|k)\b', t):
+        num *= 1_000
+    # Only return numeric if currency is USD or there's a $ sign OR user prefers to store number anyway
+    # We'll return numeric regardless of symbol — but user should be aware numbers are as-written (not currency-converted)
+    try:
+        return int(round(num))
+    except Exception:
+        return None
+
 def extract_money(text):
-    """Extract monetary amounts with better pattern matching and context"""
+    """Extract monetary amounts with better pattern matching and context.
+       Returns list of amount strings (as found/normalized) — e.g. ['$15 million', '$5 million']"""
+    if not text:
+        return []
+    # Patterns to capture:
     patterns = [
-        # $50M, $1.2B format
-        r"\$\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)\b",
-        # 50 million, 1.2 billion format  
-        r"\b\d+\.?\d*\s?(?:million|billion|M|B|bn)(?:\s+dollars?|\s+USD)?\b",
-        # Full numbers: $1,200,000
-        r"\$\s?\d{1,3}(?:,\d{3})+(?:\.\d{2})?",
-        # USD 50M format
-        r"USD\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)?\b",
-        # Euro format
-        r"€\s?\d+\.?\d*\s?(?:million|billion|M|B|bn)\b",
+        # $15 million, $15M, $15.5M, $1,200,000.00
+        r'(\$\s?\d{1,3}(?:[,\d{3}]*)(?:\.\d+)?\s?(?:million|billion|thousand|M|B|k|bn)?)',
+        # USD 15 million
+        r'((?:USD|usd)\s?\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|M|B|bn|k)?)',
+        # €10M or EUR 10 million
+        r'((?:€|EUR|eur)\s?\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|M|B|bn|k)?)',
+        # 15 million USD / 15 million dollars
+        r'(\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|M|B|bn|k)\s?(?:usd|dollars?)?)',
     ]
     matches = []
-    
-    for pattern in patterns:
-        for match in re.finditer(pattern, text, flags=re.I):
-            amount = match.group(0).strip()
-            
-            # Normalize format
-            if not amount.startswith(('$', '€')) and 'usd' not in amount.lower():
-                # Check if it's followed by context words
-                match_pos = match.start()
-                context_before = text[max(0, match_pos-70):match_pos].lower()
-                context_after = text[match.end():min(len(text), match.end()+30)].lower()
-                
-                # Only include if there's money context
-                if any(word in context_before or word in context_after 
-                       for word in ['paid', 'raised', 'funding', 'investment', 'deal', 'worth', 
-                                   'valued', 'acquisition', 'purchase', 'price', 'cost', 'total',
-                                   'transaction', 'amount', 'sum', 'proceeds']):
-                    if not amount.startswith(('$', '€')):
-                        amount = '$' + amount
-                    matches.append(amount)
-            else:
-                matches.append(amount)
-    
-    # Deduplicate and limit
+    lowered = text  # preserve original for matched substrings
+    for pat in patterns:
+        for m in re.finditer(pat, lowered, flags=re.I):
+            amt = m.group(0).strip()
+            # normalize whitespace
+            amt = re.sub(r'\s+', ' ', amt)
+            matches.append(amt)
+    # deduplicate preserving order
     seen = set()
     unique = []
     for m in matches:
-        # Normalize for comparison
-        normalized = re.sub(r'[^\d.]', '', m.lower())
-        if normalized and normalized not in seen and len(normalized) > 0:
-            seen.add(normalized)
+        key = re.sub(r'[^0-9]', '', m)  # rough key by digits
+        if key not in seen:
+            seen.add(key)
             unique.append(m)
-    
-    return unique[:3]
+    return unique[:5]
 
 def extract_amount_from_title(title):
-    """Extract amount specifically from title with context"""
+    """Extract amount specifically from title with context and return normalized strings."""
+    if not title:
+        return []
     patterns = [
-        r'for\s+\$?\d+\.?\d*\s?(?:million|billion|M|B|bn)',
-        r'\$\d+\.?\d*\s?(?:million|billion|M|B|bn)',
-        r'\d+\.?\d*\s?(?:million|billion|M|B|bn)\s+(?:deal|funding|investment|acquisition)',
-        r'€\d+\.?\d*\s?(?:million|billion|M|B|bn)',
+        r'for\s+\$?\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b',
+        r'\$\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b',
+        r'\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\s+(?:deal|funding|investment|acquisition|raise|raised)',
+        r'€\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b',
+        r'USD\s?\d+\.?\d*\s?(?:million|billion|M|B|bn|k)?\b',
     ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, title, re.I)
-        if match:
-            amount = match.group(0)
-            # Clean up "for" prefix
-            amount = re.sub(r'^for\s+', '', amount, flags=re.I).strip()
-            if not amount.startswith(('$', '€')):
-                amount = '$' + amount
-            return [amount]
-    return []
+    found = []
+    for pat in patterns:
+        m = re.search(pat, title, flags=re.I)
+        if m:
+            amt = m.group(0)
+            # remove leading "for "
+            amt = re.sub(r'^\s*for\s+', '', amt, flags=re.I)
+            amt = amt.strip()
+            if not amt.startswith(('$', '€')) and not re.search(r'\b(usd|eur)\b', amt, flags=re.I):
+                # if missing symbol, prepend $ for consistency — but keep in mind this is heuristic
+                amt = '$' + amt
+            found.append(amt)
+    return found
+
+# -----------------------------------------------------------------------
 
 def classify_event(text):
     tl = text.lower()
@@ -470,23 +498,41 @@ def run_agent():
         money_from_summary = extract_money(summary)
         all_money = money_from_text + money_from_title + money_from_summary
         money = list(dict.fromkeys(all_money))[:3]
-        
+
+        # Normalize amounts to numeric values where possible
+        amounts_numeric = []
+        for m in money:
+            n = normalize_amount(m)
+            if n is not None:
+                amounts_numeric.append(n)
+        # Deduplicate numbers
+        amounts_numeric = list(dict.fromkeys(amounts_numeric))
+
         # Fallback for acquisitions/funding with no amount
         if not money and event in ["acquisition", "funding"]:
-            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B)\b'
+            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b'
             fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
             if fallback_matches:
-                money = ['$' + m for m in fallback_matches[:2]]
-        
+                f_matches = ['$' + m for m in fallback_matches[:2]]
+                money = f_matches
+                # normalize fallback
+                for m in f_matches:
+                    n = normalize_amount(m)
+                    if n is not None:
+                        amounts_numeric.append(n)
+
         indications = detect_indications(full_text + " " + title + " " + summary)
         
         # Debug logging
         if event in ["acquisition", "funding"]:
             if money:
-                print(f"💰 Found amount: {money} for {title[:50]}...")
+                print(f"💰 Found amount: {money} (numeric: {amounts_numeric}) for {title[:80]}...")
             else:
                 print(f"⚠️ No amount found for: {title[:60]}...")
-        
+                # show snippet for debugging
+                snippet = (full_text[:500] + "...") if len(full_text) > 500 else full_text
+                print("🔸 Text snippet for inspection:", snippet)
+
         # Scoring
         score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
         score += 0.5 * len(indications)
@@ -504,6 +550,7 @@ def run_agent():
             "companies": companies,
             "event_type": event,
             "amounts": money,
+            "amounts_numeric": amounts_numeric,
             "indications": indications,
             "short_summary": short,
             "full_text": full_text,
@@ -550,11 +597,15 @@ def run_agent():
     ensure_outdir()
     outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
     df_export = df.copy()
+    # remove tz to make Excel happy
     df_export["published_dt"] = df_export["published_dt"].dt.tz_localize(None)
     df_export["companies"] = df_export["companies"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
-    df_export["amounts"] = df_export["amounts"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
+    df_export["amounts"] = df_export["amounts"].apply(lambda x: "; ".join(map(str,x)) if isinstance(x,list) else x)
+    # amounts_numeric column as semicolon-joined numbers (for Excel) and also a separate column for first numeric value
+    df_export["amounts_numeric"] = df_export["amounts_numeric"].apply(lambda x: "; ".join(map(str,x)) if isinstance(x,list) else x)
+    df_export["first_amount_numeric"] = df_export["amounts_numeric"].apply(lambda s: int(s.split(";")[0]) if isinstance(s,str) and s.strip() and s.split(";")[0].isdigit() else None)
     df_export["indications"] = df_export["indications"].apply(lambda x: "; ".join(x) if isinstance(x,list) else x)
-    df_export[["published_dt","title","url","event_type","companies","amounts","indications","short_summary","score"]].to_excel(outfn, index=False)
+    df_export[["published_dt","title","url","event_type","companies","amounts","amounts_numeric","first_amount_numeric","indications","short_summary","score"]].to_excel(outfn, index=False)
     print("Wrote", outfn)
 
     # 7) Email
@@ -566,6 +617,8 @@ def run_agent():
         lines.append(f"  Date: {date}")
         lines.append(f"  Companies: {r['companies']}")
         lines.append(f"  Amounts: {r['amounts']}")
+        lines.append(f"  Amounts (numeric): {r.get('amounts_numeric', '')}")
+        lines.append(f"  First amount (numeric): {r.get('first_amount_numeric', '')}")
         lines.append(f"  Indications: {r['indications']}")
         lines.append(f"  Summary: {r['short_summary']}")
         lines.append(f"  Link: {r['url']}\n")
