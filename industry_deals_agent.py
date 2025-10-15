@@ -544,4 +544,19 @@ def run_agent():
 # Run the agent
 # -----------------
 if __name__ == "__main__":
-    run_agent()
+    df_export = run_agent()
+    if df_export is not None and not df_export.empty:
+        # Compose email
+        subject = f"NeuroCell Intelligence - Exosome Deals {dt.datetime.utcnow().strftime('%Y-%m-%d')}"
+        body_lines = [f"{len(df_export)} exosome deal(s) found in the last {SINCE_DAYS} days."]
+        # Include top N items in the body
+        for _, row in df_export.head(TOP_N_TO_EMAIL).iterrows():
+            companies = row['companies'] if isinstance(row['companies'], str) else "; ".join(row['companies'])
+            body_lines.append(f"- {row['title']} ({companies if companies else 'N/A'})")
+        body = "\n".join(body_lines)
+
+        # Send the email with the Excel attachment
+        outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
+        send_email_with_attachment(subject, body, outfn)
+    else:
+        print("No deals found — skipping email.")
