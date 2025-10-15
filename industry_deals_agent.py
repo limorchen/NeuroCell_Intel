@@ -513,43 +513,44 @@ def run_agent():
     filtered = [p for idx,p in enumerate(processed) if idx not in drop]
     print(f"Filtered {len(processed)-len(filtered)} embedding duplicates; {len(filtered)} items remain")
 
-   # -----------------
-# 5) DataFrame & export
-# -----------------
-df = pd.DataFrame(filtered)
-def parse_dt(x):
-    if not x: return pd.NaT
-    try:
-        return pd.to_datetime(x)
-    except Exception:
+    # -----------------
+    # 5) DataFrame & export
+    # -----------------
+    df = pd.DataFrame(filtered)
+    def parse_dt(x):
+        if not x: return pd.NaT
         try:
-            return pd.to_datetime(dateparser.parse(x))
+            return pd.to_datetime(x)
         except Exception:
-            return pd.NaT
-df["published_dt"] = df["published"].apply(parse_dt)
-df = df.sort_values(["published_dt","score"], ascending=[False,False])
+            try:
+                return pd.to_datetime(dateparser.parse(x))
+            except Exception:
+                return pd.NaT
+    df["published_dt"] = df["published"].apply(parse_dt)
+    df = df.sort_values(["published_dt","score"], ascending=[False,False])
 
-ensure_outdir()
-outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
-df_export = df.copy()
+    ensure_outdir()
+    outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
+    df_export = df.copy()
 
-# Convert lists to clean strings
-list_columns = ["companies", "amounts", "amounts_numeric", "indications"]
-for col in list_columns:
-    df_export[col] = df_export[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
+    # Convert lists to clean strings
+    list_columns = ["companies", "amounts", "amounts_numeric", "indications"]
+    for col in list_columns:
+        df_export[col] = df_export[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
 
-# Short summary should just be text
-df_export["short_summary"] = df_export["short_summary"].apply(lambda x: str(x) if x else "")
+    # Short summary should just be text
+    df_export["short_summary"] = df_export["short_summary"].apply(lambda x: str(x) if x else "")
 
-# Full text truncated to avoid huge cells
-df_export["full_text"] = df_export["full_text"].apply(lambda x: x[:1000] if x else "")
+    # Full text truncated to avoid huge cells
+    df_export["full_text"] = df_export["full_text"].apply(lambda x: x[:1000] if x else "")
 
-# Ensure published_dt is clean (no timezone info)
-df_export["published_dt"] = pd.to_datetime(df_export["published_dt"]).dt.tz_localize(None)
+    # Ensure published_dt is clean (no timezone info)
+    df_export["published_dt"] = pd.to_datetime(df_export["published_dt"]).dt.tz_localize(None)
 
-# Save Excel
-df_export.to_excel(outfn, index=False)
-print("Exported to", outfn)
+    # Save Excel
+    df_export.to_excel(outfn, index=False)
+    print("Exported to", outfn)
+    return df_export
 
 # -----------------
 # Run the agent
