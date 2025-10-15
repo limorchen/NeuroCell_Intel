@@ -215,31 +215,31 @@ def extract_amounts(text):
     if not text:
         return []
 
-    patterns = [
-        r'(\$\s?\d{1,3}(?:[,\d{3}]*)?(?:\.\d+)?\s?(?:million|billion|thousand|M|B|k|bn)?)',
-        r'((?:USD|usd)\s?\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|M|B|bn|k)?)',
-        r'((?:€|EUR|eur)\s?\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|M|B|bn|k)?)',
-        r'(\d+(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|M|B|bn|k)\s?(?:usd|dollars?)?)',
+    # Regex patterns to catch variations:
+    amount_patterns = [
+        # $15 million, $5M, $250,000.00
+        r'(?:\$|USD|EUR|usd|eur|€)\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)?',
+        # 15 million USD, 3M dollars, 250 thousand EUR
+        r'\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)\s?(?:USD|usd|dollars?|EUR|eur|€)?'
     ]
 
     matches = []
-    for pat in patterns:
+    for pat in amount_patterns:
         for m in re.finditer(pat, text, flags=re.I):
             amt = m.group(0).strip()
             amt = re.sub(r'\s+', ' ', amt)
-            if not amt.startswith(('$', '€')) and re.search(r'\b(usd|dollars?)\b', amt, flags=re.I):
-                amt = '$' + amt
             matches.append(amt)
 
+    # Uniqueness: canonicalize by removing all except digits/decimals for key comparison
     seen = set()
     unique = []
     for m in matches:
         key = re.sub(r'[^\d.]', '', m)
-        if key not in seen and key:
+        if key and key not in seen:
             seen.add(key)
             unique.append(m)
 
-    return unique[:5]
+    return unique
 
 def classify_event(text):
     tl = text.lower()
