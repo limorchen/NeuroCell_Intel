@@ -85,7 +85,7 @@ EXOSOME_COMPANIES = [
     "regeneveda", "mdxhealth", "bio-techne", "nurexone biologic", "biorestorative therapeutics",
     "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs",
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
-    "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems"
+    "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics"
 ]
 
 # ---------------------------------------
