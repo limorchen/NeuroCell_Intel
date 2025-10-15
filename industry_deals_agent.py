@@ -453,116 +453,112 @@ def run_agent():
     collected = list(date_title_map.values())
     print(f"After date+title deduplication: {len(collected)} items")
 
-    # 3) Process
-    processed = []
-    for item in collected:
-        title = item.get("title","")
-        url = item.get("link","")
-        pub = item.get("published")
-        summary = item.get("summary","") or ""
-        
-        # Try to fetch article text with trafilatura
-        text = fetch_article_text(url) if url else ""
-        
-        # Use summary if article fetch failed or text too short
-        if not text or len(text) < 200:
-            full_text = summary if len(summary) > 50 else title
-            print(f"📰 Using summary for: {title[:50]}...")
-        else:
-            full_text = text
-            print(f"✅ Fetched article ({len(text)} chars): {title[:50]}...")
 
-        # Filter non-exosome content
-        if not is_exosome_relevant(full_text, title):
-            continue
+# 3) Process
+processed = []
+for item in collected:
+    title = item.get("title","")
+    url = item.get("link","")
+    pub = item.get("published")
+    summary = item.get("summary","") or ""
+    
+    # Try to fetch article text with trafilatura
+    text = fetch_article_text(url) if url else ""
+    
+    # Use summary if article fetch failed or text too short
+    if not text or len(text) < 200:
+        full_text = summary if len(summary) > 50 else title
+        print(f"📰 Using summary for: {title[:50]}...")
+    else:
+        full_text = text
+        print(f"✅ Fetched article ({len(text)} chars): {title[:50]}...")
 
-        short = summarize_short(full_text, max_sent=2)
-        
-        # Classify event first
-        event = classify_event(full_text + " " + title)
-        
-        # Extract companies
-        if "acqui" in title.lower() or event == "acquisition":
-            companies = extract_acquisition_details(title, full_text)
-            if not companies or len(companies) < 2:
-                companies_from_text = extract_companies(full_text)
-                companies_from_title = extract_companies(title + " " + summary)
-                companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
-        else:
+    # Filter non-exosome content
+    if not is_exosome_relevant(full_text, title):
+        continue
+
+    short = summarize_short(full_text, max_sent=2)
+    
+    # Classify event first
+    event = classify_event(full_text + " " + title)
+    
+    # Extract companies
+    if "acqui" in title.lower() or event == "acquisition":
+        companies = extract_acquisition_details(title, full_text)
+        if not companies or len(companies) < 2:
             companies_from_text = extract_companies(full_text)
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
-        
-        # Extract money aggressively from all sources
-        money_from_text = extract_money(full_text)
-        money_from_title = extract_amount_from_title(title)
-        money_from_summary = extract_money(summary)
-        all_money = money_from_text + money_from_title + money_from_summary
-        money = list(dict.fromkeys(all_money))[:3]
+    else:
+        companies_from_text = extract_companies(full_text)
+        companies_from_title = extract_companies(title + " " + summary)
+        companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+    
+    # --- REPLACE MONEY EXTRACTION ---
+    all_money = extract_amounts(full_text) + extract_amounts(title) + extract_amounts(summary)
+    money = list(dict.fromkeys(all_money))[:3]
 
-        # Normalize amounts to numeric values where possible
-        amounts_numeric = []
-        for m in money:
-            n = normalize_amount(m)
-            if n is not None:
-                amounts_numeric.append(n)
-        # Deduplicate numbers
-        amounts_numeric = list(dict.fromkeys(amounts_numeric))
+    # Normalize amounts to numeric values where possible
+    amounts_numeric = []
+    for m in money:
+        n = normalize_amount(m)
+        if n is not None:
+            amounts_numeric.append(n)
+    amounts_numeric = list(dict.fromkeys(amounts_numeric))
 
-        # Fallback for acquisitions/funding with no amount
-        if not money and event in ["acquisition", "funding"]:
-            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b'
-            fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
-            if fallback_matches:
-                f_matches = ['$' + m for m in fallback_matches[:2]]
-                money = f_matches
-                # normalize fallback
-                for m in f_matches:
-                    n = normalize_amount(m)
-                    if n is not None:
-                        amounts_numeric.append(n)
+    # Fallback for acquisitions/funding with no amount
+    if not money and event in ["acquisition", "funding"]:
+        fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b'
+        fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
+        if fallback_matches:
+            f_matches = ['$' + m for m in fallback_matches[:2]]
+            money = f_matches
+            for m in f_matches:
+                n = normalize_amount(m)
+                if n is not None:
+                    amounts_numeric.append(n)
 
-        indications = detect_indications(full_text + " " + title + " " + summary)
-        
-        # Debug logging
-        if event in ["acquisition", "funding"]:
-            if money:
-                print(f"💰 Found amount: {money} (numeric: {amounts_numeric}) for {title[:80]}...")
-            else:
-                print(f"⚠️ No amount found for: {title[:60]}...")
-                # show snippet for debugging
-                snippet = (full_text[:500] + "...") if len(full_text) > 500 else full_text
-                print("🔸 Text snippet for inspection:", snippet)
+    indications = detect_indications(full_text + " " + title + " " + summary)
+    
+    # Debug logging
+    if event in ["acquisition", "funding"]:
+        if money:
+            print(f"💰 Found amount: {money} (numeric: {amounts_numeric}) for {title[:80]}...")
+        else:
+            print(f"⚠️ No amount found for: {title[:60]}...")
+            snippet = (full_text[:500] + "...") if len(full_text) > 500 else full_text
+            print("🔸 Text snippet for inspection:", snippet)
 
-        # Scoring
-        score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
-        score += 0.5 * len(indications)
-        score += 0.8 if money else 0.0
-        score += 0.3 * len(companies)
-        
-        exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
-        score += min(exosome_count * 0.3, 2.0)
+    # Scoring
+    score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
+    score += 0.5 * len(indications)
+    score += 0.8 if money else 0.0
+    score += 0.3 * len(companies)
+    
+    exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
+    score += min(exosome_count * 0.3, 2.0)
 
-        processed.append({
-            "title": title,
-            "url": url,
-            "published": pub,
-            "date": pub,
-            "companies": companies,
-            "event_type": event,
-            "amounts": money,
-            "amounts_numeric": amounts_numeric,
-            "indications": indications,
-            "short_summary": short,
-            "full_text": full_text,
-            "score": score
-        })
+    processed.append({
+        "title": title,
+        "url": url,
+        "published": pub,
+        "date": pub,
+        "companies": companies,
+        "event_type": event,
+        "amounts": money,
+        "amounts_numeric": amounts_numeric,
+        "indications": indications,
+        "short_summary": short,
+        "full_text": full_text,
+        "score": score
+    })
 
-    print(f"After relevance filtering: {len(processed)} items")
+print(f"After relevance filtering: {len(processed)} items")
 
-    if not processed:
-        print("No processed items found.")
-        return None
+if not processed:
+    print("No processed items found.")
+    return None
+
 
     # 4) Dedupe via embeddings
     texts = [p["title"] + " " + p["short_summary"] for p in processed]
