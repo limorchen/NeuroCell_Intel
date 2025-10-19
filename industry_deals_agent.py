@@ -534,30 +534,7 @@ def run_agent():
                     n = normalize_amount(m)
                     if n is not None:
                         amounts_numeric.append(n)# Extract amounts
-                        
-        all_money = extract_amounts(full_text) + extract_amounts(title) + extract_amounts(summary)
-        money = list(dict.fromkeys(all_money))[:3]
-
-        # Normalize numeric
-        amounts_numeric = []
-        for m in money:
-            n = normalize_amount(m)
-            if n is not None:
-                amounts_numeric.append(n)
-        amounts_numeric = list(dict.fromkeys(amounts_numeric))
-
-        # Fallback for missing amounts
-        if not money and event in ["acquisition", "funding"]:
-            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b'
-            fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
-            if fallback_matches:
-                f_matches = ['$' + m for m in fallback_matches[:2]]
-                money = f_matches
-                for m in f_matches:
-                    n = normalize_amount(m)
-                    if n is not None:
-                        amounts_numeric.append(n)
-
+   
         indications = detect_indications(full_text + " " + title + " " + summary)
 
         # Scoring
