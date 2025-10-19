@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 import smtplib
 from email.message import EmailMessage
 import trafilatura
+import time
+
 
 # ---------------------------------------
 # 🔐 Load environment variables
@@ -247,6 +249,57 @@ def extract_amounts(text):
 
     return unique
 
+def search_for_deal_amount(title, companies, event_type):
+    """
+    Secondary web scraper: Search for deal amount when not found in article
+    Uses DuckDuckGo HTML search (no API key needed)
+    """
+    if event_type not in ["acquisition", "funding"]:
+        return []
+    
+    try:
+        # Build search query
+        company_str = " ".join(companies[:2]) if companies else ""
+        search_query = f"{company_str} {event_type} amount million"
+        
+        # Use DuckDuckGo HTML search (doesn't require API)
+        search_url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(search_query)}"
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        response = requests.get(search_url, headers=headers, timeout=5)
+        if response.status_code != 200:
+            return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Extract text snippets from search results
+        snippets = []
+        for result in soup.find_all('a', class_='result__snippet'):
+            snippets.append(result.get_text())
+        
+        # Also check result titles
+        for result in soup.find_all('a', class_='result__a'):
+            snippets.append(result.get_text())
+        
+        # Combine all snippets
+        combined_text = " ".join(snippets[:5])  # First 5 results
+        
+        # Extract amounts from the search results
+        amounts = extract_amounts(combined_text)
+        
+        if amounts:
+            print(f"🔍 Found amount via search: {amounts[0]} for {title[:50]}...")
+            return amounts[:2]  # Return top 2 amounts found
+        
+        return []
+        
+    except Exception as e:
+        print(f"Search failed: {str(e)[:50]}")
+        return []
+
 def classify_event(text):
     tl = text.lower()
     scores = {}
@@ -448,6 +501,40 @@ def run_agent():
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
 
         # Extract amounts
+        all_money = extract_amounts(full_text) + extract_amounts(title) + extract_amounts(summary)
+        money = list(dict.fromkeys(all_money))[:3]
+
+        # Normalize numeric
+        amounts_numeric = []
+        for m in money:
+            n = normalize_amount(m)
+            if n is not None:
+                amounts_numeric.append(n)
+        amounts_numeric = list(dict.fromkeys(amounts_numeric))
+
+        # Fallback 1: regex pattern matching
+        if not money and event in ["acquisition", "funding"]:
+            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b'
+            fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
+            if fallback_matches:
+                f_matches = ['$' + m for m in fallback_matches[:2]]
+                money = f_matches
+                for m in f_matches:
+                    n = normalize_amount(m)
+                    if n is not None:
+                        amounts_numeric.append(n)
+        
+        # 🔍 Fallback 2: Secondary web search scraper (NEW!)
+        if not money and event in ["acquisition", "funding"]:
+            print(f"🔍 Searching web for amount: {title[:50]}...")
+            search_amounts = search_for_deal_amount(title, companies, event)
+            if search_amounts:
+                money = search_amounts
+                for m in search_amounts:
+                    n = normalize_amount(m)
+                    if n is not None:
+                        amounts_numeric.append(n)# Extract amounts
+                        
         all_money = extract_amounts(full_text) + extract_amounts(title) + extract_amounts(summary)
         money = list(dict.fromkeys(all_money))[:3]
 
