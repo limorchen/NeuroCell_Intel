@@ -34,6 +34,10 @@ RSS_FEEDS = [
     "https://www.biospace.com/rss",
     "https://www.genengnews.com/feed/",
     "https://www.labiotech.eu/feed/",
+    "https://www.biocentury.com/rss",
+    "https://www.bioworld.com/rss",
+    "https://www.genengnews.com/topics/feed/",
+    "https://www.evaluate.com/vantage/rss",
     
     # Business wire feeds
     "https://www.businesswire.com/portal/site/home/news/subject/landing/biotechnology",
@@ -41,6 +45,8 @@ RSS_FEEDS = [
     
     # Google News search focused on exosomes deals
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
+    "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
 ]
 
 PR_PAGES = []
