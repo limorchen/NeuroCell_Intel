@@ -51,7 +51,7 @@ NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
 # Retrieve search terms from environment variables. Use robust defaults.
 PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND Spinal")
 CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles")
-CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR neuroregeneration")
+CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR optic nerve")
 
 # FIX: Construct the combined search expression dynamically, ensuring terms are not empty.
 # This prevents malformed queries like 'intr:() AND cond:()' when a secret is empty.
