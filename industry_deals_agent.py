@@ -489,9 +489,9 @@ def is_exosome_relevant(text, title):
     # New relevance logic: 
     # Must have a high score OR mention a target company AND have enough text to be a full article
     is_relevant = (
-        (company_match and exosome_hits >= 1) or 
-        (exosome_hits >= 2) or 
-        (company_match and len(text) > 500) # Keep if a target company is mentioned and article content exists
+        (exosome_hits >= 1 and  
+        (company_match or len(text) > 500)) or 
+        (exosome_hits >= 2) # Keep if a target company is mentioned and article content exists
     )
 
     if not is_relevant:
