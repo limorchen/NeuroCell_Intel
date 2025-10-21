@@ -60,15 +60,15 @@ INDICATION_KEYWORDS = [
     
     # General therapeutic areas
     "regenerat","regeneration","repair","rejuvenat","therapeutic",
-    "inflammatory","autoimmune","immune", "axonal repair",
-    "kidney","renal","lung","pulmonary","respiratory", "glaucoma", "optic nerve", "facial nerve",
+    "inflammatory","autoimmune","immune","axonal repair",
+    "kidney","renal","lung","pulmonary","respiratory","glaucoma","optic nerve","facial nerve",
     
     # Diagnostic applications
     "diagnostic","biomarker","detection","screening",
     "liquid biopsy","early detection",
     
     # Drug delivery
-    "drug delivery","therapeutic delivery","targeted therapy". "lipid nanoparticles",
+    "drug delivery","therapeutic delivery","targeted therapy","lipid nanoparticles",
 ]
 
 EVENT_KEYWORDS = {
