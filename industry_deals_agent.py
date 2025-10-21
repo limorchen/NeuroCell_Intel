@@ -20,7 +20,8 @@ import time
 # 🔐 Load environment variables
 # ---------------------------------------
 load_dotenv()
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
+# NEWSAPI_KEY removed as it was unused
+# NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "") 
 
 # ---------------------------------------
 # 📁 Configuration
@@ -51,16 +52,18 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
 ]
 
-PR_PAGES = []
+PR_PAGES = [] # This list remains empty, the loop that uses it will be removed.
 
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
-    # Neurological
-    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration", "astrocytes", "glial cells", "glial scar formation", "microgliosis",
+    # Neurological (Expanded) ⬅️ MODIFIED
+    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
+    "astrocytes", "glial cells", "glial scar formation", "microgliosis", "cns", "brain injury", 
+    "tau protein", "axonal repair",
     
     # General therapeutic areas
     "regenerat","regeneration","repair","rejuvenat","therapeutic",
-    "inflammatory","autoimmune","immune","axonal repair",
+    "inflammatory","autoimmune","immune",
     "kidney","renal","lung","pulmonary","respiratory","glaucoma","optic nerve","facial nerve",
     
     # Diagnostic applications
@@ -105,22 +108,33 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# ADDED RETRY LOGIC AND SLEEP ⬅️ MODIFIED
 def fetch_rss_entries(url):
-    try:
-        f = feedparser.parse(url)
-        return f.entries
-    except Exception as e:
-        print("RSS error", url, e)
-        return []
+    for attempt in range(3):
+        try:
+            f = feedparser.parse(url)
+            # Check for a specific error from Business Wire/network failure
+            if f.get('bozo_exception') and "closed connection" in str(f.bozo_exception):
+                print(f"RSS error (Attempt {attempt+1}/3) {url}: Remote end closed connection. Retrying...")
+                time.sleep(3)  # Wait longer before retrying this aggressive URL
+                continue
+            return f.entries
+        except Exception as e:
+            print(f"RSS error (Attempt {attempt+1}/3) {url}: {e}")
+            time.sleep(2)  # Wait before retrying
+    return [] # Return empty list if all retries fail
 
+# ADDED TIME.SLEEP ⬅️ MODIFIED
 def fetch_article_text(url, timeout=10):
     """Fetch article text using trafilatura - more reliable than newspaper3k"""
     try:
         downloaded = trafilatura.fetch_url(url)
+        # Add small delay to avoid rate limiting
+        time.sleep(0.5)
         if downloaded:
             text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
             if text and len(text) > 100:
-                return text[:10000]  # Limit to 10k chars
+                return text[:10000] # Limit to 10k chars
         return ""
     except Exception as e:
         print(f"Article fetch failed for {url[:50]}...: {str(e)[:30]}")
@@ -154,8 +168,7 @@ def extract_companies(text):
                     t = t[:-len(suffix)].strip()
             if len(t) < 2 or len(t.split()) > 6:
                 continue
-            if t.lower() in IGNORE_ORGS:
-                continue
+            # Simplified check using only the 'any' check ⬅️ MODIFIED
             if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
@@ -202,7 +215,7 @@ def normalize_amount(text):
     t = text.lower().strip()
     
     # Check currency type (default to USD)
-    is_usd = '$' in t or 'usd' in t or 'dollar' in t
+    # is_usd = '$' in t or 'usd' in t or 'dollar' in t # not needed for calculation
     
     # Extract the numeric part (handles commas, decimals, spaces)
     num_match = re.search(r'(\d+(?:[,\s]\d{3})*(?:\.\d+)?)', t)
@@ -239,7 +252,7 @@ def validate_deal_amount(amount_str, context, event_type):
     if not amount_str:
         return 0.0
     
-    score = 0.5  # Base score
+    score = 0.5 # Base score
     
     context_lower = context.lower()
     
@@ -299,11 +312,11 @@ def extract_amounts_with_validation(title, text, summary, event_type):
         context = extract_deal_context(full_text, amount)
         confidence = validate_deal_amount(amount, context, event_type)
         
-        if confidence >= 0.4:  # Threshold for inclusion
+        if confidence >= 0.4: # Threshold for inclusion
             validated_amounts.append({
                 'amount': amount,
                 'confidence': confidence,
-                'context': context[:200]  # First 200 chars of context
+                'context': context[:200] # First 200 chars of context
             })
     
     # Sort by confidence
@@ -372,7 +385,7 @@ def extract_amounts(text):
             seen.add(key)
             unique.append(m)
 
-    return unique[:5]  # Return top 5 amounts
+    return unique[:5] # Return top 5 amounts
 
 def search_for_deal_amount(title, companies, event_type):
     """
@@ -382,6 +395,9 @@ def search_for_deal_amount(title, companies, event_type):
     if event_type not in ["acquisition", "funding"]:
         return []
     
+    # ADDED TIME.SLEEP before request ⬅️ MODIFIED
+    time.sleep(1)
+
     try:
         # Build search query
         company_str = " ".join(companies[:2]) if companies else ""
@@ -410,14 +426,14 @@ def search_for_deal_amount(title, companies, event_type):
             snippets.append(result.get_text())
         
         # Combine all snippets
-        combined_text = " ".join(snippets[:5])  # First 5 results
+        combined_text = " ".join(snippets[:5]) # First 5 results
         
         # Extract amounts from the search results
         amounts = extract_amounts(combined_text)
         
         if amounts:
             print(f"🔍 Found amount via search: {amounts[0]} for {title[:50]}...")
-            return amounts[:2]  # Return top 2 amounts found
+            return amounts[:2] # Return top 2 amounts found
         
         return []
         
@@ -450,6 +466,7 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title
 
+# REFINED RELEVANCE LOGIC ⬅️ MODIFIED
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     
@@ -469,7 +486,15 @@ def is_exosome_relevant(text, title):
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
     
-    if not ((company_match and exosome_hits > 0) or (exosome_hits > 1)):
+    # New relevance logic: 
+    # Must have a high score OR mention a target company AND have enough text to be a full article
+    is_relevant = (
+        (company_match and exosome_hits >= 1) or 
+        (exosome_hits >= 2) or 
+        (company_match and len(text) > 500) # Keep if a target company is mentioned and article content exists
+    )
+
+    if not is_relevant:
         return False
     
     if any(term in combined for term in SPAM_TERMS):
@@ -555,18 +580,12 @@ def run_agent():
                 "summary": clean_summary
             })
 
-    # 2) PR pages
-    for name, pr_url in PR_PAGES:
-        try:
-            r = requests.get(pr_url, timeout=8)
-            soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if any(x in href.lower() for x in ["press","news","releases","press-release"]):
-                    link = href if href.startswith("http") else requests.compat.urljoin(pr_url, href)
-                    collected.append({"title": a.get_text(strip=True),"link": link,"published": None,"summary": ""})
-        except Exception as e:
-            print("PR page error", pr_url, e)
+    # REMOVED PR_PAGES loop as it was empty and unnecessary ⬅️ MODIFIED
+    # for name, pr_url in PR_PAGES:
+    #     try:
+    #         ...
+    #     except Exception as e:
+    #         print("PR page error", pr_url, e)
 
     print(f"Initial collection: {len(collected)} items")
 
@@ -633,9 +652,9 @@ def run_agent():
 
         # Log confidence scores for debugging
         if validated_money:
-           print(f"💰 Found amounts for '{title[:50]}...':")
-           for vm in validated_money[:3]:
-               print(f"   {vm['amount']} (confidence: {vm['confidence']:.2f})")
+            print(f"💰 Found amounts for '{title[:50]}...':")
+            for vm in validated_money[:3]:
+                print(f"    {vm['amount']} (confidence: {vm['confidence']:.2f})")
 
         # Normalize numeric
         amounts_numeric = []
@@ -656,8 +675,8 @@ def run_agent():
                     n = normalize_amount(m)
                     if n is not None:
                         amounts_numeric.append(n)
-        
-        # 🔍 Fallback 2: Secondary web search scraper (NEW!)
+            
+        # 🔍 Fallback 2: Secondary web search scraper 
         if not money and event in ["acquisition", "funding"]:
             print(f"🔍 Searching web for amount: {title[:50]}...")
             search_amounts = search_for_deal_amount(title, companies, event)
@@ -667,7 +686,9 @@ def run_agent():
                     n = normalize_amount(m)
                     if n is not None:
                         amounts_numeric.append(n)# Extract amounts
-   
+        
+        amounts_numeric = list(dict.fromkeys(amounts_numeric)) # Reduplicate after search
+
         indications = detect_indications(full_text + " " + title + " " + summary)
 
         # Scoring
@@ -762,14 +783,17 @@ if __name__ == "__main__":
     df_export = run_agent()
     if df_export is not None and not df_export.empty:
         # Compose email in "old style" detailed format
-        subject = f"Exosome Deals — Summary (last {SINCE_DAYS} days)"
+        subject = f"NeuroCell Intelligence Exosome Deals — Summary (last {SINCE_DAYS} days)"
         body_lines = [
-            f"Exosome Deals — Summary (last {SINCE_DAYS} days)",
-            f"Generated: {dt.datetime.utcnow().isoformat()}",
+            f"NeuroCell Intelligence Exosome Deals — Summary (last {SINCE_DAYS} days)",
+            f"Generated: {dt.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
             ""
         ]
         
-        for _, row in df_export.iterrows():
+        # Sort by score for email
+        df_email = df_export.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
+
+        for _, row in df_email.iterrows():
             event_label = row['event_type'].upper() if row['event_type'] else "NEWS"
             date_str = row['published_dt'].strftime('%Y-%m-%d') if pd.notnull(row['published_dt']) else "Unknown"
             companies = row['companies'] if isinstance(row['companies'], str) else "; ".join(row['companies'])
@@ -785,7 +809,7 @@ if __name__ == "__main__":
             body_lines.append(f"  Indications: {indications}")
             body_lines.append(f"  Summary: {summary}")
             body_lines.append(f"  Link: {link}")
-            body_lines.append("")  # blank line between entries
+            body_lines.append("") # blank line between entries
         
         body = "\n".join(body_lines)
 
