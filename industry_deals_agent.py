@@ -26,8 +26,8 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 # 📁 Configuration
 # ---------------------------------------
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 120
-TOP_N_TO_EMAIL = 30
+SINCE_DAYS = 30
+TOP_N_TO_EMAIL = 10
 
 RSS_FEEDS = [
     # Biotech/pharma specific feeds
