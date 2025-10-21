@@ -56,22 +56,19 @@ PR_PAGES = []
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
     # Neurological
-    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
+    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration", "astrocytes", "glial cells", glial scar formation", "microgliosis",
     
     # General therapeutic areas
     "regenerat","regeneration","repair","rejuvenat","therapeutic",
-    "cancer","oncology","tumor","carcinoma",
-    "cardiovascular","cardiac","heart","myocardial",
-    "inflammatory","autoimmune","immune",
-    "kidney","renal","liver","hepatic",
-    "lung","pulmonary","respiratory",
+    "inflammatory","autoimmune","immune", "axonal repair",
+    "kidney","renal","lung","pulmonary","respiratory", "glaucoma", optic nerve", "facial nerve",
     
     # Diagnostic applications
     "diagnostic","biomarker","detection","screening",
     "liquid biopsy","early detection",
     
     # Drug delivery
-    "drug delivery","therapeutic delivery","targeted therapy"
+    "drug delivery","therapeutic delivery","targeted therapy". "lipid nanoparticles",
 ]
 
 EVENT_KEYWORDS = {
