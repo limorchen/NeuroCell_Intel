@@ -196,58 +196,206 @@ def extract_acquisition_details(title, text):
     return []
 
 def normalize_amount(text):
+    """
+    Enhanced normalization with better parsing
+    """
     if not text or not isinstance(text, str):
         return None
+    
     t = text.lower().strip()
-    is_usd = '$' in t or 'usd' in t
-    num_match = re.search(r'(\d+(?:,\d{3})*(?:\.\d+)?)', t)
+    
+    # Check currency type (default to USD)
+    is_usd = '$' in t or 'usd' in t or 'dollar' in t
+    
+    # Extract the numeric part (handles commas, decimals, spaces)
+    num_match = re.search(r'(\d+(?:[,\s]\d{3})*(?:\.\d+)?)', t)
     if not num_match:
         return None
-    num_str = num_match.group(1).replace(',', '')
+    
+    num_str = num_match.group(1).replace(',', '').replace(' ', '')
+    
     try:
         num = float(num_str)
     except Exception:
         return None
-    if re.search(r'\b(billion|bn|b)\b', t):
+    
+    # Apply multipliers
+    if re.search(r'\b(trillion|tn|t)\b', t):
+        num *= 1_000_000_000_000
+    elif re.search(r'\b(billion|bn|b)\b', t):
         num *= 1_000_000_000
-    elif re.search(r'\b(million|m)\b', t):
+    elif re.search(r'\b(million|mn|m)\b', t):
         num *= 1_000_000
     elif re.search(r'\b(thousand|k)\b', t):
         num *= 1_000
+    
     try:
         return int(round(num))
     except Exception:
         return None
 
+def extract_deal_context(text, amount_str):
+    """
+    Extract surrounding context around a dollar amount to validate it's a deal amount
+    """
+    if not text or not amount_str:
+        return ""
+    
+    # Find the amount in text
+    pattern = re.escape(amount_str)
+    match = re.search(pattern, text, re.IGNORECASE)
+    
+    if match:
+        start = max(0, match.start() - 100)
+        end = min(len(text), match.end() + 100)
+        context = text[start:end]
+        return context
+    
+    return ""
+
+
+def validate_deal_amount(amount_str, context, event_type):
+    """
+    Validate if an extracted amount is likely a real deal amount
+    Returns confidence score 0-1
+    """
+    if not amount_str:
+        return 0.0
+    
+    score = 0.5  # Base score
+    
+    context_lower = context.lower()
+    
+    # Positive indicators
+    positive_keywords = [
+        'raised', 'raised in', 'closed', 'secured', 'acquired for',
+        'purchased for', 'valued at', 'worth', 'funding round',
+        'investment', 'series', 'financing', 'deal worth',
+        'transaction', 'acquisition price', 'upfront payment'
+    ]
+    
+    for keyword in positive_keywords:
+        if keyword in context_lower:
+            score += 0.2
+            break
+    
+    # Negative indicators (probably not a deal amount)
+    negative_keywords = [
+        'market size', 'revenue', 'annual', 'quarterly',
+        'sales', 'profit', 'loss', 'stock price',
+        'market cap', 'valuation of company', 'worth of market'
+    ]
+    
+    for keyword in negative_keywords:
+        if keyword in context_lower:
+            score -= 0.3
+            break
+    
+    # Event type bonus
+    if event_type in ['acquisition', 'funding', 'licensing']:
+        score += 0.1
+    
+    # Amount range validation (deals are typically $1M - $10B)
+    normalized = normalize_amount(amount_str)
+    if normalized:
+        if 1_000_000 <= normalized <= 10_000_000_000:
+            score += 0.2
+        elif normalized < 100_000 or normalized > 100_000_000_000:
+            score -= 0.3
+    
+    return max(0.0, min(1.0, score))
+
+def extract_amounts_with_validation(title, text, summary, event_type):
+    """
+    Main extraction function that combines extraction + validation
+    Returns list of validated amounts with confidence scores
+    """
+    # Combine all text sources
+    full_text = f"{title} {text} {summary}"
+    
+    # Extract all potential amounts
+    all_amounts = extract_amounts(full_text)
+    
+    # Validate each amount
+    validated_amounts = []
+    for amount in all_amounts:
+        context = extract_deal_context(full_text, amount)
+        confidence = validate_deal_amount(amount, context, event_type)
+        
+        if confidence >= 0.4:  # Threshold for inclusion
+            validated_amounts.append({
+                'amount': amount,
+                'confidence': confidence,
+                'context': context[:200]  # First 200 chars of context
+            })
+    
+    # Sort by confidence
+    validated_amounts.sort(key=lambda x: x['confidence'], reverse=True)
+    
+    return validated_amounts
+
+def extract_deal_context(text, amount_str):
+    """
+    Extract surrounding context around a dollar amount to validate it's a deal amount
+    """
+    if not text or not amount_str:
+        return ""
+    
+    # Find the amount in text
+    pattern = re.escape(amount_str)
+    match = re.search(pattern, text, re.IGNORECASE)
+    
+    if match:
+        start = max(0, match.start() - 100)
+        end = min(len(text), match.end() + 100)
+        context = text[start:end]
+        return context
+    
+    return ""
+
 def extract_amounts(text):
+    """
+    Enhanced money extraction with better pattern matching
+    """
     if not text:
         return []
 
-    # Regex patterns to catch variations:
+    # More comprehensive regex patterns
     amount_patterns = [
-        # $15 million, $5M, $250,000.00
-        r'(?:\$|USD|EUR|usd|eur|€)\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)?',
-        # 15 million USD, 3M dollars, 250 thousand EUR
-        r'\d{1,3}(?:,\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)\s?(?:USD|usd|dollars?|EUR|eur|€)?'
+        # $15 million, $5M, $250,000.00, $1.5B
+        r'\$\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
+        
+        # 15 million dollars, 3M USD, 250 thousand EUR
+        r'\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|\$)?',
+        
+        # USD 15 million, EUR 3M
+        r'(?:USD|usd|EUR|eur|€)\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
+        
+        # Edge cases: "a $15M", "approximately $3 million"
+        r'(?:approximately|about|around|nearly|up\s+to|over)?\s?\$?\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)',
     ]
 
     matches = []
     for pat in amount_patterns:
-        for m in re.finditer(pat, text, flags=re.I):
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
             amt = m.group(0).strip()
+            # Clean up whitespace
             amt = re.sub(r'\s+', ' ', amt)
+            # Remove leading words like "approximately"
+            amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over)\s+', '', amt, flags=re.I)
             matches.append(amt)
 
-    # Uniqueness: canonicalize by removing all except digits/decimals for key comparison
+    # Deduplicate while preserving order
     seen = set()
     unique = []
     for m in matches:
-        key = re.sub(r'[^\d.]', '', m)
-        if key and key not in seen:
+        # Create a normalized key for comparison
+        key = re.sub(r'[^\d.]', '', m.lower())
+        if key and key not in seen and len(key) >= 1:
             seen.add(key)
             unique.append(m)
 
-    return unique
+    return unique[:5]  # Return top 5 amounts
 
 def search_for_deal_amount(title, companies, event_type):
     """
@@ -500,9 +648,17 @@ def run_agent():
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
 
-        # Extract amounts
-        all_money = extract_amounts(full_text) + extract_amounts(title) + extract_amounts(summary)
-        money = list(dict.fromkeys(all_money))[:3]
+        # Extract amounts with validation
+        validated_money = extract_amounts_with_validation(title, full_text, summary, event)
+
+        # Get just the amount strings for backward compatibility
+        money = [vm['amount'] for vm in validated_money[:3]]
+
+        # Log confidence scores for debugging
+        if validated_money:
+           print(f"💰 Found amounts for '{title[:50]}...':")
+           for vm in validated_money[:3]:
+               print(f"   {vm['amount']} (confidence: {vm['confidence']:.2f})")
 
         # Normalize numeric
         amounts_numeric = []
