@@ -234,26 +234,6 @@ def normalize_amount(text):
     except Exception:
         return None
 
-def extract_deal_context(text, amount_str):
-    """
-    Extract surrounding context around a dollar amount to validate it's a deal amount
-    """
-    if not text or not amount_str:
-        return ""
-    
-    # Find the amount in text
-    pattern = re.escape(amount_str)
-    match = re.search(pattern, text, re.IGNORECASE)
-    
-    if match:
-        start = max(0, match.start() - 100)
-        end = min(len(text), match.end() + 100)
-        context = text[start:end]
-        return context
-    
-    return ""
-
-
 def validate_deal_amount(amount_str, context, event_type):
     """
     Validate if an extracted amount is likely a real deal amount
