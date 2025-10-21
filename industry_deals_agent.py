@@ -56,7 +56,7 @@ PR_PAGES = []
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
     # Neurological
-    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration", "astrocytes", "glial cells", glial scar formation", "microgliosis",
+    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration", "astrocytes", "glial cells", "glial scar formation", "microgliosis",
     
     # General therapeutic areas
     "regenerat","regeneration","repair","rejuvenat","therapeutic",
