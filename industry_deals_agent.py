@@ -20,7 +20,7 @@ import time
 # 🔐 Load environment variables
 # ---------------------------------------
 load_dotenv()
-# NEWSAPI_KEY removed as it was unused and is not relevant to this script's functionality
+# NEWSAPI_KEY is not used in this script
 # NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "") 
 
 # ---------------------------------------
@@ -30,11 +30,8 @@ OUTPUT_DIR = "./industry_deals"
 SINCE_DAYS = 40
 TOP_N_TO_EMAIL = 10
 
-# NOTE: The RSS_FEEDS list here is from the working version, 
-# which may still contain the 403/404 URLs, but since you confirmed
-# it worked previously, we keep it for now.
-# To avoid the errors seen in recent logs, consider using the 
-# CLEANED RSS_FEEDS list from previous responses.
+# NOTE: This list is from the previous working version. If you encounter 
+# 403 or 404 errors again, you MUST use the cleaned list from the prior step.
 RSS_FEEDS = [
     # Biotech/pharma specific feeds
     "https://www.fiercebiotech.com/rss.xml",
@@ -61,22 +58,15 @@ PR_PAGES = []
 
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
-    # Neurological
     "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
-    
-    # General therapeutic areas
     "regenerat","regeneration","repair","rejuvenat","therapeutic",
     "cancer","oncology","tumor","carcinoma",
     "cardiovascular","cardiac","heart","myocardial",
     "inflammatory","autoimmune","immune",
     "kidney","renal","liver","hepatic",
     "lung","pulmonary","respiratory",
-    
-    # Diagnostic applications
     "diagnostic","biomarker","detection","screening",
     "liquid biopsy","early detection",
-    
-    # Drug delivery
     "drug delivery","therapeutic delivery","targeted therapy"
 ]
 
@@ -114,8 +104,6 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# NOTE: Reverting to the simpler fetch_rss_entries from the "working" code,
-# but adding a basic User-Agent and retry to handle simple transient issues.
 def fetch_rss_entries(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -154,14 +142,13 @@ def fetch_article_text(url, timeout=10):
 
 def normalize_amount(text):
     """
-    Enhanced normalization with better parsing for numbers (handles commas, spaces)
+    Enhanced normalization: Converts money string to a single integer amount.
     """
     if not text or not isinstance(text, str):
         return None
     
     t = text.lower().strip()
     
-    # Extract the numeric part (handles commas, decimals, spaces)
     num_match = re.search(r'(\d+(?:[,\s]\d{3})*(?:\.\d+)?)', t)
     if not num_match:
         return None
@@ -190,12 +177,11 @@ def normalize_amount(text):
 
 def extract_amounts(text):
     """
-    Enhanced money extraction with better pattern matching
+    Enhanced money extraction with better pattern matching for strings.
     """
     if not text:
         return []
 
-    # More comprehensive regex patterns
     amount_patterns = [
         # $15 million, $5M, $250,000.00, $1.5B
         r'\$\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
@@ -214,17 +200,13 @@ def extract_amounts(text):
     for pat in amount_patterns:
         for m in re.finditer(pat, text, flags=re.IGNORECASE):
             amt = m.group(0).strip()
-            # Clean up whitespace
             amt = re.sub(r'\s+', ' ', amt)
-            # Remove leading words like "approximately"
             amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over)\s+', '', amt, flags=re.I)
             matches.append(amt)
 
-    # Deduplicate while preserving order
     seen = set()
     unique = []
     for m in matches:
-        # Create a normalized key for comparison
         key = re.sub(r'[^\d.]', '', m.lower())
         if key and key not in seen and len(key) >= 1:
             seen.add(key)
@@ -233,13 +215,10 @@ def extract_amounts(text):
     return unique[:5] # Return top 5 amounts
 
 def extract_deal_context(text, amount_str):
-    """
-    Extract surrounding context around a dollar amount to validate it's a deal amount
-    """
+    """Extract surrounding context around a dollar amount."""
     if not text or not amount_str:
         return ""
     
-    # Find the amount in text
     pattern = re.escape(amount_str)
     match = re.search(pattern, text, re.IGNORECASE)
     
@@ -253,17 +232,15 @@ def extract_deal_context(text, amount_str):
 
 def validate_deal_amount(amount_str, context, event_type):
     """
-    Validate if an extracted amount is likely a real deal amount
-    Returns confidence score 0-1
+    Validate if an extracted amount is likely a real deal amount using context.
+    Returns confidence score 0-1.
     """
     if not amount_str:
         return 0.0
     
-    score = 0.5 # Base score
-    
+    score = 0.5 
     context_lower = context.lower()
     
-    # Positive indicators
     positive_keywords = [
         'raised', 'raised in', 'closed', 'secured', 'acquired for',
         'purchased for', 'valued at', 'worth', 'funding round',
@@ -276,7 +253,6 @@ def validate_deal_amount(amount_str, context, event_type):
             score += 0.2
             break
     
-    # Negative indicators (probably not a deal amount)
     negative_keywords = [
         'market size', 'revenue', 'annual', 'quarterly',
         'sales', 'profit', 'loss', 'stock price',
@@ -288,11 +264,10 @@ def validate_deal_amount(amount_str, context, event_type):
             score -= 0.3
             break
     
-    # Event type bonus
     if event_type in ['acquisition', 'funding', 'licensing']:
         score += 0.1
     
-    # Amount range validation (deals are typically $1M - $10B)
+    # Amount range validation
     normalized = normalize_amount(amount_str)
     if normalized:
         if 1_000_000 <= normalized <= 10_000_000_000:
@@ -307,13 +282,9 @@ def extract_amounts_with_validation(title, text, summary, event_type):
     Main extraction function that combines extraction + validation
     Returns list of validated amounts with confidence scores
     """
-    # Combine all text sources
     full_text = f"{title} {text} {summary}"
-    
-    # Extract all potential amounts
     all_amounts = extract_amounts(full_text)
     
-    # Validate each amount
     validated_amounts = []
     for amount in all_amounts:
         context = extract_deal_context(full_text, amount)
@@ -323,31 +294,24 @@ def extract_amounts_with_validation(title, text, summary, event_type):
             validated_amounts.append({
                 'amount': amount,
                 'confidence': confidence,
-                'context': context[:200] # First 200 chars of context
+                'context': context[:200]
             })
     
-    # Sort by confidence
     validated_amounts.sort(key=lambda x: x['confidence'], reverse=True)
-    
     return validated_amounts
 
 def search_for_deal_amount(title, companies, event_type):
     """
-    Secondary web scraper: Search for deal amount when not found in article
-    Uses DuckDuckGo HTML search (no API key needed)
+    Secondary web scraper (DuckDuckGo HTML) for deal amount fallback.
     """
     if event_type not in ["acquisition", "funding"]:
         return []
     
-    # Add small delay to avoid excessive requests
     time.sleep(1)
 
     try:
-        # Build search query
         company_str = " ".join(companies[:2]) if companies else ""
         search_query = f"{company_str} {event_type} amount million"
-        
-        # Use DuckDuckGo HTML search (doesn't require API)
         search_url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(search_query)}"
         
         headers = {
@@ -360,24 +324,18 @@ def search_for_deal_amount(title, companies, event_type):
         
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Extract text snippets from search results
         snippets = []
         for result in soup.find_all('a', class_='result__snippet'):
             snippets.append(result.get_text())
-        
-        # Also check result titles
         for result in soup.find_all('a', class_='result__a'):
             snippets.append(result.get_text())
         
-        # Combine all snippets
-        combined_text = " ".join(snippets[:5]) # First 5 results
-        
-        # Extract amounts from the search results
+        combined_text = " ".join(snippets[:5])
         amounts = extract_amounts(combined_text)
         
         if amounts:
             print(f"🔍 Found amount via search: {amounts[0]} for {title[:50]}...")
-            return amounts[:2] # Return top 2 amounts found
+            return amounts[:2]
         
         return []
         
@@ -386,12 +344,11 @@ def search_for_deal_amount(title, companies, event_type):
         return []
 
 # -----------------------------------------------------
-# 📚 REMAINING HELPER FUNCTIONS (Kept from working code)
+# 📚 REMAINING HELPER FUNCTIONS 
 # -----------------------------------------------------
 
 def extract_companies(text):
     """Extract company names with aggressive filtering"""
-    # ... (content remains the same)
     doc = nlp(text)
     orgs = []
     
@@ -437,7 +394,6 @@ def extract_companies(text):
 
 def extract_acquisition_details(title, text):
     """Manually extract acquisition details from text"""
-    # ... (content remains the same)
     combined = title + " " + text
     patterns = [
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|closes?|announces?)\s+(?:the\s+)?(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
@@ -458,7 +414,6 @@ def extract_acquisition_details(title, text):
     return []
 
 def classify_event(text):
-    # ... (content remains the same)
     tl = text.lower()
     scores = {}
     for ev, kws in EVENT_KEYWORDS.items():
@@ -467,18 +422,15 @@ def classify_event(text):
     return best[0] if best[1] > 0 else "news"
 
 def detect_indications(text):
-    # ... (content remains the same)
     tl = text.lower()
     hits = [kw for kw in INDICATION_KEYWORDS if kw in tl]
     return sorted(set(hits))
 
 def summarize_short(text, max_sent=2):
-    # ... (content remains the same)
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
 
 def normalize_title(title):
-    # ... (content remains the same)
     title = re.split(r'\s*[-–—]\s*', title)[0]
     for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
         title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
@@ -487,7 +439,6 @@ def normalize_title(title):
     return title
 
 def is_exosome_relevant(text, title):
-    # ... (content remains the same - using the original working filter)
     combined = (title + " " + text).lower()
     
     SPAM_TERMS = [
@@ -515,7 +466,6 @@ def is_exosome_relevant(text, title):
     return True
 
 def send_email_with_attachment(subject, body, attachment_path):
-    # ... (content remains the same)
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
     SMTP_USER = os.getenv("SMTP_USER", "")
@@ -546,7 +496,6 @@ def send_email_with_attachment(subject, body, attachment_path):
         print("Email sent to", EMAIL_TO)
     except Exception as e:
         print("Failed to send email:", e)
-
 
 # ---------------------------------------
 # 🧭 Main pipeline (MODIFIED)
@@ -598,17 +547,6 @@ def run_agent():
                 "published": pub_dt.isoformat() if pub_dt else None,
                 "summary": clean_summary
             })
-
-    # ... (Deduplication steps remain the same) ...
-    
-    # 2) PR pages (Skipped as PR_PAGES is empty)
-    for name, pr_url in PR_PAGES:
-        try:
-            r = requests.get(pr_url, timeout=8)
-            # ... (PR page scraping logic remains the same) ...
-            pass # Placeholder for PR page logic
-        except Exception as e:
-            print("PR page error", pr_url, e)
 
     print(f"Initial collection: {len(collected)} items")
 
@@ -669,21 +607,11 @@ def run_agent():
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
 
-        # -----------------------------------------------------
-        # 💰 REPLACED MONEY EXTRACTION LOGIC
-        # -----------------------------------------------------
-
-        # Extract amounts with validation
+        # 💰 ENHANCED MONEY EXTRACTION 💰
         validated_money = extract_amounts_with_validation(title, full_text, summary, event)
         
-        # Get just the amount strings for backward compatibility
+        # Get just the amount strings for output
         money = [vm['amount'] for vm in validated_money[:3]]
-
-        # Log confidence scores for debugging
-        if validated_money:
-            print(f"💰 Found amounts for '{title[:50]}...':")
-            for vm in validated_money[:3]:
-                print(f"    {vm['amount']} (confidence: {vm['confidence']:.2f})")
 
         # Normalize numeric
         amounts_numeric = []
@@ -693,7 +621,7 @@ def run_agent():
                 amounts_numeric.append(n)
         amounts_numeric = list(dict.fromkeys(amounts_numeric))
 
-        # 🔍 Fallback 1: Secondary web search scraper (Only if primary extraction failed)
+        # 🔍 Fallback: Secondary web search scraper (Only if primary extraction failed)
         if not money and event in ["acquisition", "funding"]:
             print(f"🔍 Searching web for amount: {title[:50]}...")
             search_amounts = search_for_deal_amount(title, companies, event)
@@ -704,9 +632,7 @@ def run_agent():
                     if n is not None:
                         amounts_numeric.append(n)
         
-        # -----------------------------------------------------
-        # END REPLACEMENT
-        # -----------------------------------------------------
+        # END MONEY EXTRACTION 
    
         indications = detect_indications(full_text + " " + title + " " + summary)
 
@@ -799,9 +725,13 @@ def run_agent():
 # Run the agent
 # -----------------
 if __name__ == "__main__":
+    print("----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----")
     df_export = run_agent()
+    
     if df_export is not None and not df_export.empty:
-        # Compose email in "old style" detailed format
+        # Sort by score for email and select TOP_N_TO_EMAIL
+        df_email = df_export.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
+
         subject = f"Exosome Deals — Summary (last {SINCE_DAYS} days)"
         body_lines = [
             f"Exosome Deals — Summary (last {SINCE_DAYS} days)",
@@ -809,31 +739,24 @@ if __name__ == "__main__":
             ""
         ]
         
-        # Sort by score for email (using the exported version is fine)
-        df_email = df_export.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
-
         for _, row in df_email.iterrows():
             event_label = row['event_type'].upper() if row['event_type'] else "NEWS"
             date_str = pd.to_datetime(row['published_dt']).strftime('%Y-%m-%d') if pd.notnull(row['published_dt']) else "Unknown"
-            companies = row['companies']
-            amounts = row['amounts']
-            indications = row['indications']
-            summary = row['short_summary']
-            link = row['url']
             
             body_lines.append(f"- [{event_label}] {row['title']}")
             body_lines.append(f"  Date: {date_str}")
-            body_lines.append(f"  Companies: {companies}")
-            body_lines.append(f"  Amounts: {amounts}")
-            body_lines.append(f"  Indications: {indications}")
-            body_lines.append(f"  Summary: {summary}")
-            body_lines.append(f"  Link: {link}")
-            body_lines.append("")  # blank line between entries
+            body_lines.append(f"  Companies: {row['companies']}")
+            body_lines.append(f"  Amounts: {row['amounts']}")
+            body_lines.append(f"  Indications: {row['indications']}")
+            body_lines.append(f"  Summary: {row['short_summary']}")
+            body_lines.append(f"  Link: {row['url']}")
+            body_lines.append("")
         
         body = "\n".join(body_lines)
 
-        # Send the email with the Excel attachment
         outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
         send_email_with_attachment(subject, body, outfn)
     else:
         print("No deals found — skipping email.")
+    
+    print("----- Run completed -----")
