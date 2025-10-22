@@ -27,7 +27,7 @@ load_dotenv()
 # 📁 Configuration
 # ---------------------------------------
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 40
+SINCE_DAYS = 360
 TOP_N_TO_EMAIL = 10
 
 # NOTE: This list is from the previous working version. If you encounter 
