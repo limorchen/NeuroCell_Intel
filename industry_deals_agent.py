@@ -34,17 +34,18 @@ RSS_FEEDS = [
     # Biotech/pharma specific feeds
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
-    "https://www.biospace.com/rss",
-    "https://www.genengnews.com/feed/",
+    #"https://www.biospace.com/rss",
+    #"https://www.genengnews.com/feed/",
     "https://www.labiotech.eu/feed/",
     "https://www.biocentury.com/rss",
     "https://www.bioworld.com/rss",
-    "https://www.genengnews.com/topics/feed/",
+    #"https://www.genengnews.com/topics/feed/",
     "https://www.evaluate.com/vantage/rss",
     
     # Business wire feeds (Changed to the more stable XML endpoint) ⬅️ MODIFIED
-    "https://www.businesswire.com/portal/site/home/news/subject/biotechnology/lang/en/rss",
+    #"https://www.businesswire.com/portal/site/home/news/subject/biotechnology/lang/en/rss",
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
+
     
     # Google News search focused on exosomes deals
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
@@ -508,6 +509,20 @@ def is_exosome_relevant(text, title):
     
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
+
+    # Check if we have very little text (likely due to fetch failure)
+    is_text_short = len(text) < 500  # <--- CRITICAL LINE ADDED
+
+    if is_text_short:
+        # If we couldn't fetch the full article, rely solely on title/summary keywords.
+        is_relevant = (exosome_hits >= 1) or (company_match and exosome_hits >= 1) # <--- MODIFIED LOGIC
+        
+    else:
+        # Standard logic for a full article: must have a solid exosome hit or company mention.
+        is_relevant = (
+            (exosome_hits >= 1 and company_match) or 
+            (exosome_hits >= 2)
+        )
     
     # New relevance logic: 
     # Must have a high score OR mention a target company AND have enough text to be a full article
