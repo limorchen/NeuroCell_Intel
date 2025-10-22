@@ -29,6 +29,8 @@ load_dotenv()
 OUTPUT_DIR = "./industry_deals"
 SINCE_DAYS = 360
 TOP_N_TO_EMAIL = 10
+# NEW: Fixed filename for the cumulative database
+CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx" 
 
 # NOTE: This list is from the previous working version. If you encounter 
 # 403 or 404 errors again, you MUST use the cleaned list from the prior step.
@@ -96,7 +98,7 @@ nlp = spacy.load("en_core_web_sm")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
 # ---------------------------------------
-# 🛠 Helper functions
+# 🛠 Helper functions (Unchanged)
 # ---------------------------------------
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -134,7 +136,7 @@ def fetch_article_text(url, timeout=10):
         return ""
 
 # -----------------------------------------------------
-# 💰 ENHANCED MONEY EXTRACTION AND VALIDATION FUNCTIONS 
+# 💰 ENHANCED MONEY EXTRACTION AND VALIDATION FUNCTIONS (Unchanged)
 # -----------------------------------------------------
 
 def normalize_amount(text):
@@ -341,7 +343,7 @@ def search_for_deal_amount(title, companies, event_type):
         return []
 
 # -----------------------------------------------------
-# 📚 REMAINING HELPER FUNCTIONS 
+# 📚 REMAINING HELPER FUNCTIONS (Unchanged)
 # -----------------------------------------------------
 
 def extract_companies(text):
@@ -462,6 +464,9 @@ def is_exosome_relevant(text, title):
     
     return True
 
+# -----------------------------------------------------
+# 📧 MODIFIED: Email function to accept a path
+# -----------------------------------------------------
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
@@ -494,10 +499,91 @@ def send_email_with_attachment(subject, body, attachment_path):
     except Exception as e:
         print("Failed to send email:", e)
 
+# -----------------------------------------------------
+# 💾 NEW: Function to handle cumulative database export
+# -----------------------------------------------------
+def export_to_cumulative_database(df_new_deals, filename):
+    """
+    Exports new deals to the cumulative Excel file, handling appending
+    and deduplication against existing data.
+    Returns the final, sorted DataFrame of ALL deals.
+    """
+    if df_new_deals.empty:
+        print("No new deals to add to the database.")
+        return pd.DataFrame()
+
+    cumulative_filepath = os.path.join(OUTPUT_DIR, filename)
+    df_new = df_new_deals.copy()
+    
+    # 1. Prepare new data: Convert lists to clean strings for Excel
+    list_columns = ["companies", "amounts", "amounts_numeric", "indications"]
+    for col in list_columns:
+        df_new[col] = df_new[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
+
+    # 2. Prepare other columns
+    df_new["short_summary"] = df_new["short_summary"].apply(lambda x: str(x) if x else "")
+    df_new["full_text"] = df_new["full_text"].apply(lambda x: x[:1000] if x else "")
+    # Ensure published_dt is clean (no timezone info)
+    df_new["published_dt"] = pd.to_datetime(df_new["published_dt"]).dt.tz_localize(None)
+
+
+    # 3. Load existing data
+    df_existing = pd.DataFrame()
+    if os.path.exists(cumulative_filepath):
+        try:
+            df_existing = pd.read_excel(cumulative_filepath)
+            print(f"Loaded {len(df_existing)} previous deals from {filename}")
+        except Exception as e:
+            print(f"Warning: Could not read existing file {filename}. Error: {e}")
+            df_existing = pd.DataFrame()
+    else:
+        print(f"Creating new cumulative database: {filename}")
+
+    # 4. Combine new and existing data
+    # Standardize columns to avoid concatenation errors
+    all_cols = list(set(df_new.columns) | set(df_existing.columns))
+    for col in all_cols:
+        if col not in df_new.columns:
+            df_new[col] = pd.NA
+        if col not in df_existing.columns:
+            df_existing[col] = pd.NA
+            
+    combined_df = pd.concat([df_existing, df_new], ignore_index=True)
+
+    # 5. Deduplication
+    # Deduplicate based on a unique key (URL is the best, but 'title' is a good backup)
+    combined_df.drop_duplicates(subset=['url', 'title'], keep='first', inplace=True)
+    combined_df = combined_df.sort_values(["published_dt", "score"], ascending=[False, False])
+
+    print(f"Total unique deals in database: {len(combined_df)}")
+
+    # 6. Save the combined, deduplicated DataFrame
+    try:
+        # Select the columns you want in the final Excel (adjust as needed)
+        FINAL_COLS = [
+            'published_dt', 'score', 'event_type', 'title', 'companies', 'amounts', 
+            'amounts_numeric', 'indications', 'short_summary', 'url', 'full_text'
+        ]
+        
+        # Ensure only common and necessary columns are saved
+        df_save = combined_df[[col for col in FINAL_COLS if col in combined_df.columns]].copy()
+        
+        df_save.to_excel(cumulative_filepath, index=False)
+        print(f"Successfully updated and saved cumulative database to {cumulative_filepath}")
+        return df_save
+        
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to save Excel file. Error: {e}")
+        return pd.DataFrame()
+
 # ---------------------------------------
 # 🧭 Main pipeline (MODIFIED)
 # ---------------------------------------
 def run_agent():
+    # ... (All previous logic for collection, processing, and filtering remains the same) ...
+    #
+    # *** The main change is at the end: return the filtered list, not the DataFrame ***
+    #
     ensure_outdir()
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
     collected = []
@@ -645,7 +731,7 @@ def run_agent():
                         amounts_numeric.append(n)
         
         # END MONEY EXTRACTION 
-   
+        
         indications = detect_indications(full_text + " " + title + " " + summary)
 
         # Scoring
@@ -695,9 +781,9 @@ def run_agent():
     print(f"Filtered {len(processed)-len(filtered)} embedding duplicates; {len(filtered)} items remain")
 
     # -----------------
-    # 5) DataFrame & export
+    # 5) Prepare DataFrame for export (return only the new deals)
     # -----------------
-    df = pd.DataFrame(filtered)
+    df_new_deals = pd.DataFrame(filtered)
     def parse_dt(x):
         if not x: return pd.NaT
         try:
@@ -707,46 +793,40 @@ def run_agent():
                 return pd.to_datetime(dateparser.parse(x))
             except Exception:
                 return pd.NaT
-    df["published_dt"] = df["published"].apply(parse_dt)
-    df = df.sort_values(["published_dt","score"], ascending=[False,False])
-
-    ensure_outdir()
-    outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
-    df_export = df.copy()
-
-    # Convert lists to clean strings
-    list_columns = ["companies", "amounts", "amounts_numeric", "indications"]
-    for col in list_columns:
-        df_export[col] = df_export[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
-
-    # Short summary should just be text
-    df_export["short_summary"] = df_export["short_summary"].apply(lambda x: str(x) if x else "")
-
-    # Full text truncated to avoid huge cells
-    df_export["full_text"] = df_export["full_text"].apply(lambda x: x[:1000] if x else "")
-
-    # Ensure published_dt is clean (no timezone info)
-    df_export["published_dt"] = pd.to_datetime(df_export["published_dt"]).dt.tz_localize(None)
-
-    # Save Excel
-    df_export.to_excel(outfn, index=False)
-    print("Exported to", outfn)
-    return df_export
+    df_new_deals["published_dt"] = df_new_deals["published"].apply(parse_dt)
+    df_new_deals = df_new_deals.sort_values(["published_dt","score"], ascending=[False,False])
+    
+    # *** RETURN THE NEW DEALS DATAFRAME FOR CUMULATIVE EXPORT ***
+    return df_new_deals
 
 # -----------------
-# Run the agent
+# Run the agent (MODIFIED)
 # -----------------
 if __name__ == "__main__":
     print("----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----")
-    df_export = run_agent()
     
-    if df_export is not None and not df_export.empty:
-        # Sort by score for email and select TOP_N_TO_EMAIL
-        df_email = df_export.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
+    # 1. Run the core agent to get NEW, filtered deals
+    df_new_deals = run_agent()
+    
+    if df_new_deals is None or df_new_deals.empty:
+        print("No deals found — skipping email.")
+        print("----- Run completed -----")
+        exit()
 
-        subject = f"Exosome Deals — Summary (last {SINCE_DAYS} days)"
+    # 2. Export new deals to the cumulative database file
+    df_database = export_to_cumulative_database(df_new_deals, CUMULATIVE_FILENAME)
+    cumulative_filepath = os.path.join(OUTPUT_DIR, CUMULATIVE_FILENAME)
+
+    # 3. Generate and send email using the NEW deals for the summary and the database file as attachment
+    if not df_database.empty:
+        # The email summary should highlight the new deals, sorting by score
+        df_email = df_new_deals.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
+
+        subject = f"Exosome Deals — Summary ({len(df_new_deals)} NEW Deals)"
         body_lines = [
-            f"Exosome Deals — Summary (last {SINCE_DAYS} days)",
+            f"A total of {len(df_new_deals)} new deals/relevant news items were found and added to the cumulative database (attached).",
+            f"The database now contains {len(df_database)} unique records.",
+            f"Top {len(df_email)} deals from this run are summarized below:",
             f"Generated: {dt.datetime.utcnow().isoformat()}",
             ""
         ]
@@ -766,9 +846,8 @@ if __name__ == "__main__":
         
         body = "\n".join(body_lines)
 
-        outfn = os.path.join(OUTPUT_DIR, f"exosome_deals_{dt.datetime.utcnow().strftime('%Y_%m_%d')}.xlsx")
-        send_email_with_attachment(subject, body, outfn)
+        send_email_with_attachment(subject, body, cumulative_filepath)
     else:
-        print("No deals found — skipping email.")
-    
+        print("Cumulative database could not be saved — skipping email.")
+        
     print("----- Run completed -----")
