@@ -4,20 +4,15 @@ requests
 python-dateutil
 feedparser
 
-# Web scraping - using trafilatura instead of newspaper3k
+# Web scraping 
 beautifulsoup4
 trafilatura
 
 # Data processing
 pandas
-openpyxl
+openpyxl # Needed for saving the .xlsx file
 
 # NLP and ML
 spacy
 sentence-transformers
 scikit-learn
-
-# Biology/Bioinformatics
-biopython
-faiss-cpu
-torch
