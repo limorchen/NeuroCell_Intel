@@ -597,16 +597,31 @@ def run_agent():
         event = classify_event(full_text + " " + title)
 
         # Extract companies
-        if "acqui" in title.lower() or event == "acquisition":
+        # --- ENHANCED COMPANY EXTRACTION LOGIC ---
+        
+        # 1. Always prioritize the acquisition regex for ACQUISITION events
+        if event == "acquisition":
             companies = extract_acquisition_details(title, full_text)
-            if not companies or len(companies) < 2:
+            
+            # If the acquisition regex worked, use those two key companies only.
+            if len(companies) >= 2:
+                # Add a filter to remove common junk from these key names
+                companies = [re.sub(r'SA|SA\s*\(NASDAQ:[^\)]+\)|LLC|Inc\.?|Corp\.?|Corporation|Limited', '', c).strip() 
+                             for c in companies]
+                # Fall through to general NLP *only* if key extraction failed to find 2 names
+            else: 
+                # Fallback to general NLP entity extraction
                 companies_from_text = extract_companies(full_text)
                 companies_from_title = extract_companies(title + " " + summary)
                 companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+
+        # 2. General NLP for all other events (Funding, Partnership, News)
         else:
             companies_from_text = extract_companies(full_text)
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+
+        # --- END ENHANCED COMPANY EXTRACTION LOGIC ---
 
         # 💰 ENHANCED MONEY EXTRACTION 💰
         validated_money = extract_amounts_with_validation(title, full_text, summary, event)
