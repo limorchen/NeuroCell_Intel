@@ -42,8 +42,8 @@ RSS_FEEDS = [
     "https://www.genengnews.com/topics/feed/",
     "https://www.evaluate.com/vantage/rss",
     
-    # Business wire feeds
-    "https://www.businesswire.com/portal/site/home/news/subject/landing/biotechnology",
+    # Business wire feeds (Changed to the more stable XML endpoint) ⬅️ MODIFIED
+    "https://www.businesswire.com/portal/site/home/news/subject/biotechnology/lang/en/rss",
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
     
     # Google News search focused on exosomes deals
@@ -56,7 +56,7 @@ PR_PAGES = [] # This list remains empty, the loop that uses it will be removed.
 
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
-    # Neurological (Expanded) ⬅️ MODIFIED
+    # Neurological (Expanded) 
     "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
     "astrocytes", "glial cells", "glial scar formation", "microgliosis", "cns", "brain injury", 
     "tau protein", "axonal repair",
@@ -91,7 +91,7 @@ EXOSOME_COMPANIES = [
     "roosterbio", "exocobio", "versatope therapeutics",
     "nanosomix", "paracrine therapeutics", "exocelbio", 
     "regeneveda", "mdxhealth", "bio-techne", "nurexone biologic", "biorestorative therapeutics",
-    "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs",
+    "reneuron", "pl bioscience", "evzom", "exo biologics", "ilbs",
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics"
 ]
@@ -108,23 +108,46 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ADDED RETRY LOGIC AND SLEEP ⬅️ MODIFIED
+# ENHANCED RETRY LOGIC WITH REQUESTS AND USER-AGENT ⬅️ MODIFIED
 def fetch_rss_entries(url):
+    headers = {
+        # A robust User-Agent helps prevent blocking
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
     for attempt in range(3):
         try:
-            f = feedparser.parse(url)
-            # Check for a specific error from Business Wire/network failure
-            if f.get('bozo_exception') and "closed connection" in str(f.bozo_exception):
-                print(f"RSS error (Attempt {attempt+1}/3) {url}: Remote end closed connection. Retrying...")
-                time.sleep(3)  # Wait longer before retrying this aggressive URL
+            # Use requests for better control over headers and timeout
+            response = requests.get(url, headers=headers, timeout=15) # Increased timeout to 15s
+            
+            # Check for success status before parsing
+            if response.status_code != 200:
+                print(f"RSS HTTP error (Attempt {attempt+1}/3) {url}: Status {response.status_code}")
+                time.sleep(5) # Wait longer for bad status
                 continue
+                
+            # Pass content to feedparser
+            f = feedparser.parse(response.content) 
+
+            # Check for a specific error from Business Wire/network failure
+            if f.get('bozo_exception'):
+                 # Check for known bozo exceptions that indicate transient network issues
+                bozo_msg = str(f.bozo_exception).lower()
+                if "closed connection" in bozo_msg or "premature end" in bozo_msg or "timeout" in bozo_msg:
+                    print(f"RSS error (Attempt {attempt+1}/3) {url}: Network issue ({bozo_msg[:50]}...). Retrying...")
+                    time.sleep(5) # Wait longer before retrying aggressive URL
+                    continue
+            
             return f.entries
+        except requests.exceptions.Timeout:
+            print(f"RSS Timeout error (Attempt {attempt+1}/3) {url}: Request timed out.")
+            time.sleep(5)
         except Exception as e:
-            print(f"RSS error (Attempt {attempt+1}/3) {url}: {e}")
-            time.sleep(2)  # Wait before retrying
+            print(f"RSS general error (Attempt {attempt+1}/3) {url}: {e}")
+            time.sleep(3)  # Wait before retrying
     return [] # Return empty list if all retries fail
 
-# ADDED TIME.SLEEP ⬅️ MODIFIED
+# ADDED TIME.SLEEP 
 def fetch_article_text(url, timeout=10):
     """Fetch article text using trafilatura - more reliable than newspaper3k"""
     try:
@@ -168,7 +191,7 @@ def extract_companies(text):
                     t = t[:-len(suffix)].strip()
             if len(t) < 2 or len(t.split()) > 6:
                 continue
-            # Simplified check using only the 'any' check ⬅️ MODIFIED
+            # Simplified check using only the 'any' check 
             if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
@@ -395,7 +418,7 @@ def search_for_deal_amount(title, companies, event_type):
     if event_type not in ["acquisition", "funding"]:
         return []
     
-    # ADDED TIME.SLEEP before request ⬅️ MODIFIED
+    # ADDED TIME.SLEEP before request
     time.sleep(1)
 
     try:
@@ -466,7 +489,7 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title
 
-# REFINED RELEVANCE LOGIC ⬅️ MODIFIED
+# REFINED RELEVANCE LOGIC 
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     
@@ -489,9 +512,9 @@ def is_exosome_relevant(text, title):
     # New relevance logic: 
     # Must have a high score OR mention a target company AND have enough text to be a full article
     is_relevant = (
-        (exosome_hits >= 1 and  
+        (exosome_hits >= 1 and 
         (company_match or len(text) > 500)) or 
-        (exosome_hits >= 2) # Keep if a target company is mentioned and article content exists
+        (exosome_hits >= 2) # Keep if multiple exosome mentions
     )
 
     if not is_relevant:
@@ -551,7 +574,12 @@ def run_agent():
     ]
 
     for rss in RSS_FEEDS:
+        print(f"Fetching: {rss[:60]}...") # Added print statement for better visibility
         entries = fetch_rss_entries(rss)
+        
+        # Add a delay between fetching different feeds to be polite ⬅️ MODIFIED
+        time.sleep(1)
+
         for e in entries:
             title = e.get("title","") or ""
             raw_summary = e.get("summary","") or e.get("description","") or ""
@@ -580,12 +608,12 @@ def run_agent():
                 "summary": clean_summary
             })
 
-    # REMOVED PR_PAGES loop as it was empty and unnecessary ⬅️ MODIFIED
+    # REMOVED PR_PAGES loop as it was empty and unnecessary 
     # for name, pr_url in PR_PAGES:
     #     try:
-    #         ...
+    #           ...
     #     except Exception as e:
-    #         print("PR page error", pr_url, e)
+    #           print("PR page error", pr_url, e)
 
     print(f"Initial collection: {len(collected)} items")
 
