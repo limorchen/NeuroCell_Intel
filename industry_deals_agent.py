@@ -33,26 +33,31 @@ TOP_N_TO_EMAIL = 10
 # NOTE: This list is from the previous working version. If you encounter 
 # 403 or 404 errors again, you MUST use the cleaned list from the prior step.
 RSS_FEEDS = [
-    # Biotech/pharma specific feeds (KEEP THESE)
+    # Core Biotech/Pharma Feeds (These typically work well)
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
-    "https://www.biospace.com/rss",
-    "https://www.genengnews.com/feed/",
     "https://www.labiotech.eu/feed/",
+    "https://www.biocentury.com/rss",
+    "https://www.bioworld.com/rss",
+    "https://www.evaluate.com/vantage/rss",
     
-    # ADD THESE DIRECT SOURCES:
-    "https://www.globenewswire.com/RssFeed/subjectcode/46-Healthcare/feedTitle/GlobeNewswire%20-%20Healthcare",
-    "https://www.accesswire.com/rss/subject/67/medicalpharmaceutical-devices",
-    "https://finance.yahoo.com/rss/headline?s=MDXH",  # MDxHealth specific
+    # 🌟 Replacement for BioSpace (Using their News/Latest section)
+    "https://www.biospace.com/latest-news/rss", # Alternative BioSpace feed
     
-    # Business Wire - better RSS endpoint
-    "https://www.businesswire.com/portal/site/home/template.PAGE/news/?javax.portlet.tpst=1bc873a97e76f60dfa39ddbf6dfe1c86_ws_MX&javax.portlet.prp_1bc873a97e76f60dfa39ddbf6dfe1c86_viewID=MY_PORTAL_VIEW&javax.portlet.prp_1bc873a97e76f60dfa39ddbf6dfe1c86_ndmHsc=v2*A1583527200000*B1583527200000*DgroupBy~asubject*J2*G34*R30*N1001&javax.portlet.begCacheTok=com.vignette.cachetoken&javax.portlet.endCacheTok=com.vignette.cachetoken",
+    # 🌟 Replacement for GenEngNews (Using the topics feed which is often less restrictive)
+    "https://www.genengnews.com/topics/feed/",
     
-    # PR Newswire - more specific
-    "https://www.prnewswire.com/rss/news-releases-list.rss",
+    # 🌟 Replacement for PR Newswire (Stable link)
+    "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
     
-    # Keep Google News but know it's limited
+    # 🌟 Stable Public Wire Feeds (Replacing the 403-blocked wire service links)
+    "https://www.globenewswire.com/RssFeed/subjectcode/46-Healthcare%20Business", 
+    "https://finance.yahoo.com/rss/headline?s=MDXH", # Specific stock feed for MDXH (example of a known exosome company)
+    
+    # Google News search focused on exosomes deals (Highly effective custom searches)
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
+    "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
 ]
 
 PR_PAGES = []
