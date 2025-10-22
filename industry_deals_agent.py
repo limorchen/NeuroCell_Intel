@@ -33,7 +33,7 @@ TOP_N_TO_EMAIL = 10
 # NOTE: This list is from the previous working version. If you encounter 
 # 403 or 404 errors again, you MUST use the cleaned list from the prior step.
 RSS_FEEDS = [
-    # Core Biotech/Pharma Feeds (These typically work well)
+    # Core Biotech/Pharma Feeds (These remain reliable)
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
     "https://www.labiotech.eu/feed/",
@@ -41,25 +41,22 @@ RSS_FEEDS = [
     "https://www.bioworld.com/rss",
     "https://www.evaluate.com/vantage/rss",
     
-    # 🌟 Replacement for BioSpace (Using their News/Latest section)
-    "https://www.biospace.com/latest-news/rss", # Alternative BioSpace feed
+    # 🌟 NEW BioSpace FIX (Using the /news RSS link which is specifically listed on their site)
+    "https://www.biospace.com/news/rss", 
     
-    # 🌟 Replacement for GenEngNews (Using the topics feed which is often less restrictive)
-    "https://www.genengnews.com/topics/feed/",
+    # 🚫 REMOVED GenEngNews (403 error is too persistent - rely on Google News for GenEng content)
     
-    # 🌟 Replacement for PR Newswire (Stable link)
+    # Stable Public Wire Feeds
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
-    
-    # 🌟 Stable Public Wire Feeds (Replacing the 403-blocked wire service links)
     "https://www.globenewswire.com/RssFeed/subjectcode/46-Healthcare%20Business", 
-    "https://finance.yahoo.com/rss/headline?s=MDXH", # Specific stock feed for MDXH (example of a known exosome company)
+    "https://finance.yahoo.com/rss/headline?s=MDXH", # Stock feed example
     
-    # Google News search focused on exosomes deals (Highly effective custom searches)
+    # Google News search focused on exosomes deals (Crucial for 403-blocked content)
+    # These searches will capture content from GenEngNews and other sources that block direct RSS.
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
     "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
 ]
-
 PR_PAGES = []
 
 # Expanded indication keywords
