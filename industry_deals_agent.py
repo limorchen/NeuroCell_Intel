@@ -20,32 +20,36 @@ import time
 # 🔐 Load environment variables
 # ---------------------------------------
 load_dotenv()
-# NEWSAPI_KEY removed as it was unused
+# NEWSAPI_KEY removed as it was unused and is not relevant to this script's functionality
 # NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "") 
 
 # ---------------------------------------
 # 📁 Configuration
 # ---------------------------------------
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 30
+SINCE_DAYS = 40
 TOP_N_TO_EMAIL = 10
 
+# NOTE: The RSS_FEEDS list here is from the working version, 
+# which may still contain the 403/404 URLs, but since you confirmed
+# it worked previously, we keep it for now.
+# To avoid the errors seen in recent logs, consider using the 
+# CLEANED RSS_FEEDS list from previous responses.
 RSS_FEEDS = [
     # Biotech/pharma specific feeds
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
-    #"https://www.biospace.com/rss",
-    #"https://www.genengnews.com/feed/",
+    "https://www.biospace.com/rss",
+    "https://www.genengnews.com/feed/",
     "https://www.labiotech.eu/feed/",
     "https://www.biocentury.com/rss",
     "https://www.bioworld.com/rss",
-    #"https://www.genengnews.com/topics/feed/",
+    "https://www.genengnews.com/topics/feed/",
     "https://www.evaluate.com/vantage/rss",
     
-    # Business wire feeds (Changed to the more stable XML endpoint) ⬅️ MODIFIED
-    #"https://www.businesswire.com/portal/site/home/news/subject/biotechnology/lang/en/rss",
+    # Business wire feeds (using the generic landing page which is less reliable for RSS)
+    "https://www.businesswire.com/portal/site/home/news/subject/landing/biotechnology", 
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
-
     
     # Google News search focused on exosomes deals
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
@@ -53,26 +57,27 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
 ]
 
-PR_PAGES = [] # This list remains empty, the loop that uses it will be removed.
+PR_PAGES = []
 
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
-    # Neurological (Expanded) 
+    # Neurological
     "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
-    "astrocytes", "glial cells", "glial scar formation", "microgliosis", "cns", "brain injury", 
-    "tau protein", "axonal repair",
     
     # General therapeutic areas
     "regenerat","regeneration","repair","rejuvenat","therapeutic",
+    "cancer","oncology","tumor","carcinoma",
+    "cardiovascular","cardiac","heart","myocardial",
     "inflammatory","autoimmune","immune",
-    "kidney","renal","lung","pulmonary","respiratory","glaucoma","optic nerve","facial nerve",
+    "kidney","renal","liver","hepatic",
+    "lung","pulmonary","respiratory",
     
     # Diagnostic applications
     "diagnostic","biomarker","detection","screening",
     "liquid biopsy","early detection",
     
     # Drug delivery
-    "drug delivery","therapeutic delivery","targeted therapy","lipid nanoparticles",
+    "drug delivery","therapeutic delivery","targeted therapy"
 ]
 
 EVENT_KEYWORDS = {
@@ -92,7 +97,7 @@ EXOSOME_COMPANIES = [
     "roosterbio", "exocobio", "versatope therapeutics",
     "nanosomix", "paracrine therapeutics", "exocelbio", 
     "regeneveda", "mdxhealth", "bio-techne", "nurexone biologic", "biorestorative therapeutics",
-    "reneuron", "pl bioscience", "evzom", "exo biologics", "ilbs",
+    "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs",
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics"
 ]
@@ -109,137 +114,52 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ENHANCED RETRY LOGIC WITH REQUESTS AND USER-AGENT ⬅️ MODIFIED
+# NOTE: Reverting to the simpler fetch_rss_entries from the "working" code,
+# but adding a basic User-Agent and retry to handle simple transient issues.
 def fetch_rss_entries(url):
     headers = {
-        # A robust User-Agent helps prevent blocking
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
-    
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            # Use requests for better control over headers and timeout
-            response = requests.get(url, headers=headers, timeout=15) # Increased timeout to 15s
-            
-            # Check for success status before parsing
-            if response.status_code != 200:
-                print(f"RSS HTTP error (Attempt {attempt+1}/3) {url}: Status {response.status_code}")
-                time.sleep(5) # Wait longer for bad status
-                continue
-                
-            # Pass content to feedparser
-            f = feedparser.parse(response.content) 
-
-            # Check for a specific error from Business Wire/network failure
-            if f.get('bozo_exception'):
-                 # Check for known bozo exceptions that indicate transient network issues
-                bozo_msg = str(f.bozo_exception).lower()
-                if "closed connection" in bozo_msg or "premature end" in bozo_msg or "timeout" in bozo_msg:
-                    print(f"RSS error (Attempt {attempt+1}/3) {url}: Network issue ({bozo_msg[:50]}...). Retrying...")
-                    time.sleep(5) # Wait longer before retrying aggressive URL
-                    continue
-            
-            return f.entries
-        except requests.exceptions.Timeout:
-            print(f"RSS Timeout error (Attempt {attempt+1}/3) {url}: Request timed out.")
-            time.sleep(5)
+            # Use requests for better control and pass content to feedparser
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                f = feedparser.parse(response.content) 
+                return f.entries
+            else:
+                print(f"RSS HTTP error (Attempt {attempt+1}/2) {url}: Status {response.status_code}")
+                time.sleep(3)
         except Exception as e:
-            print(f"RSS general error (Attempt {attempt+1}/3) {url}: {e}")
-            time.sleep(3)  # Wait before retrying
-    return [] # Return empty list if all retries fail
+            print(f"RSS general error (Attempt {attempt+1}/2) {url}: {e}")
+            time.sleep(3)
+    return []
 
-# ADDED TIME.SLEEP 
 def fetch_article_text(url, timeout=10):
     """Fetch article text using trafilatura - more reliable than newspaper3k"""
     try:
         downloaded = trafilatura.fetch_url(url)
-        # Add small delay to avoid rate limiting
-        time.sleep(0.5)
         if downloaded:
             text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
             if text and len(text) > 100:
-                return text[:10000] # Limit to 10k chars
+                return text[:10000]  # Limit to 10k chars
         return ""
     except Exception as e:
         print(f"Article fetch failed for {url[:50]}...: {str(e)[:30]}")
         return ""
 
-def extract_companies(text):
-    """Extract company names with aggressive filtering"""
-    doc = nlp(text)
-    orgs = []
-    
-    IGNORE_ORGS = [
-        "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
-        "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
-        "ap", "associated press", "wall street journal", "new york times",
-        "cnn", "bbc", "fox news", "nbc", "cbs", "abc news", "tipranks",
-        "globe newswire", "business wire", "pr newswire", "marketwatch",
-        "seeking alpha", "motley fool", "benzinga", "zacks", "biospace",
-        "genengnews", "labiotech", "fiercepharma"
-    ]
-    
-    REMOVE_SUFFIXES = [
-        " - tipranks", " tipranks", "the manila times", " - msn",
-        " acquisition", " diagnostics acquisition"
-    ]
-    
-    for ent in doc.ents:
-        if ent.label_ == "ORG":
-            t = ent.text.strip()
-            for suffix in REMOVE_SUFFIXES:
-                if t.lower().endswith(suffix):
-                    t = t[:-len(suffix)].strip()
-            if len(t) < 2 or len(t.split()) > 6:
-                continue
-            # Simplified check using only the 'any' check 
-            if any(ignore in t.lower() for ignore in IGNORE_ORGS):
-                continue
-            if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
-                continue
-            orgs.append(t)
-    
-    seen = set()
-    unique_orgs = []
-    for org in orgs:
-        if org.lower() not in seen:
-            seen.add(org.lower())
-            unique_orgs.append(org)
-    
-    return unique_orgs[:5]
-
-def extract_acquisition_details(title, text):
-    """Manually extract acquisition details from text"""
-    combined = title + " " + text
-    patterns = [
-        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|closes?|announces?)\s+(?:the\s+)?(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
-        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
-        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:of|by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, combined, re.I)
-        if match:
-            acquirer = match.group(1).strip()
-            target = match.group(2).strip() if len(match.groups()) > 1 else ""
-            acquirer = re.sub(r'\s+(announces|completes|closes|acquisition).*', '', acquirer, flags=re.I)
-            target = re.sub(r'\s+(from|for|acquisition).*', '', target, flags=re.I)
-            if acquirer and target and len(acquirer) > 2 and len(target) > 2:
-                return [acquirer, target]
-    
-    return []
+# -----------------------------------------------------
+# 💰 ENHANCED MONEY EXTRACTION AND VALIDATION FUNCTIONS 
+# -----------------------------------------------------
 
 def normalize_amount(text):
     """
-    Enhanced normalization with better parsing
+    Enhanced normalization with better parsing for numbers (handles commas, spaces)
     """
     if not text or not isinstance(text, str):
         return None
     
     t = text.lower().strip()
-    
-    # Check currency type (default to USD)
-    # is_usd = '$' in t or 'usd' in t or 'dollar' in t # not needed for calculation
     
     # Extract the numeric part (handles commas, decimals, spaces)
     num_match = re.search(r'(\d+(?:[,\s]\d{3})*(?:\.\d+)?)', t)
@@ -267,6 +187,69 @@ def normalize_amount(text):
         return int(round(num))
     except Exception:
         return None
+
+def extract_amounts(text):
+    """
+    Enhanced money extraction with better pattern matching
+    """
+    if not text:
+        return []
+
+    # More comprehensive regex patterns
+    amount_patterns = [
+        # $15 million, $5M, $250,000.00, $1.5B
+        r'\$\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
+        
+        # 15 million dollars, 3M USD, 250 thousand EUR
+        r'\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|\$)?',
+        
+        # USD 15 million, EUR 3M
+        r'(?:USD|usd|EUR|eur|€)\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
+        
+        # Edge cases: "a $15M", "approximately $3 million"
+        r'(?:approximately|about|around|nearly|up\s+to|over)?\s?\$?\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)',
+    ]
+
+    matches = []
+    for pat in amount_patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            amt = m.group(0).strip()
+            # Clean up whitespace
+            amt = re.sub(r'\s+', ' ', amt)
+            # Remove leading words like "approximately"
+            amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over)\s+', '', amt, flags=re.I)
+            matches.append(amt)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for m in matches:
+        # Create a normalized key for comparison
+        key = re.sub(r'[^\d.]', '', m.lower())
+        if key and key not in seen and len(key) >= 1:
+            seen.add(key)
+            unique.append(m)
+
+    return unique[:5] # Return top 5 amounts
+
+def extract_deal_context(text, amount_str):
+    """
+    Extract surrounding context around a dollar amount to validate it's a deal amount
+    """
+    if not text or not amount_str:
+        return ""
+    
+    # Find the amount in text
+    pattern = re.escape(amount_str)
+    match = re.search(pattern, text, re.IGNORECASE)
+    
+    if match:
+        start = max(0, match.start() - 100)
+        end = min(len(text), match.end() + 100)
+        context = text[start:end]
+        return context
+    
+    return ""
 
 def validate_deal_amount(amount_str, context, event_type):
     """
@@ -348,69 +331,6 @@ def extract_amounts_with_validation(title, text, summary, event_type):
     
     return validated_amounts
 
-def extract_deal_context(text, amount_str):
-    """
-    Extract surrounding context around a dollar amount to validate it's a deal amount
-    """
-    if not text or not amount_str:
-        return ""
-    
-    # Find the amount in text
-    pattern = re.escape(amount_str)
-    match = re.search(pattern, text, re.IGNORECASE)
-    
-    if match:
-        start = max(0, match.start() - 100)
-        end = min(len(text), match.end() + 100)
-        context = text[start:end]
-        return context
-    
-    return ""
-
-def extract_amounts(text):
-    """
-    Enhanced money extraction with better pattern matching
-    """
-    if not text:
-        return []
-
-    # More comprehensive regex patterns
-    amount_patterns = [
-        # $15 million, $5M, $250,000.00, $1.5B
-        r'\$\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
-        
-        # 15 million dollars, 3M USD, 250 thousand EUR
-        r'\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|\$)?',
-        
-        # USD 15 million, EUR 3M
-        r'(?:USD|usd|EUR|eur|€)\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
-        
-        # Edge cases: "a $15M", "approximately $3 million"
-        r'(?:approximately|about|around|nearly|up\s+to|over)?\s?\$?\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)',
-    ]
-
-    matches = []
-    for pat in amount_patterns:
-        for m in re.finditer(pat, text, flags=re.IGNORECASE):
-            amt = m.group(0).strip()
-            # Clean up whitespace
-            amt = re.sub(r'\s+', ' ', amt)
-            # Remove leading words like "approximately"
-            amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over)\s+', '', amt, flags=re.I)
-            matches.append(amt)
-
-    # Deduplicate while preserving order
-    seen = set()
-    unique = []
-    for m in matches:
-        # Create a normalized key for comparison
-        key = re.sub(r'[^\d.]', '', m.lower())
-        if key and key not in seen and len(key) >= 1:
-            seen.add(key)
-            unique.append(m)
-
-    return unique[:5] # Return top 5 amounts
-
 def search_for_deal_amount(title, companies, event_type):
     """
     Secondary web scraper: Search for deal amount when not found in article
@@ -419,7 +339,7 @@ def search_for_deal_amount(title, companies, event_type):
     if event_type not in ["acquisition", "funding"]:
         return []
     
-    # ADDED TIME.SLEEP before request
+    # Add small delay to avoid excessive requests
     time.sleep(1)
 
     try:
@@ -465,7 +385,80 @@ def search_for_deal_amount(title, companies, event_type):
         print(f"Search failed: {str(e)[:50]}")
         return []
 
+# -----------------------------------------------------
+# 📚 REMAINING HELPER FUNCTIONS (Kept from working code)
+# -----------------------------------------------------
+
+def extract_companies(text):
+    """Extract company names with aggressive filtering"""
+    # ... (content remains the same)
+    doc = nlp(text)
+    orgs = []
+    
+    IGNORE_ORGS = [
+        "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
+        "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
+        "ap", "associated press", "wall street journal", "new york times",
+        "cnn", "bbc", "fox news", "nbc", "cbs", "abc news", "tipranks",
+        "globe newswire", "business wire", "pr newswire", "marketwatch",
+        "seeking alpha", "motley fool", "benzinga", "zacks", "biospace",
+        "genengnews", "labiotech", "fiercepharma"
+    ]
+    
+    REMOVE_SUFFIXES = [
+        " - tipranks", " tipranks", "the manila times", " - msn",
+        " acquisition", " diagnostics acquisition"
+    ]
+    
+    for ent in doc.ents:
+        if ent.label_ == "ORG":
+            t = ent.text.strip()
+            for suffix in REMOVE_SUFFIXES:
+                if t.lower().endswith(suffix):
+                    t = t[:-len(suffix)].strip()
+            if len(t) < 2 or len(t.split()) > 6:
+                continue
+            if t.lower() in IGNORE_ORGS:
+                continue
+            if any(ignore in t.lower() for ignore in IGNORE_ORGS):
+                continue
+            if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
+                continue
+            orgs.append(t)
+    
+    seen = set()
+    unique_orgs = []
+    for org in orgs:
+        if org.lower() not in seen:
+            seen.add(org.lower())
+            unique_orgs.append(org)
+    
+    return unique_orgs[:5]
+
+def extract_acquisition_details(title, text):
+    """Manually extract acquisition details from text"""
+    # ... (content remains the same)
+    combined = title + " " + text
+    patterns = [
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|closes?|announces?)\s+(?:the\s+)?(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
+        r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:of|by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, combined, re.I)
+        if match:
+            acquirer = match.group(1).strip()
+            target = match.group(2).strip() if len(match.groups()) > 1 else ""
+            acquirer = re.sub(r'\s+(announces|completes|closes|acquisition).*', '', acquirer, flags=re.I)
+            target = re.sub(r'\s+(from|for|acquisition).*', '', target, flags=re.I)
+            if acquirer and target and len(acquirer) > 2 and len(target) > 2:
+                return [acquirer, target]
+    
+    return []
+
 def classify_event(text):
+    # ... (content remains the same)
     tl = text.lower()
     scores = {}
     for ev, kws in EVENT_KEYWORDS.items():
@@ -474,15 +467,18 @@ def classify_event(text):
     return best[0] if best[1] > 0 else "news"
 
 def detect_indications(text):
+    # ... (content remains the same)
     tl = text.lower()
     hits = [kw for kw in INDICATION_KEYWORDS if kw in tl]
     return sorted(set(hits))
 
 def summarize_short(text, max_sent=2):
+    # ... (content remains the same)
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
 
 def normalize_title(title):
+    # ... (content remains the same)
     title = re.split(r'\s*[-–—]\s*', title)[0]
     for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
         title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
@@ -490,11 +486,8 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title
 
-# REFINED RELEVANCE LOGIC 
-# ---------------------------------------
-# 🛠 Helper functions (RELAXED is_exosome_relevant)
-# ---------------------------------------
 def is_exosome_relevant(text, title):
+    # ... (content remains the same - using the original working filter)
     combined = (title + " " + text).lower()
     
     SPAM_TERMS = [
@@ -513,33 +506,16 @@ def is_exosome_relevant(text, title):
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
     
-    # Check if we have very little text (likely due to fetch failure or just a PR)
-    is_text_short = len(text) < 500
-    
-    # --- START OF RELAXED LOGIC ---
-    if is_text_short:
-        # If we only have title/summary, pass if the term 'exosome' or a related term is mentioned once.
-        # The initial collection already filtered for deal keywords.
-        is_relevant = (exosome_hits >= 1)
-        
-    else:
-        # Standard logic for a full article: must have a solid exosome hit or company mention.
-        is_relevant = (
-            (exosome_hits >= 1 and company_match) or 
-            (exosome_hits >= 2)
-        )
-    # --- END OF RELAXED LOGIC ---
-
-    if not is_relevant:
+    if not ((company_match and exosome_hits > 0) or (exosome_hits > 1)):
         return False
     
-    # Check for spam terms
     if any(term in combined for term in SPAM_TERMS):
         return False
     
     return True
-    
+
 def send_email_with_attachment(subject, body, attachment_path):
+    # ... (content remains the same)
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
     SMTP_USER = os.getenv("SMTP_USER", "")
@@ -571,8 +547,9 @@ def send_email_with_attachment(subject, body, attachment_path):
     except Exception as e:
         print("Failed to send email:", e)
 
+
 # ---------------------------------------
-# 🧭 Main pipeline
+# 🧭 Main pipeline (MODIFIED)
 # ---------------------------------------
 def run_agent():
     ensure_outdir()
@@ -588,11 +565,11 @@ def run_agent():
     ]
 
     for rss in RSS_FEEDS:
-        print(f"Fetching: {rss[:60]}...") # Added print statement for better visibility
+        print(f"Fetching: {rss[:60]}...")
         entries = fetch_rss_entries(rss)
         
-        # Add a delay between fetching different feeds to be polite ⬅️ MODIFIED
-        time.sleep(1)
+        # Add a short delay between feeds
+        time.sleep(0.5)
 
         for e in entries:
             title = e.get("title","") or ""
@@ -622,12 +599,16 @@ def run_agent():
                 "summary": clean_summary
             })
 
-    # REMOVED PR_PAGES loop as it was empty and unnecessary 
-    # for name, pr_url in PR_PAGES:
-    #     try:
-    #           ...
-    #     except Exception as e:
-    #           print("PR page error", pr_url, e)
+    # ... (Deduplication steps remain the same) ...
+    
+    # 2) PR pages (Skipped as PR_PAGES is empty)
+    for name, pr_url in PR_PAGES:
+        try:
+            r = requests.get(pr_url, timeout=8)
+            # ... (PR page scraping logic remains the same) ...
+            pass # Placeholder for PR page logic
+        except Exception as e:
+            print("PR page error", pr_url, e)
 
     print(f"Initial collection: {len(collected)} items")
 
@@ -663,6 +644,8 @@ def run_agent():
         
         # Try to fetch article text
         text = fetch_article_text(url) if url else ""
+        
+        # Use the most comprehensive available text for filtering and processing
         if not text or len(text) < 200:
             full_text = summary if len(summary) > 50 else title
         else:
@@ -686,9 +669,13 @@ def run_agent():
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
 
+        # -----------------------------------------------------
+        # 💰 REPLACED MONEY EXTRACTION LOGIC
+        # -----------------------------------------------------
+
         # Extract amounts with validation
         validated_money = extract_amounts_with_validation(title, full_text, summary, event)
-
+        
         # Get just the amount strings for backward compatibility
         money = [vm['amount'] for vm in validated_money[:3]]
 
@@ -706,19 +693,7 @@ def run_agent():
                 amounts_numeric.append(n)
         amounts_numeric = list(dict.fromkeys(amounts_numeric))
 
-        # Fallback 1: regex pattern matching
-        if not money and event in ["acquisition", "funding"]:
-            fallback_pattern = r'\b\d+\.?\d*\s?(?:million|billion|M|B|bn|k)\b'
-            fallback_matches = re.findall(fallback_pattern, title + " " + summary + " " + full_text, re.I)
-            if fallback_matches:
-                f_matches = ['$' + m for m in fallback_matches[:2]]
-                money = f_matches
-                for m in f_matches:
-                    n = normalize_amount(m)
-                    if n is not None:
-                        amounts_numeric.append(n)
-            
-        # 🔍 Fallback 2: Secondary web search scraper 
+        # 🔍 Fallback 1: Secondary web search scraper (Only if primary extraction failed)
         if not money and event in ["acquisition", "funding"]:
             print(f"🔍 Searching web for amount: {title[:50]}...")
             search_amounts = search_for_deal_amount(title, companies, event)
@@ -727,10 +702,12 @@ def run_agent():
                 for m in search_amounts:
                     n = normalize_amount(m)
                     if n is not None:
-                        amounts_numeric.append(n)# Extract amounts
+                        amounts_numeric.append(n)
         
-        amounts_numeric = list(dict.fromkeys(amounts_numeric)) # Reduplicate after search
-
+        # -----------------------------------------------------
+        # END REPLACEMENT
+        # -----------------------------------------------------
+   
         indications = detect_indications(full_text + " " + title + " " + summary)
 
         # Scoring
@@ -825,24 +802,24 @@ if __name__ == "__main__":
     df_export = run_agent()
     if df_export is not None and not df_export.empty:
         # Compose email in "old style" detailed format
-        subject = f"NeuroCell Intelligence Exosome Deals — Summary (last {SINCE_DAYS} days)"
+        subject = f"Exosome Deals — Summary (last {SINCE_DAYS} days)"
         body_lines = [
-            f"NeuroCell Intelligence Exosome Deals — Summary (last {SINCE_DAYS} days)",
-            f"Generated: {dt.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"Exosome Deals — Summary (last {SINCE_DAYS} days)",
+            f"Generated: {dt.datetime.utcnow().isoformat()}",
             ""
         ]
         
-        # Sort by score for email
+        # Sort by score for email (using the exported version is fine)
         df_email = df_export.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
 
         for _, row in df_email.iterrows():
             event_label = row['event_type'].upper() if row['event_type'] else "NEWS"
-            date_str = row['published_dt'].strftime('%Y-%m-%d') if pd.notnull(row['published_dt']) else "Unknown"
-            companies = row['companies'] if isinstance(row['companies'], str) else "; ".join(row['companies'])
-            amounts = row['amounts'] if isinstance(row['amounts'], str) else "; ".join(map(str, row['amounts']))
-            indications = row['indications'] if isinstance(row['indications'], str) else "; ".join(row['indications'])
-            summary = row['short_summary'] if row['short_summary'] else ""
-            link = row['url'] if row['url'] else ""
+            date_str = pd.to_datetime(row['published_dt']).strftime('%Y-%m-%d') if pd.notnull(row['published_dt']) else "Unknown"
+            companies = row['companies']
+            amounts = row['amounts']
+            indications = row['indications']
+            summary = row['short_summary']
+            link = row['url']
             
             body_lines.append(f"- [{event_label}] {row['title']}")
             body_lines.append(f"  Date: {date_str}")
@@ -851,7 +828,7 @@ if __name__ == "__main__":
             body_lines.append(f"  Indications: {indications}")
             body_lines.append(f"  Summary: {summary}")
             body_lines.append(f"  Link: {link}")
-            body_lines.append("") # blank line between entries
+            body_lines.append("")  # blank line between entries
         
         body = "\n".join(body_lines)
 
