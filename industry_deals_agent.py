@@ -491,6 +491,9 @@ def normalize_title(title):
     return title
 
 # REFINED RELEVANCE LOGIC 
+# ---------------------------------------
+# 🛠 Helper functions (RELAXED is_exosome_relevant)
+# ---------------------------------------
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     
@@ -509,13 +512,15 @@ def is_exosome_relevant(text, title):
     
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
-
-    # Check if we have very little text (likely due to fetch failure)
-    is_text_short = len(text) < 500  # <--- CRITICAL LINE ADDED
-
+    
+    # Check if we have very little text (likely due to fetch failure or just a PR)
+    is_text_short = len(text) < 500
+    
+    # --- START OF RELAXED LOGIC ---
     if is_text_short:
-        # If we couldn't fetch the full article, rely solely on title/summary keywords.
-        is_relevant = (exosome_hits >= 1) or (company_match and exosome_hits >= 1) # <--- MODIFIED LOGIC
+        # If we only have title/summary, pass if the term 'exosome' or a related term is mentioned once.
+        # The initial collection already filtered for deal keywords.
+        is_relevant = (exosome_hits >= 1)
         
     else:
         # Standard logic for a full article: must have a solid exosome hit or company mention.
@@ -523,23 +528,17 @@ def is_exosome_relevant(text, title):
             (exosome_hits >= 1 and company_match) or 
             (exosome_hits >= 2)
         )
-    
-    # New relevance logic: 
-    # Must have a high score OR mention a target company AND have enough text to be a full article
-    is_relevant = (
-        (exosome_hits >= 1 and 
-        (company_match or len(text) > 500)) or 
-        (exosome_hits >= 2) # Keep if multiple exosome mentions
-    )
+    # --- END OF RELAXED LOGIC ---
 
     if not is_relevant:
         return False
     
+    # Check for spam terms
     if any(term in combined for term in SPAM_TERMS):
         return False
     
     return True
-
+    
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
