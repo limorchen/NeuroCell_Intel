@@ -33,25 +33,26 @@ TOP_N_TO_EMAIL = 10
 # NOTE: This list is from the previous working version. If you encounter 
 # 403 or 404 errors again, you MUST use the cleaned list from the prior step.
 RSS_FEEDS = [
-    # Biotech/pharma specific feeds
+    # Biotech/pharma specific feeds (KEEP THESE)
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
     "https://www.biospace.com/rss",
     "https://www.genengnews.com/feed/",
     "https://www.labiotech.eu/feed/",
-    "https://www.biocentury.com/rss",
-    "https://www.bioworld.com/rss",
-    "https://www.genengnews.com/topics/feed/",
-    "https://www.evaluate.com/vantage/rss",
     
-    # Business wire feeds (using the generic landing page which is less reliable for RSS)
-    "https://www.businesswire.com/portal/site/home/news/subject/landing/biotechnology", 
-    "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
+    # ADD THESE DIRECT SOURCES:
+    "https://www.globenewswire.com/RssFeed/subjectcode/46-Healthcare/feedTitle/GlobeNewswire%20-%20Healthcare",
+    "https://www.accesswire.com/rss/subject/67/medicalpharmaceutical-devices",
+    "https://finance.yahoo.com/rss/headline?s=MDXH",  # MDxHealth specific
     
-    # Google News search focused on exosomes deals
+    # Business Wire - better RSS endpoint
+    "https://www.businesswire.com/portal/site/home/template.PAGE/news/?javax.portlet.tpst=1bc873a97e76f60dfa39ddbf6dfe1c86_ws_MX&javax.portlet.prp_1bc873a97e76f60dfa39ddbf6dfe1c86_viewID=MY_PORTAL_VIEW&javax.portlet.prp_1bc873a97e76f60dfa39ddbf6dfe1c86_ndmHsc=v2*A1583527200000*B1583527200000*DgroupBy~asubject*J2*G34*R30*N1001&javax.portlet.begCacheTok=com.vignette.cachetoken&javax.portlet.endCacheTok=com.vignette.cachetoken",
+    
+    # PR Newswire - more specific
+    "https://www.prnewswire.com/rss/news-releases-list.rss",
+    
+    # Keep Google News but know it's limited
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
-    "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
 ]
 
 PR_PAGES = []
