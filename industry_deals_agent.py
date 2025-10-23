@@ -54,7 +54,7 @@ RSS_FEEDS = [
 ]
 PR_PAGES = []
 
-# Keywords needed for DEBUG logging below
+# Keywords needed for DEBUG logging and filter logic
 SPAM_TERMS = [
     "webinar", "sponsored", "whitepaper", "advertise",
     "sign up to read", "subscribe", "newsletter",
@@ -161,10 +161,8 @@ def fetch_article_text(url, timeout=15):
         return ""
 
 # -----------------------------------------------------
-# 💰 MONEY EXTRACTION AND VALIDATION FUNCTIONS (Unchanged from previous version)
+# 💰 MONEY EXTRACTION AND VALIDATION FUNCTIONS 
 # -----------------------------------------------------
-# ... (normalize_amount, extract_amounts, extract_deal_context, validate_deal_amount, 
-# extract_amounts_with_validation, search_for_deal_amount remain unchanged) ...
 
 def normalize_amount(text):
     """
@@ -201,6 +199,7 @@ def normalize_amount(text):
     except Exception:
         return None
 
+# ⭐ TARGETED FIX APPLIED HERE for non-USD currency formatting (e.g., €10M)
 def extract_amounts(text):
     """
     Enhanced money extraction with better pattern matching for strings.
@@ -209,16 +208,16 @@ def extract_amounts(text):
         return []
 
     amount_patterns = [
-        # $15 million, $5M, $250,000.00, $1.5B
-        r'\$\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
+        # Pattern 1 (Targeted fix): Currency symbol ($£€¥) followed immediately by number and optional multiplier (e.g., €10M)
+        r'[\$£€¥]\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
         
-        # 15 million dollars, 3M USD, 250 thousand EUR
+        # Pattern 2: 15 million dollars, 3M USD, 250 thousand EUR
         r'\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|\$)?',
         
-        # USD 15 million, EUR 3M
+        # Pattern 3: USD 15 million, EUR 3M (Includes EUR symbol for robustness)
         r'(?:USD|usd|EUR|eur|€)\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
         
-        # Edge cases: "a $15M", "approximately $3 million"
+        # Pattern 4: Edge cases: "a $15M", "approximately $3 million"
         r'(?:approximately|about|around|nearly|up\s+to|over)?\s?\$?\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)',
     ]
 
@@ -371,7 +370,7 @@ def search_for_deal_amount(title, companies, event_type):
 # -----------------------------------------------------
 
 # -----------------------------------------------------
-# 📚 REMAINING HELPER FUNCTIONS (Unchanged from previous version)
+# 📚 REMAINING HELPER FUNCTIONS 
 # -----------------------------------------------------
 
 def extract_companies(text):
@@ -474,32 +473,29 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title
 
-# MODIFIED: Relaxed the relevance filter further and uses CORE_INTEREST_TERMS
-def is_exosome_relevant(text, title):
+# MODIFIED: The core relevance filter logic
+def is_exosome_relevant(text, title, log_check=False):
     combined = (title + " " + text).lower()
     
-    # Check for spam first (uses global SPAM_TERMS)
+    # 1. Spam check (only skipped if not in log_check mode)
     if any(term in combined for term in SPAM_TERMS):
-        return False
-    
-    # Check for core terms (uses global EXOSOME_TERMS)
+        if not log_check: return False
+        
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
-    
-    # Check for core interest terms
     core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
 
-    # 🔑 NEW, VERY RELAXED Primary Relevance Condition
+    # 2. Primary Relevance Condition (now very relaxed)
     primary_relevance = (
-        (exosome_hits >= 1 and len(combined) > 100) or # Any exosome term AND sufficient text
-        (company_match) or                             # Just a company match (less risky, as list is curated)
-        (exosome_hits >= 1 and core_interest_hit)      # Exosome AND a core interest keyword
+        (exosome_hits >= 1 and len(combined) > 100) or
+        (company_match) or                             
+        (exosome_hits >= 1 and core_interest_hit)      
     )
-
-    if not primary_relevance:
-        return False
     
-    return True
+    if log_check: # In debug mode, return whether it passed the *primary* check
+        return primary_relevance
+    
+    return primary_relevance
 
 # -----------------------------------------------------
 # 📧 Email function
@@ -713,12 +709,12 @@ def run_agent():
 
         # CRITICAL FILTER: is_exosome_relevant (now relaxed)
         if not is_exosome_relevant(full_text, title):
-            # ⭐ ADDED DEBUG LOGGING HERE
+            # ⭐ ADDED DEBUG LOGGING HERE (if the item fails the relevance check)
             reasons = []
             combined_log = (title + " " + full_text).lower()
             
-            # Check for core relevance failure
-            if not is_exosome_relevant(full_text, title, log_check=True): # Use helper for logging details
+            # Check for core relevance failure (uses log_check=True to separate spam)
+            if not is_exosome_relevant(full_text, title, log_check=True): 
                 company_match = any(comp.lower() in combined_log for comp in EXOSOME_COMPANIES)
                 exosome_hits = sum(term in combined_log for term in EXOSOME_TERMS)
                 core_interest_hit = any(term in combined_log for term in CORE_INTEREST_TERMS)
@@ -731,7 +727,7 @@ def run_agent():
             if any(term in combined_log for term in SPAM_TERMS):
                 reasons.append("SPAM Term Hit")
             
-            # This will print the articles that are failing the relevance filter
+            # Print the articles that are failing the relevance filter
             print(f"DEBUG: Skipping '{title[:50]}...' Reasons: {'; '.join(reasons) or 'Generic Filter Fail'}") 
             continue
 
@@ -846,31 +842,6 @@ def run_agent():
     return df_new_deals
 
 # -----------------
-# Helper function for DEBUG logging
-# -----------------
-# Need a specific check for logging so we don't duplicate logic
-def is_exosome_relevant(text, title, log_check=False):
-    combined = (title + " " + text).lower()
-    
-    if any(term in combined for term in SPAM_TERMS):
-        if not log_check: return False
-        
-    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-    exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
-    core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
-
-    primary_relevance = (
-        (exosome_hits >= 1 and len(combined) > 100) or
-        (company_match) or                             
-        (exosome_hits >= 1 and core_interest_hit)      
-    )
-    
-    if log_check: # In debug mode, return whether it passed the *primary* check (spam handled separately)
-        return primary_relevance
-    
-    return primary_relevance
-
-# -----------------
 # Run the agent
 # -----------------
 if __name__ == "__main__":
@@ -902,18 +873,30 @@ if __name__ == "__main__":
             "\n--- Top Deals Summary ---\n"
         ]
         
-        # Ensure list columns are handled for email summary display
+        # ⭐ Helper function to format list data for display, checking for empty/NA
         def format_list(data):
-            return ", ".join(map(str, data[:2])) if isinstance(data, (list, tuple)) else str(data)
+            # Check if data is a list/tuple and not empty, otherwise return empty string
+            if isinstance(data, (list, tuple)) and data: 
+                # Check for empty strings/NA within the list and filter them out
+                clean_data = [str(item) for item in data if str(item).strip()]
+                return ", ".join(clean_data[:2])
+            return "" 
             
         for index, row in df_email.iterrows():
             summary = f"[{row['event_type'].upper()}] {row['title']} (Score: {row['score']:.1f})"
-            if row['amounts']:
-                summary += f" - Amount: {format_list(row['amounts'])}"
-            if row['companies']:
-                summary += f" - Companies: {format_list(row['companies'])}"
-            if row['indications']:
-                summary += f" - Focus: {format_list(row['indications'])}"
+            
+            # Check if formatted list is NOT empty before adding it to the summary line
+            amount_str = format_list(row['amounts'])
+            if amount_str:
+                summary += f" - Amount: {amount_str}"
+            
+            company_str = format_list(row['companies'])
+            if company_str:
+                summary += f" - Companies: {company_str}"
+                
+            indication_str = format_list(row['indications'])
+            if indication_str:
+                summary += f" - Focus: {indication_str}"
             
             body_lines.append(summary)
             body_lines.append(f"   Summary: {row['short_summary']}")
