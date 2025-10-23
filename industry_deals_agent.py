@@ -20,8 +20,6 @@ import time
 # 🔐 Load environment variables
 # ---------------------------------------
 load_dotenv()
-# NEWSAPI_KEY is not used in this script
-# NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "") 
 
 # ---------------------------------------
 # 📁 Configuration
@@ -29,11 +27,9 @@ load_dotenv()
 OUTPUT_DIR = "./industry_deals"
 SINCE_DAYS = 30
 TOP_N_TO_EMAIL = 10
-# NEW: Fixed filename for the cumulative database
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx" 
 
-# NOTE: This list is from the previous working version. If you encounter 
-# 403 or 404 errors again, you MUST use the cleaned list from the prior step.
+# MODIFIED: Added a new, targeted search feed
 RSS_FEEDS = [
     # Core Biotech/Pharma Feeds (Working and Stable)
     "https://www.fiercebiotech.com/rss.xml",
@@ -52,6 +48,9 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
     "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
+    
+    # ⭐ NEW TARGETED FEED: Targeting your core NeuroCell interest (neuro/regenerative)
+    "https://news.google.com/rss/search?q=exosome+OR+%22extracellular+vesicle%22+AND+(neuro+OR+neurology+OR+regenerat)&hl=en-US&gl=US&ceid=US:en",
 ]
 PR_PAGES = []
 
@@ -127,7 +126,15 @@ def fetch_article_text(url, timeout=10):
     try:
         downloaded = trafilatura.fetch_url(url)
         if downloaded:
-            text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            # Use BeautifulSoup to clean the downloaded text before extracting with trafilatura
+            # This can help clean up some junk HTML/scripts that trafilatura sometimes misses
+            soup = BeautifulSoup(downloaded, "html.parser")
+            for script in soup(["script", "style"]):
+                script.decompose()
+            cleaned_html = str(soup)
+            
+            text = trafilatura.extract(cleaned_html, include_comments=False, include_tables=False)
+            
             if text and len(text) > 100:
                 return text[:10000]  # Limit to 10k chars
         return ""
@@ -412,13 +419,23 @@ def extract_acquisition_details(title, text):
     
     return []
 
+# MODIFIED: Ensure "news" is returned only if ZERO deal keywords are present
 def classify_event(text):
     tl = text.lower()
     scores = {}
+    total_hits = 0
     for ev, kws in EVENT_KEYWORDS.items():
-        scores[ev] = sum(1 for k in kws if k in tl)
+        hits = sum(1 for k in kws if k in tl)
+        scores[ev] = hits
+        total_hits += hits
+        
+    if total_hits == 0:
+        return "news"
+        
     best = max(scores.items(), key=lambda x: x[1])
-    return best[0] if best[1] > 0 else "news"
+    
+    # This should always return a deal type since total_hits > 0
+    return best[0]
 
 def detect_indications(text):
     tl = text.lower()
@@ -437,6 +454,7 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title
 
+# MODIFIED: Relaxed the relevance filter
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     
@@ -453,10 +471,19 @@ def is_exosome_relevant(text, title):
         "exosomal", "ev therapy", " evs ",
     ]
     
+    # New logic to include Indication Keywords as a relevance factor
+    indication_hits = sum(term in combined for term in INDICATION_KEYWORDS)
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in exosome_terms)
     
-    if not ((company_match and exosome_hits > 0) or (exosome_hits > 1)):
+    # 🔑 NEW, RELAXED Primary Relevance Condition
+    primary_relevance = (
+        (exosome_hits >= 1 and indication_hits >= 1) or # Exosome + Neuro/Regen keyword
+        (exosome_hits >= 2) or                         # Multiple exosome mentions (strong signal)
+        (company_match and exosome_hits >= 1)          # Listed company + exosome mention
+    )
+
+    if not primary_relevance:
         return False
     
     if any(term in combined for term in SPAM_TERMS):
@@ -475,7 +502,7 @@ def send_email_with_attachment(subject, body, attachment_path):
     EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
     EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
 
-    if not SMTP_USER or not SMTP_PASS or not EMAIL_TO:
+    if not SMTP_USER or not SMTP_PASS or not EMAIL_TO or EMAIL_TO == [""]:
         print("SMTP credentials or recipients not set. Skipping email.")
         return
 
@@ -492,6 +519,7 @@ def send_email_with_attachment(subject, body, attachment_path):
         msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
 
     try:
+        # Use SMTP_SSL for port 465
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
@@ -500,7 +528,7 @@ def send_email_with_attachment(subject, body, attachment_path):
         print("Failed to send email:", e)
 
 # -----------------------------------------------------
-# 💾 NEW: Function to handle cumulative database export
+# 💾 MODIFIED: Function to handle cumulative database export (Added dtype map for robustness)
 # -----------------------------------------------------
 def export_to_cumulative_database(df_new_deals, filename):
     """
@@ -531,7 +559,12 @@ def export_to_cumulative_database(df_new_deals, filename):
     df_existing = pd.DataFrame()
     if os.path.exists(cumulative_filepath):
         try:
-            df_existing = pd.read_excel(cumulative_filepath)
+            # ⭐ ADDED DTYPE MAP FOR ROBUSTNESS
+            dtype_map = {
+                'title': str, 'url': str, 'event_type': str, 
+                'short_summary': str, 'full_text': str
+            }
+            df_existing = pd.read_excel(cumulative_filepath, dtype=dtype_map)
             print(f"Loaded {len(df_existing)} previous deals from {filename}")
         except Exception as e:
             print(f"Warning: Could not read existing file {filename}. Error: {e}")
@@ -577,13 +610,9 @@ def export_to_cumulative_database(df_new_deals, filename):
         return pd.DataFrame()
 
 # ---------------------------------------
-# 🧭 Main pipeline (MODIFIED)
+# 🧭 Main pipeline
 # ---------------------------------------
 def run_agent():
-    # ... (All previous logic for collection, processing, and filtering remains the same) ...
-    #
-    # *** The main change is at the end: return the filtered list, not the DataFrame ***
-    #
     ensure_outdir()
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
     collected = []
@@ -623,7 +652,7 @@ def run_agent():
                     pub_dt = pub_dt.replace(tzinfo=dt.timezone.utc)
                 if pub_dt < since:
                     continue
-            
+                
             collected.append({
                 "title": title,
                 "link": e.get("link",""),
@@ -666,52 +695,39 @@ def run_agent():
         # Try to fetch article text
         text = fetch_article_text(url) if url else ""
         
-        # Use the most comprehensive available text for filtering and processing
+        # Use the most comprehensive available text for filtering and processing (Fallback is crucial)
         if not text or len(text) < 200:
             full_text = summary if len(summary) > 50 else title
         else:
             full_text = text
 
+        # CRITICAL FILTER: is_exosome_relevant (now relaxed)
         if not is_exosome_relevant(full_text, title):
             continue
 
         short = summarize_short(full_text, max_sent=2)
         event = classify_event(full_text + " " + title)
 
-        # Extract companies
-        # --- ENHANCED COMPANY EXTRACTION LOGIC ---
-        
-        # 1. Always prioritize the acquisition regex for ACQUISITION events
+        # --- COMPANY EXTRACTION LOGIC ---
         if event == "acquisition":
             companies = extract_acquisition_details(title, full_text)
             
-            # If the acquisition regex worked, use those two key companies only.
             if len(companies) >= 2:
-                # Add a filter to remove common junk from these key names
                 companies = [re.sub(r'SA|SA\s*\(NASDAQ:[^\)]+\)|LLC|Inc\.?|Corp\.?|Corporation|Limited', '', c).strip() 
                              for c in companies]
-                # Fall through to general NLP *only* if key extraction failed to find 2 names
             else: 
-                # Fallback to general NLP entity extraction
                 companies_from_text = extract_companies(full_text)
                 companies_from_title = extract_companies(title + " " + summary)
                 companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
-
-        # 2. General NLP for all other events (Funding, Partnership, News)
         else:
             companies_from_text = extract_companies(full_text)
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
 
-        # --- END ENHANCED COMPANY EXTRACTION LOGIC ---
-
-        # 💰 ENHANCED MONEY EXTRACTION 💰
+        # 💰 MONEY EXTRACTION 💰
         validated_money = extract_amounts_with_validation(title, full_text, summary, event)
-        
-        # Get just the amount strings for output
         money = [vm['amount'] for vm in validated_money[:3]]
 
-        # Normalize numeric
         amounts_numeric = []
         for m in money:
             n = normalize_amount(m)
@@ -719,7 +735,7 @@ def run_agent():
                 amounts_numeric.append(n)
         amounts_numeric = list(dict.fromkeys(amounts_numeric))
 
-        # 🔍 Fallback: Secondary web search scraper (Only if primary extraction failed)
+        # 🔍 Fallback: Secondary web search scraper 
         if not money and event in ["acquisition", "funding"]:
             print(f"🔍 Searching web for amount: {title[:50]}...")
             search_amounts = search_for_deal_amount(title, companies, event)
@@ -796,7 +812,6 @@ def run_agent():
     df_new_deals["published_dt"] = df_new_deals["published"].apply(parse_dt)
     df_new_deals = df_new_deals.sort_values(["published_dt","score"], ascending=[False,False])
     
-    # *** RETURN THE NEW DEALS DATAFRAME FOR CUMULATIVE EXPORT ***
     return df_new_deals
 
 # -----------------
@@ -823,31 +838,29 @@ if __name__ == "__main__":
         df_email = df_new_deals.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
 
         subject = f"Exosome Deals — Summary ({len(df_new_deals)} NEW Deals)"
+        
+        # Format the body of the email
         body_lines = [
             f"A total of {len(df_new_deals)} new deals/relevant news items were found and added to the cumulative database (attached).",
             f"The database now contains {len(df_database)} unique records.",
-            f"Top {len(df_email)} deals from this run are summarized below:",
-            f"Generated: {dt.datetime.utcnow().isoformat()}",
-            ""
+            "\n--- Top Deals Summary ---\n"
         ]
         
-        for _, row in df_email.iterrows():
-            event_label = row['event_type'].upper() if row['event_type'] else "NEWS"
-            date_str = pd.to_datetime(row['published_dt']).strftime('%Y-%m-%d') if pd.notnull(row['published_dt']) else "Unknown"
+        for index, row in df_email.iterrows():
+            summary = f"[{row['event_type'].upper()}] {row['title']} (Score: {row['score']:.1f})"
+            if row['amounts']:
+                summary += f" - Amount: {row['amounts'][0]}"
+            if row['companies']:
+                summary += f" - Companies: {', '.join(row['companies'][:2])}"
+            if row['indications']:
+                summary += f" - Focus: {', '.join(row['indications'])}"
             
-            body_lines.append(f"- [{event_label}] {row['title']}")
-            body_lines.append(f"  Date: {date_str}")
-            body_lines.append(f"  Companies: {row['companies']}")
-            body_lines.append(f"  Amounts: {row['amounts']}")
-            body_lines.append(f"  Indications: {row['indications']}")
-            body_lines.append(f"  Summary: {row['short_summary']}")
-            body_lines.append(f"  Link: {row['url']}")
-            body_lines.append("")
-        
+            body_lines.append(summary)
+            body_lines.append(f"   Summary: {row['short_summary']}")
+            body_lines.append(f"   Link: {row['url']}\n")
+            
         body = "\n".join(body_lines)
-
-        send_email_with_attachment(subject, body, cumulative_filepath)
-    else:
-        print("Cumulative database could not be saved — skipping email.")
         
+        send_email_with_attachment(subject, body, cumulative_filepath)
+
     print("----- Run completed -----")
