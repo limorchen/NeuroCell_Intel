@@ -27,7 +27,7 @@ load_dotenv()
 # 📁 Configuration
 # ---------------------------------------
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 360
+SINCE_DAYS = 30
 TOP_N_TO_EMAIL = 10
 # NEW: Fixed filename for the cumulative database
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx" 
