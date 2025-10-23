@@ -29,7 +29,7 @@ SINCE_DAYS = 30
 TOP_N_TO_EMAIL = 10
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx" 
 
-# MODIFIED: Added a new, targeted search feed
+# MODIFIED: Added the new, targeted search feed
 RSS_FEEDS = [
     # Core Biotech/Pharma Feeds (Working and Stable)
     "https://www.fiercebiotech.com/rss.xml",
@@ -49,10 +49,24 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
     "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
     
-    # ⭐ NEW TARGETED FEED: Targeting your core NeuroCell interest (neuro/regenerative)
+    # NEW TARGETED FEED: Targeting your core NeuroCell interest
     "https://news.google.com/rss/search?q=exosome+OR+%22extracellular+vesicle%22+AND+(neuro+OR+neurology+OR+regenerat)&hl=en-US&gl=US&ceid=US:en",
 ]
 PR_PAGES = []
+
+# Keywords needed for DEBUG logging below
+SPAM_TERMS = [
+    "webinar", "sponsored", "whitepaper", "advertise",
+    "sign up to read", "subscribe", "newsletter",
+    "market research", "market size", "market report", "market insights",
+    "pipeline insights", "download", "forecast", "market analysis"
+]
+
+EXOSOME_TERMS = [
+    "exosome", "exosomes",
+    "extracellular vesicle", "extracellular vesicles",
+    "exosomal", "ev therapy", " evs ",
+]
 
 # Expanded indication keywords
 INDICATION_KEYWORDS = [
@@ -67,6 +81,9 @@ INDICATION_KEYWORDS = [
     "liquid biopsy","early detection",
     "drug delivery","therapeutic delivery","targeted therapy"
 ]
+
+# Core interest terms for the relaxed filter (subset of INDICATION_KEYWORDS)
+CORE_INTEREST_TERMS = ["neuro", "neurology", "regenerat", "repair", "therapeutic"]
 
 EVENT_KEYWORDS = {
     "acquisition": ["acquir","acquisition","acquired","merger","merged","buyout","takeover"],
@@ -97,7 +114,7 @@ nlp = spacy.load("en_core_web_sm")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
 # ---------------------------------------
-# 🛠 Helper functions (Unchanged)
+# 🛠 Helper functions
 # ---------------------------------------
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -121,13 +138,14 @@ def fetch_rss_entries(url):
             time.sleep(3)
     return []
 
-def fetch_article_text(url, timeout=10):
+# MODIFIED: Increased timeout to 15 seconds
+def fetch_article_text(url, timeout=15): 
     """Fetch article text using trafilatura - more reliable than newspaper3k"""
     try:
-        downloaded = trafilatura.fetch_url(url)
+        # Pass the increased timeout to trafilatura's fetch_url
+        downloaded = trafilatura.fetch_url(url, timeout=timeout) 
         if downloaded:
-            # Use BeautifulSoup to clean the downloaded text before extracting with trafilatura
-            # This can help clean up some junk HTML/scripts that trafilatura sometimes misses
+            # Clean up the downloaded HTML before extraction
             soup = BeautifulSoup(downloaded, "html.parser")
             for script in soup(["script", "style"]):
                 script.decompose()
@@ -143,8 +161,10 @@ def fetch_article_text(url, timeout=10):
         return ""
 
 # -----------------------------------------------------
-# 💰 ENHANCED MONEY EXTRACTION AND VALIDATION FUNCTIONS (Unchanged)
+# 💰 MONEY EXTRACTION AND VALIDATION FUNCTIONS (Unchanged from previous version)
 # -----------------------------------------------------
+# ... (normalize_amount, extract_amounts, extract_deal_context, validate_deal_amount, 
+# extract_amounts_with_validation, search_for_deal_amount remain unchanged) ...
 
 def normalize_amount(text):
     """
@@ -348,9 +368,10 @@ def search_for_deal_amount(title, companies, event_type):
     except Exception as e:
         print(f"Search failed: {str(e)[:50]}")
         return []
+# -----------------------------------------------------
 
 # -----------------------------------------------------
-# 📚 REMAINING HELPER FUNCTIONS (Unchanged)
+# 📚 REMAINING HELPER FUNCTIONS (Unchanged from previous version)
 # -----------------------------------------------------
 
 def extract_companies(text):
@@ -434,7 +455,6 @@ def classify_event(text):
         
     best = max(scores.items(), key=lambda x: x[1])
     
-    # This should always return a deal type since total_hits > 0
     return best[0]
 
 def detect_indications(text):
@@ -454,45 +474,35 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title
 
-# MODIFIED: Relaxed the relevance filter
+# MODIFIED: Relaxed the relevance filter further and uses CORE_INTEREST_TERMS
 def is_exosome_relevant(text, title):
     combined = (title + " " + text).lower()
     
-    SPAM_TERMS = [
-        "webinar", "sponsored", "whitepaper", "advertise",
-        "sign up to read", "subscribe", "newsletter",
-        "market research", "market size", "market report", "market insights",
-        "pipeline insights", "download", "forecast", "market analysis"
-    ]
+    # Check for spam first (uses global SPAM_TERMS)
+    if any(term in combined for term in SPAM_TERMS):
+        return False
     
-    exosome_terms = [
-        "exosome", "exosomes",
-        "extracellular vesicle", "extracellular vesicles",
-        "exosomal", "ev therapy", " evs ",
-    ]
-    
-    # New logic to include Indication Keywords as a relevance factor
-    indication_hits = sum(term in combined for term in INDICATION_KEYWORDS)
+    # Check for core terms (uses global EXOSOME_TERMS)
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-    exosome_hits = sum(term in combined for term in exosome_terms)
+    exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
     
-    # 🔑 NEW, RELAXED Primary Relevance Condition
+    # Check for core interest terms
+    core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
+
+    # 🔑 NEW, VERY RELAXED Primary Relevance Condition
     primary_relevance = (
-        (exosome_hits >= 1 and indication_hits >= 1) or # Exosome + Neuro/Regen keyword
-        (exosome_hits >= 2) or                         # Multiple exosome mentions (strong signal)
-        (company_match and exosome_hits >= 1)          # Listed company + exosome mention
+        (exosome_hits >= 1 and len(combined) > 100) or # Any exosome term AND sufficient text
+        (company_match) or                             # Just a company match (less risky, as list is curated)
+        (exosome_hits >= 1 and core_interest_hit)      # Exosome AND a core interest keyword
     )
 
     if not primary_relevance:
         return False
     
-    if any(term in combined for term in SPAM_TERMS):
-        return False
-    
     return True
 
 # -----------------------------------------------------
-# 📧 MODIFIED: Email function to accept a path
+# 📧 Email function
 # -----------------------------------------------------
 def send_email_with_attachment(subject, body, attachment_path):
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
@@ -528,7 +538,7 @@ def send_email_with_attachment(subject, body, attachment_path):
         print("Failed to send email:", e)
 
 # -----------------------------------------------------
-# 💾 MODIFIED: Function to handle cumulative database export (Added dtype map for robustness)
+# 💾 Function to handle cumulative database export
 # -----------------------------------------------------
 def export_to_cumulative_database(df_new_deals, filename):
     """
@@ -559,7 +569,7 @@ def export_to_cumulative_database(df_new_deals, filename):
     df_existing = pd.DataFrame()
     if os.path.exists(cumulative_filepath):
         try:
-            # ⭐ ADDED DTYPE MAP FOR ROBUSTNESS
+            # ADDED DTYPE MAP FOR ROBUSTNESS
             dtype_map = {
                 'title': str, 'url': str, 'event_type': str, 
                 'short_summary': str, 'full_text': str
@@ -703,7 +713,28 @@ def run_agent():
 
         # CRITICAL FILTER: is_exosome_relevant (now relaxed)
         if not is_exosome_relevant(full_text, title):
+            # ⭐ ADDED DEBUG LOGGING HERE
+            reasons = []
+            combined_log = (title + " " + full_text).lower()
+            
+            # Check for core relevance failure
+            if not is_exosome_relevant(full_text, title, log_check=True): # Use helper for logging details
+                company_match = any(comp.lower() in combined_log for comp in EXOSOME_COMPANIES)
+                exosome_hits = sum(term in combined_log for term in EXOSOME_TERMS)
+                core_interest_hit = any(term in combined_log for term in CORE_INTEREST_TERMS)
+                text_len = len(combined_log)
+                
+                reasons.append("Core Relevance Failed")
+                reasons.append(f"(EV/Comp: {exosome_hits}/{company_match}, Neuro: {core_interest_hit}, TextLen: {text_len})")
+
+            # Check for spam failure
+            if any(term in combined_log for term in SPAM_TERMS):
+                reasons.append("SPAM Term Hit")
+            
+            # This will print the articles that are failing the relevance filter
+            print(f"DEBUG: Skipping '{title[:50]}...' Reasons: {'; '.join(reasons) or 'Generic Filter Fail'}") 
             continue
+
 
         short = summarize_short(full_text, max_sent=2)
         event = classify_event(full_text + " " + title)
@@ -815,7 +846,32 @@ def run_agent():
     return df_new_deals
 
 # -----------------
-# Run the agent (MODIFIED)
+# Helper function for DEBUG logging
+# -----------------
+# Need a specific check for logging so we don't duplicate logic
+def is_exosome_relevant(text, title, log_check=False):
+    combined = (title + " " + text).lower()
+    
+    if any(term in combined for term in SPAM_TERMS):
+        if not log_check: return False
+        
+    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
+    exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
+    core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
+
+    primary_relevance = (
+        (exosome_hits >= 1 and len(combined) > 100) or
+        (company_match) or                             
+        (exosome_hits >= 1 and core_interest_hit)      
+    )
+    
+    if log_check: # In debug mode, return whether it passed the *primary* check (spam handled separately)
+        return primary_relevance
+    
+    return primary_relevance
+
+# -----------------
+# Run the agent
 # -----------------
 if __name__ == "__main__":
     print("----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----")
@@ -846,14 +902,18 @@ if __name__ == "__main__":
             "\n--- Top Deals Summary ---\n"
         ]
         
+        # Ensure list columns are handled for email summary display
+        def format_list(data):
+            return ", ".join(map(str, data[:2])) if isinstance(data, (list, tuple)) else str(data)
+            
         for index, row in df_email.iterrows():
             summary = f"[{row['event_type'].upper()}] {row['title']} (Score: {row['score']:.1f})"
             if row['amounts']:
-                summary += f" - Amount: {row['amounts'][0]}"
+                summary += f" - Amount: {format_list(row['amounts'])}"
             if row['companies']:
-                summary += f" - Companies: {', '.join(row['companies'][:2])}"
+                summary += f" - Companies: {format_list(row['companies'])}"
             if row['indications']:
-                summary += f" - Focus: {', '.join(row['indications'])}"
+                summary += f" - Focus: {format_list(row['indications'])}"
             
             body_lines.append(summary)
             body_lines.append(f"   Summary: {row['short_summary']}")
