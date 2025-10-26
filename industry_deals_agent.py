@@ -602,9 +602,14 @@ def export_to_cumulative_database(df_new_deals, filename):
             df_new[col] = pd.NA
         if col not in df_existing.columns:
             df_existing[col] = pd.NA
-            
-    combined_df = pd.concat([df_existing, df_new], ignore_index=True)
 
+    # Safe concatenation to avoid FutureWarning (pandas≥2.1)
+    frames = [df for df in [df_existing, df_new] if not df.empty]
+    if frames:
+        combined_df = pd.concat(frames, ignore_index=True)
+    else:
+    combined_df = pd.DataFrame()
+            
     # 5. Deduplication
     # Deduplicate based on a unique key (URL is the best, but 'title' is a good backup)
     combined_df.drop_duplicates(subset=['url', 'title'], keep='first', inplace=True)
