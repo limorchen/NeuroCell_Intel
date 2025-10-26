@@ -492,25 +492,35 @@ def normalize_title(title):
 # MODIFIED: The core relevance filter logic
 def is_exosome_relevant(text, title, log_check=False):
     combined = (title + " " + text).lower()
-    
-    # 1. Spam check (only skipped if not in log_check mode)
+
+    # 1. Spam check
     if any(term in combined for term in SPAM_TERMS):
-        if not log_check: return False
-        
+        if not log_check:
+            return False
+
+    # 2. Core term matching
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
     core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
 
-    # 2. Primary Relevance Condition (now very relaxed)
-    primary_relevance = (
-        (exosome_hits >= 1 and len(combined) > 100) or
-        (company_match) or                             
-        (exosome_hits >= 1 and core_interest_hit)      
+    # 3. Require at least one exosome/EV term and one context term (company or therapeutic)
+    has_exosome_context = (
+        exosome_hits > 0 and (company_match or core_interest_hit)
     )
-    
-    if log_check: # In debug mode, return whether it passed the *primary* check
+
+    # 4. General long-form relevance fallback (for debug/info)
+    primary_relevance = (
+        has_exosome_context
+        or (company_match and len(combined) > 100 and not any(t in combined for t in SPAM_TERMS))
+    )
+
+    # 5. Minimum exosome mention safeguard
+    if exosome_hits == 0:
+        return False
+
+    if log_check:
         return primary_relevance
-    
+
     return primary_relevance
 
 # -----------------------------------------------------
@@ -805,6 +815,9 @@ def run_agent():
         score += 0.3 * len(companies)
         exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
         score += min(exosome_count * 0.3, 2.0)
+        # Penalize generic funding events with no exosome mention
+        if event == "funding" and not any(t in full_text.lower() for t in EXOSOME_TERMS):
+            score -= 0.7
 
         processed.append({
             "title": title,
