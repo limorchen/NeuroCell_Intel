@@ -25,7 +25,7 @@ load_dotenv()
 # 📁 Configuration
 # ---------------------------------------
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 350
+SINCE_DAYS = 30
 TOP_N_TO_EMAIL = 10
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx" 
 
@@ -218,6 +218,7 @@ def extract_amounts(text):
     """
     Extracts all currency amounts (USD, EUR, GBP, etc.) in many textual forms.
     Captures multi-amount phrases like '$15 million, with $5 million in stock'.
+    Enhanced with better deduplication based on normalized values.
     """
     if not text:
         return []
@@ -243,14 +244,19 @@ def extract_amounts(text):
             amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over|valued at|worth)\s+', '', amt, flags=re.I)
             matches.append(amt)
 
-    # Deduplicate intelligently
-    seen = set()
+    # Enhanced deduplication - compare normalized numeric values
+    seen_values = {}
     unique = []
     for m in matches:
-        key = re.sub(r'[^\d.]', '', m.lower())
-        if key and key not in seen:
-            seen.add(key)
+        normalized_val = normalize_amount(m)
+        if normalized_val and normalized_val not in seen_values:
+            seen_values[normalized_val] = m
             unique.append(m)
+        elif not normalized_val:
+            # If can't normalize, use string-based dedup as fallback
+            key = re.sub(r'[^\d.]', '', m.lower())
+            if key and key not in [re.sub(r'[^\d.]', '', u.lower()) for u in unique]:
+                unique.append(m)
 
     return unique
 
@@ -280,6 +286,7 @@ def extract_deal_structure(text, amounts):
     """
     🆕 ENHANCED: Extract detailed deal structure information from text.
     Returns a structured description of how the money is being distributed.
+    Improved to capture more patterns and provide better fallback.
     """
     if not amounts or not text:
         return ""
@@ -290,32 +297,38 @@ def extract_deal_structure(text, amounts):
     # Pattern categories for deal structure
     structure_patterns = {
         'total_value': [
-            r'total (?:acquisition |deal |transaction )?(?:value|price|consideration)(?:\s+is|\s+of)?\s+([^\.,]+)',
-            r'(?:valued|priced|worth)\s+at\s+([^\.,]+)',
-            r'for\s+a\s+total\s+(?:of\s+)?([^\.,]+)',
+            r'total (?:acquisition |deal |transaction )?(?:value|price|consideration)(?:\s+is|\s+of)?\s+(?:approximately\s+)?([£$€¥]?[\d.,]+\s*(?:million|billion|m|b|k|thousand)?)',
+            r'(?:valued|priced|worth)\s+at\s+(?:approximately\s+)?([£$€¥]?[\d.,]+\s*(?:million|billion|m|b|k|thousand)?)',
+            r'for\s+a\s+total\s+(?:of\s+)?([£$€¥]?[\d.,]+\s*(?:million|billion|m|b|k|thousand)?)',
+            r'acquisition\s+(?:price\s+)?of\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b|k|thousand)?)',
         ],
         'upfront': [
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:paid\s+)?(?:at\s+)?(?:closing|upfront|immediately)',
-            r'(?:upfront|initial)\s+payment\s+of\s+([^\.,]+)',
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:cash|stock)(?:\s+at\s+closing)',
+            r'([£$€¥][\d.,]+\s*(?:million|billion|m|b)?)\s+(?:paid\s+)?(?:at\s+)?(?:closing|upfront|immediately)',
+            r'(?:upfront|initial)\s+payment\s+of\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b|thousand)?)',
+            r'([£$€¥][\d.,]+\s*(?:million|billion|m|b)?)\s+in\s+(?:cash|stock)(?:\s+(?:paid\s+)?at\s+closing)',
+            r'(?:cash|stock)\s+payment\s+of\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)',
         ],
         'milestone': [
-            r'up\s+to\s+(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:milestone|contingent|earnout)',
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:development|regulatory|commercial|sales)\s+milestones?',
-            r'additional\s+(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+based\s+on',
+            r'up\s+to\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+in\s+(?:milestone|contingent|earnout)',
+            r'([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+in\s+(?:development|regulatory|commercial|sales)\s+milestones?',
+            r'additional\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+(?:in\s+)?(?:based\s+on|contingent|milestone)',
+            r'milestone\s+payments?\s+(?:of\s+)?(?:up\s+to\s+)?([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)',
         ],
         'equity': [
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:stock|equity|shares)',
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:of\s+)?(?:common\s+)?stock',
+            r'([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+in\s+(?:stock|equity|shares)',
+            r'([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+(?:of\s+)?(?:common\s+)?(?:stock|equity)',
+            r'(?:stock|equity)\s+(?:valued\s+at|worth)\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)',
         ],
         'periodic': [
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:paid\s+)?(?:annually|yearly|per\s+year)',
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:over|in)\s+(?:the\s+)?(?:course\s+of\s+)?(\d+)\s+years?',
-            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(\d+)\s+(?:annual\s+)?(?:installments|payments)',
+            r'([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+(?:paid\s+)?(?:annually|yearly|per\s+year)',
+            r'([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+(?:over|in|during)\s+(?:the\s+)?(?:course\s+of\s+)?(\d+)\s+years?',
+            r'([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)\s+in\s+(\d+)\s+(?:annual\s+)?(?:installments|payments)',
+            r'(\d+)\s+annual\s+payments?\s+of\s+([£$€¥]?[\d.,]+\s*(?:million|billion|m|b)?)',
         ],
         'royalty': [
             r'royalt(?:y|ies)\s+(?:of\s+)?(?:up\s+to\s+)?(\d+(?:\.\d+)?)\s*%',
             r'(\d+(?:\.\d+)?)\s*%\s+royalty',
+            r'(?:single|mid|low|high)[\s-]digit\s+royalt(?:y|ies)',
         ]
     }
     
@@ -324,46 +337,58 @@ def extract_deal_structure(text, amounts):
     
     for component_type, patterns in structure_patterns.items():
         for pattern in patterns:
-            matches = re.finditer(pattern, text_lower, re.IGNORECASE)
-            for match in matches:
+            matches = list(re.finditer(pattern, text_lower, re.IGNORECASE))
+            if matches:
+                # Get the full matched text for context
+                matched_text = matches[0].group(0)
                 if component_type not in found_components:
-                    # Get the full matched text for context
-                    matched_text = match.group(0)
                     found_components[component_type] = matched_text
                     break
     
     # Build structured description
     if 'total_value' in found_components:
-        structure_parts.append(f"Total deal value: {found_components['total_value']}")
+        structure_parts.append(f"Total value: {found_components['total_value']}")
     
     if 'upfront' in found_components:
-        structure_parts.append(f"Upfront payment: {found_components['upfront']}")
+        structure_parts.append(f"Upfront: {found_components['upfront']}")
     
     if 'equity' in found_components:
-        structure_parts.append(f"Equity component: {found_components['equity']}")
+        structure_parts.append(f"Equity: {found_components['equity']}")
     
     if 'milestone' in found_components:
-        structure_parts.append(f"Milestone payments: {found_components['milestone']}")
+        structure_parts.append(f"Milestones: {found_components['milestone']}")
     
     if 'periodic' in found_components:
-        structure_parts.append(f"Periodic payments: {found_components['periodic']}")
+        structure_parts.append(f"Periodic: {found_components['periodic']}")
     
     if 'royalty' in found_components:
-        structure_parts.append(f"Royalty terms: {found_components['royalty']}")
+        structure_parts.append(f"Royalty: {found_components['royalty']}")
     
     # If we found structured information, return it
     if structure_parts:
         return "; ".join(structure_parts)
     
-    # Fallback: Extract sentences containing amounts
+    # Enhanced fallback: Extract sentences containing amounts with deal-related keywords
+    deal_keywords = [
+        'acquisition', 'purchase', 'valued', 'worth', 'paid', 'payment',
+        'closing', 'upfront', 'milestone', 'stock', 'cash', 'consideration',
+        'transaction', 'financing', 'raised', 'secured', 'investment'
+    ]
+    
     sentences_with_amounts = []
     for sent in re.split(r'[.!?]+', text):
-        if any(amt in sent for amt in amounts[:3]):
+        sent_lower = sent.lower()
+        # Check if sentence has both an amount and a deal keyword
+        has_amount = any(amt.lower() in sent_lower for amt in amounts[:3])
+        has_deal_keyword = any(kw in sent_lower for kw in deal_keywords)
+        
+        if has_amount and has_deal_keyword:
             clean_sent = sent.strip()
-            if len(clean_sent) > 20:
+            if 20 < len(clean_sent) < 200:  # Reasonable sentence length
                 sentences_with_amounts.append(clean_sent)
     
     if sentences_with_amounts:
+        # Return up to 2 most relevant sentences
         return " | ".join(sentences_with_amounts[:2])
     
     return ""
