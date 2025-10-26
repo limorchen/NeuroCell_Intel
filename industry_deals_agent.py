@@ -202,23 +202,22 @@ def normalize_amount(text):
 # ⭐ TARGETED FIX APPLIED HERE for non-USD currency formatting (e.g., €10M)
 def extract_amounts(text):
     """
-    Enhanced money extraction with better pattern matching for strings.
+    Extracts all currency amounts (USD, EUR, GBP, etc.) in many textual forms.
+    Captures multi-amount phrases like '$15 million, with $5 million in stock'.
     """
     if not text:
         return []
 
+    # Comprehensive patterns for diverse formats
     amount_patterns = [
-        # Pattern 1 (Targeted fix): Currency symbol ($£€¥) followed immediately by number and optional multiplier (e.g., €10M)
-        r'[\$£€¥]\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
-        
-        # Pattern 2: 15 million dollars, 3M USD, 250 thousand EUR
-        r'\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|\$)?',
-        
-        # Pattern 3: USD 15 million, EUR 3M (Includes EUR symbol for robustness)
-        r'(?:USD|usd|EUR|eur|€)\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|trillion|m|b|k|bn|tn)?',
-        
-        # Pattern 4: Edge cases: "a $15M", "approximately $3 million"
-        r'(?:approximately|about|around|nearly|up\s+to|over)?\s?\$?\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?\s?(?:million|billion|thousand|m|b|k|bn)',
+        # €10M, $5.5M, £250K
+        r'[\$£€¥]\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
+        # USD 15 million, EUR 3M, GBP 250 thousand
+        r'(?:USD|EUR|GBP|CAD|AUD|usd|eur|gbp|cad|aud)\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
+        # 15 million USD, 15M EUR, 250 thousand dollars
+        r'\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|£|GBP|gbp)?',
+        # “approximately $3 million”, “about €5M”, “over $50 thousand”
+        r'(?:approximately|about|around|nearly|up\s+to|over|valued\s+at|worth)\s+[\$£€¥]?\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
     ]
 
     matches = []
@@ -226,18 +225,21 @@ def extract_amounts(text):
         for m in re.finditer(pat, text, flags=re.IGNORECASE):
             amt = m.group(0).strip()
             amt = re.sub(r'\s+', ' ', amt)
-            amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over)\s+', '', amt, flags=re.I)
+            # remove lead words (approximately, over, etc.)
+            amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over|valued at|worth)\s+', '', amt, flags=re.I)
             matches.append(amt)
 
+    # Deduplicate intelligently
     seen = set()
     unique = []
     for m in matches:
         key = re.sub(r'[^\d.]', '', m.lower())
-        if key and key not in seen and len(key) >= 1:
+        if key and key not in seen:
             seen.add(key)
             unique.append(m)
 
-    return unique[:5] # Return top 5 amounts
+    return unique
+
 
 def extract_deal_context(text, amount_str):
     """Extract surrounding context around a dollar amount."""
