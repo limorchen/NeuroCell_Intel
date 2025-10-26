@@ -139,26 +139,40 @@ def fetch_rss_entries(url):
     return []
 
 # MODIFIED: Increased timeout to 15 seconds
-def fetch_article_text(url, timeout=15): 
-    """Fetch article text using trafilatura - more reliable than newspaper3k"""
+def fetch_article_text(url, timeout=15):
+    """Fetch article text using requests + trafilatura (robust and timeout-safe)."""
     try:
-        # Pass the increased timeout to trafilatura's fetch_url
-        downloaded = trafilatura.fetch_url(url, timeout=timeout) 
-        if downloaded:
-            # Clean up the downloaded HTML before extraction
-            soup = BeautifulSoup(downloaded, "html.parser")
-            for script in soup(["script", "style"]):
-                script.decompose()
-            cleaned_html = str(soup)
-            
-            text = trafilatura.extract(cleaned_html, include_comments=False, include_tables=False)
-            
-            if text and len(text) > 100:
-                return text[:10000]  # Limit to 10k chars
-        return ""
+        # Step 1 — Use requests to fetch raw HTML (with proper timeout)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; NeuroCellBot/1.0; +https://neurocellintel.ai)"}
+        response = requests.get(url, headers=headers, timeout=timeout)
+        if response.status_code != 200 or not response.text:
+            print(f"Empty or invalid response for {url[:50]}...")
+            return ""
+
+        # Step 2 — Clean HTML before sending to trafilatura
+        soup = BeautifulSoup(response.text, "html.parser")
+        for script in soup(["script", "style", "noscript"]):
+            script.decompose()
+        cleaned_html = str(soup)
+
+        # Step 3 — Extract main text content using trafilatura
+        text = trafilatura.extract(
+            cleaned_html,
+            include_comments=False,
+            include_tables=False,
+            favor_recall=True  # improves retention of relevant text
+        )
+
+        # Step 4 — Validation and final cleanup
+        if text and len(text) > 100:
+            return text[:10000]  # Limit to 10k characters to prevent oversize fields
+        else:
+            return ""
+
     except Exception as e:
-        print(f"Article fetch failed for {url[:50]}...: {str(e)[:30]}")
+        print(f"Article fetch failed for {url[:50]}...: {str(e)[:50]}")
         return ""
+
 
 # -----------------------------------------------------
 # 💰 MONEY EXTRACTION AND VALIDATION FUNCTIONS 
