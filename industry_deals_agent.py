@@ -176,7 +176,7 @@ def fetch_article_text(url, timeout=15):
 
 
 # -----------------------------------------------------
-# 💰 MONEY EXTRACTION AND VALIDATION FUNCTIONS 
+# 💰 ENHANCED MONEY EXTRACTION AND CONTEXT FUNCTIONS 
 # -----------------------------------------------------
 
 def normalize_amount(text):
@@ -214,7 +214,6 @@ def normalize_amount(text):
     except Exception:
         return None
 
-# ⭐ TARGETED FIX APPLIED HERE for non-USD currency formatting (e.g., €10M)
 def extract_amounts(text):
     """
     Extracts all currency amounts (USD, EUR, GBP, etc.) in many textual forms.
@@ -231,7 +230,7 @@ def extract_amounts(text):
         r'(?:USD|EUR|GBP|CAD|AUD|usd|eur|gbp|cad|aud)\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
         # 15 million USD, 15M EUR, 250 thousand dollars
         r'\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|£|GBP|gbp)?',
-        # “approximately $3 million”, “about €5M”, “over $50 thousand”
+        # "approximately $3 million", "about €5M", "over $50 thousand"
         r'(?:approximately|about|around|nearly|up\s+to|over|valued\s+at|worth)\s+[\$£€¥]?\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
     ]
 
@@ -256,21 +255,119 @@ def extract_amounts(text):
     return unique
 
 
-def extract_deal_context(text, amount_str):
-    """Extract surrounding context around a dollar amount."""
+def extract_extended_deal_context(text, amount_str, window_size=300):
+    """
+    Extract extended surrounding context around a dollar amount for better deal structure capture.
+    Returns the context and the position of the amount within it.
+    """
     if not text or not amount_str:
-        return ""
+        return "", -1
     
     pattern = re.escape(amount_str)
     match = re.search(pattern, text, re.IGNORECASE)
     
     if match:
-        start = max(0, match.start() - 100)
-        end = min(len(text), match.end() + 100)
+        start = max(0, match.start() - window_size)
+        end = min(len(text), match.end() + window_size)
         context = text[start:end]
-        return context
+        relative_pos = match.start() - start
+        return context, relative_pos
+    
+    return "", -1
+
+
+def extract_deal_structure(text, amounts):
+    """
+    🆕 ENHANCED: Extract detailed deal structure information from text.
+    Returns a structured description of how the money is being distributed.
+    """
+    if not amounts or not text:
+        return ""
+    
+    text_lower = text.lower()
+    structure_parts = []
+    
+    # Pattern categories for deal structure
+    structure_patterns = {
+        'total_value': [
+            r'total (?:acquisition |deal |transaction )?(?:value|price|consideration)(?:\s+is|\s+of)?\s+([^\.,]+)',
+            r'(?:valued|priced|worth)\s+at\s+([^\.,]+)',
+            r'for\s+a\s+total\s+(?:of\s+)?([^\.,]+)',
+        ],
+        'upfront': [
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:paid\s+)?(?:at\s+)?(?:closing|upfront|immediately)',
+            r'(?:upfront|initial)\s+payment\s+of\s+([^\.,]+)',
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:cash|stock)(?:\s+at\s+closing)',
+        ],
+        'milestone': [
+            r'up\s+to\s+(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:milestone|contingent|earnout)',
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:development|regulatory|commercial|sales)\s+milestones?',
+            r'additional\s+(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+based\s+on',
+        ],
+        'equity': [
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(?:stock|equity|shares)',
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:of\s+)?(?:common\s+)?stock',
+        ],
+        'periodic': [
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:paid\s+)?(?:annually|yearly|per\s+year)',
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+(?:over|in)\s+(?:the\s+)?(?:course\s+of\s+)?(\d+)\s+years?',
+            r'(\$[\d.,]+[mkb]?(?:\s+(?:million|billion))?)\s+in\s+(\d+)\s+(?:annual\s+)?(?:installments|payments)',
+        ],
+        'royalty': [
+            r'royalt(?:y|ies)\s+(?:of\s+)?(?:up\s+to\s+)?(\d+(?:\.\d+)?)\s*%',
+            r'(\d+(?:\.\d+)?)\s*%\s+royalty',
+        ]
+    }
+    
+    # Extract each component
+    found_components = {}
+    
+    for component_type, patterns in structure_patterns.items():
+        for pattern in patterns:
+            matches = re.finditer(pattern, text_lower, re.IGNORECASE)
+            for match in matches:
+                if component_type not in found_components:
+                    # Get the full matched text for context
+                    matched_text = match.group(0)
+                    found_components[component_type] = matched_text
+                    break
+    
+    # Build structured description
+    if 'total_value' in found_components:
+        structure_parts.append(f"Total deal value: {found_components['total_value']}")
+    
+    if 'upfront' in found_components:
+        structure_parts.append(f"Upfront payment: {found_components['upfront']}")
+    
+    if 'equity' in found_components:
+        structure_parts.append(f"Equity component: {found_components['equity']}")
+    
+    if 'milestone' in found_components:
+        structure_parts.append(f"Milestone payments: {found_components['milestone']}")
+    
+    if 'periodic' in found_components:
+        structure_parts.append(f"Periodic payments: {found_components['periodic']}")
+    
+    if 'royalty' in found_components:
+        structure_parts.append(f"Royalty terms: {found_components['royalty']}")
+    
+    # If we found structured information, return it
+    if structure_parts:
+        return "; ".join(structure_parts)
+    
+    # Fallback: Extract sentences containing amounts
+    sentences_with_amounts = []
+    for sent in re.split(r'[.!?]+', text):
+        if any(amt in sent for amt in amounts[:3]):
+            clean_sent = sent.strip()
+            if len(clean_sent) > 20:
+                sentences_with_amounts.append(clean_sent)
+    
+    if sentences_with_amounts:
+        return " | ".join(sentences_with_amounts[:2])
     
     return ""
+
 
 def validate_deal_amount(amount_str, context, event_type):
     """
@@ -319,28 +416,37 @@ def validate_deal_amount(amount_str, context, event_type):
     
     return max(0.0, min(1.0, score))
 
+
 def extract_amounts_with_validation(title, text, summary, event_type):
     """
-    Main extraction function that combines extraction + validation
-    Returns list of validated amounts with confidence scores
+    🆕 ENHANCED: Main extraction function that combines extraction + validation + structure
+    Returns list of validated amounts with confidence scores AND deal structure description
     """
     full_text = f"{title} {text} {summary}"
     all_amounts = extract_amounts(full_text)
     
     validated_amounts = []
     for amount in all_amounts:
-        context = extract_deal_context(full_text, amount)
+        context, _ = extract_extended_deal_context(full_text, amount, window_size=300)
         confidence = validate_deal_amount(amount, context, event_type)
         
         if confidence >= 0.4: # Threshold for inclusion
             validated_amounts.append({
                 'amount': amount,
                 'confidence': confidence,
-                'context': context[:200]
+                'context': context[:300]
             })
     
     validated_amounts.sort(key=lambda x: x['confidence'], reverse=True)
-    return validated_amounts
+    
+    # Extract deal structure using all validated amounts
+    deal_structure = ""
+    if validated_amounts:
+        amounts_list = [va['amount'] for va in validated_amounts]
+        deal_structure = extract_deal_structure(full_text, amounts_list)
+    
+    return validated_amounts, deal_structure
+
 
 def search_for_deal_amount(title, companies, event_type):
     """
@@ -585,8 +691,9 @@ def export_to_cumulative_database(df_new_deals, filename):
     for col in list_columns:
         df_new[col] = df_new[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
 
-    # 2. Prepare other columns
+    # 2. Prepare other columns (including new deal_structure column)
     df_new["short_summary"] = df_new["short_summary"].apply(lambda x: str(x) if x else "")
+    df_new["deal_structure"] = df_new["deal_structure"].apply(lambda x: str(x) if x else "")
     df_new["full_text"] = df_new["full_text"].apply(lambda x: x[:1000] if x else "")
     # Ensure published_dt is clean (no timezone info)
     df_new["published_dt"] = pd.to_datetime(df_new["published_dt"]).dt.tz_localize(None)
@@ -599,7 +706,7 @@ def export_to_cumulative_database(df_new_deals, filename):
             # ADDED DTYPE MAP FOR ROBUSTNESS
             dtype_map = {
                 'title': str, 'url': str, 'event_type': str, 
-                'short_summary': str, 'full_text': str
+                'short_summary': str, 'full_text': str, 'deal_structure': str
             }
             df_existing = pd.read_excel(cumulative_filepath, dtype=dtype_map)
             print(f"Loaded {len(df_existing)} previous deals from {filename}")
@@ -634,10 +741,10 @@ def export_to_cumulative_database(df_new_deals, filename):
 
     # 6. Save the combined, deduplicated DataFrame
     try:
-        # Select the columns you want in the final Excel (adjust as needed)
+        # Select the columns you want in the final Excel (adjusted to include deal_structure)
         FINAL_COLS = [
             'published_dt', 'score', 'event_type', 'title', 'companies', 'amounts', 
-            'amounts_numeric', 'indications', 'short_summary', 'url', 'full_text'
+            'amounts_numeric', 'deal_structure', 'indications', 'short_summary', 'url', 'full_text'
         ]
         
         # Ensure only common and necessary columns are saved
@@ -787,8 +894,8 @@ def run_agent():
             companies_from_title = extract_companies(title + " " + summary)
             companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
 
-        # 💰 MONEY EXTRACTION 💰
-        validated_money = extract_amounts_with_validation(title, full_text, summary, event)
+        # 💰 ENHANCED MONEY EXTRACTION WITH DEAL STRUCTURE 💰
+        validated_money, deal_structure = extract_amounts_with_validation(title, full_text, summary, event)
         money = [vm['amount'] for vm in validated_money[:3]]
 
         amounts_numeric = []
@@ -808,6 +915,9 @@ def run_agent():
                     n = normalize_amount(m)
                     if n is not None:
                         amounts_numeric.append(n)
+                # Try to extract structure from search results too
+                if not deal_structure:
+                    deal_structure = extract_deal_structure(full_text, search_amounts)
         
         # END MONEY EXTRACTION 
         
@@ -833,6 +943,7 @@ def run_agent():
             "event_type": event,
             "amounts": money,
             "amounts_numeric": amounts_numeric,
+            "deal_structure": deal_structure,  # 🆕 NEW FIELD
             "indications": indications,
             "short_summary": short,
             "full_text": full_text,
@@ -884,7 +995,7 @@ def run_agent():
 # Run the agent
 # -----------------
 if __name__ == "__main__":
-    print("----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----")
+    print("----- Starting monthly run for NeuroCell Intelligence (Enhanced Money Extraction) -----")
     
     # 1. Run the core agent to get NEW, filtered deals
     df_new_deals = run_agent()
@@ -905,7 +1016,7 @@ if __name__ == "__main__":
 
         subject = f"Exosome Deals — Summary ({len(df_new_deals)} NEW Deals)"
         
-        # Format the body of the email
+        # Format the body of the email with enhanced deal structure info
         body_lines = [
             f"A total of {len(df_new_deals)} new deals/relevant news items were found and added to the cumulative database (attached).",
             f"The database now contains {len(df_database)} unique records.",
@@ -928,6 +1039,10 @@ if __name__ == "__main__":
             amount_str = format_list(row['amounts'])
             if amount_str:
                 summary += f" - Amount: {amount_str}"
+            
+            # 🆕 Add deal structure description if available
+            if row.get('deal_structure') and str(row['deal_structure']).strip():
+                summary += f"\n   💰 Deal Structure: {row['deal_structure']}"
             
             company_str = format_list(row['companies'])
             if company_str:
