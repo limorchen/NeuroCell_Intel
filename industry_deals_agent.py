@@ -107,6 +107,7 @@ EXOSOME_COMPANIES = [
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics"
 ]
 
+
 # ---------------------------------------
 # 🧠 Load NLP models
 # ---------------------------------------
@@ -493,34 +494,40 @@ def normalize_title(title):
 def is_exosome_relevant(text, title, log_check=False):
     combined = (title + " " + text).lower()
 
-    # 1. Spam check
+    # 1. Spam and pure business exclusion filters
+    NON_SCIENCE_TERMS = [
+        "startup", "coworking", "real estate", "hospitality", "marketing",
+        "retail", "construction", "energy project", "banking", "investment firm",
+        "venture capital", "saudi vision 2030", "entrepreneurship", "office space",
+        "mall", "hotel", "infrastructure", "design firm", "architectural",
+        "saudi arabia riyadh", "business hub", "finance minister", "regional expansion"
+    ]
+    if any(term in combined for term in NON_SCIENCE_TERMS):
+        if not log_check:
+            return False
+
+    # 2. Spam check
     if any(term in combined for term in SPAM_TERMS):
         if not log_check:
             return False
 
-    # 2. Core matching
+    # 3. Core matching
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
     core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
 
-    # 3. Relaxed logic — keep items with any exosome hit OR company mention
-    has_exosome_context = (
-        exosome_hits >= 1 or company_match
-    )
-
-    # 4. Strengthen by requiring relevance context if text is long or broad
-    if len(combined) > 300 and not (core_interest_hit or company_match or exosome_hits > 1):
+    # 4. Relevance logic
+    has_exosome_context = (exosome_hits >= 1 or company_match)
+    if len(combined) > 300 and not (core_interest_hit or has_exosome_context):
         return False
 
-    # 5. Enforce overall positive trigger
+    # Require either explicit exosome mention or a known EV company reference
     primary_relevance = has_exosome_context and len(combined) > 80
 
     if log_check:
         return primary_relevance
 
     return primary_relevance
-
-
 # -----------------------------------------------------
 # 📧 Email function
 # -----------------------------------------------------
