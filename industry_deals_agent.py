@@ -608,7 +608,7 @@ def export_to_cumulative_database(df_new_deals, filename):
     if frames:
         combined_df = pd.concat(frames, ignore_index=True)
     else:
-    combined_df = pd.DataFrame()
+        combined_df = pd.DataFrame()
             
     # 5. Deduplication
     # Deduplicate based on a unique key (URL is the best, but 'title' is a good backup)
