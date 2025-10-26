@@ -498,30 +498,28 @@ def is_exosome_relevant(text, title, log_check=False):
         if not log_check:
             return False
 
-    # 2. Core term matching
+    # 2. Core matching
     company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
     exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
     core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
 
-    # 3. Require at least one exosome/EV term and one context term (company or therapeutic)
+    # 3. Relaxed logic — keep items with any exosome hit OR company mention
     has_exosome_context = (
-        exosome_hits > 0 and (company_match or core_interest_hit)
+        exosome_hits >= 1 or company_match
     )
 
-    # 4. General long-form relevance fallback (for debug/info)
-    primary_relevance = (
-        has_exosome_context
-        or (company_match and len(combined) > 100 and not any(t in combined for t in SPAM_TERMS))
-    )
-
-    # 5. Minimum exosome mention safeguard
-    if exosome_hits == 0:
+    # 4. Strengthen by requiring relevance context if text is long or broad
+    if len(combined) > 300 and not (core_interest_hit or company_match or exosome_hits > 1):
         return False
+
+    # 5. Enforce overall positive trigger
+    primary_relevance = has_exosome_context and len(combined) > 80
 
     if log_check:
         return primary_relevance
 
     return primary_relevance
+
 
 # -----------------------------------------------------
 # 📧 Email function
