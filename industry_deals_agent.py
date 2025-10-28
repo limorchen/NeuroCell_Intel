@@ -105,7 +105,8 @@ EXOSOME_COMPANIES = [
     "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs",
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics", "phoenestra gmbh", 
-    "exosla therapeutics", "tiny cargo company", "rion inc.", "exosomica", "exogenus therapeutics", 
+    "exosla therapeutics", "tiny cargo company", "rion inc.", "exosomica", "exogenus therapeutics", "direct biologics", "ev therapeutics", 
+    "nano24",
 ]
 
 
