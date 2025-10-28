@@ -71,7 +71,7 @@ DAYS_BACK_PUBMED = int(os.getenv("DAYS_BACK_PUBMED", 7))
 DAYS_BACK_TRIALS = int(os.getenv("DAYS_BACK_TRIALS", 7))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
 SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD", 0.28))
-SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.27))
+SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.26))
 # FIX: Ensure SEMANTIC_SEARCH_TERMS is an array of non-empty strings.
 raw_terms = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
