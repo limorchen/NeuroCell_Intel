@@ -458,6 +458,7 @@ def fetch_clinical_trials_fixed(
     logger.info(f"Date cutoff: {date_cutoff}")
 
     # Try different search strategies
+    
     search_strategies = []
     
     # Strategy 1: Your original terms
@@ -514,123 +515,118 @@ def fetch_clinical_trials_fixed(
             if key != 'name':
                 params[key] = value
         
-        # Add date filter (try with and without)
+        # Only add date filter, no fallback without date filter
         params_with_date = params.copy()
         params_with_date['filter.advanced'] = f'AREA[LastUpdatePostDate]RANGE[{date_cutoff},MAX]'
         
-        for date_filter_name, current_params in [('with date filter', params_with_date), ('without date filter', params)]:
-            logger.info(f"  Trying {date_filter_name}")
-            logger.debug(f"  Request params: {current_params}")
-            
-            try:
-                response = requests.get(base_url, params=current_params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
-
-                studies = data.get('studies', [])
-                total_count = data.get('totalCount', 0)
-                
-                logger.info(f"  API Response: {len(studies)} studies returned, totalCount: {total_count}")
-                
-                if studies:
-                    logger.info(f"SUCCESS: Found {len(studies)} studies with {strategy_params['name']} ({date_filter_name})")
-                    
-                    # Process the studies
-                    for study in studies:
-                        try:
-                            protocol_section = study.get('protocolSection', {})
-                            identification = protocol_section.get('identificationModule', {})
-                            nct_id = identification.get('nctId', '')
-                            title = identification.get('briefTitle', '')
-
-                            # DEBUGGING: Check relevance
-                            description = protocol_section.get('descriptionModule', {})
-                            summary = description.get('briefSummary', '')
-                            detailed_description = description.get('detailedDescription', '') or summary
-                            
-                            # Check for exosome/EV terms
-                            all_text = (title + " " + summary + " " + detailed_description).lower()
-                            has_exosome = any(term in all_text for term in ['exosome', 'extracellular vesicle', 'ev', 'microvesicle'])
-                            has_neuro = any(term in all_text for term in ['neuro', 'neural', 'nerve', 'cns', 'spinal', 'brain'])
-                            
-                            logger.debug(f"  Study {nct_id}: exosome={has_exosome}, neuro={has_neuro}")
-                            logger.debug(f"    Title: {title[:100]}...")
-
-                            status_module = protocol_section.get('statusModule', {})
-                            status = status_module.get('overallStatus', '')
-                            start_date = status_module.get('startDateStruct', {}).get('date', '')
-                            completion_date = status_module.get('completionDateStruct', {}).get('date', '')
-
-                            design = protocol_section.get('designModule', {})
-                            study_type = design.get('studyType', '')
-                            enrollment = design.get('enrollmentInfo', {}).get('count', '')
-
-                            conditions_module = protocol_section.get('conditionsModule', {})
-                            conditions_list = conditions_module.get('conditions', [])
-
-                            interventions_module = protocol_section.get('armsInterventionsModule', {})
-                            interventions_list = [i.get('name', '') for i in interventions_module.get('interventions', [])]
-
-                            phases = design.get('phases', [])
-                            phases_list = [p for p in phases if p]
-
-                            sponsor_module = protocol_section.get('sponsorCollaboratorsModule', {})
-                            sponsor_name = sponsor_module.get('leadSponsor', {}).get('name', '')
-
-                            eligibility = protocol_section.get('eligibilityModule', {})
-                            age_min = eligibility.get('minimumAge', '')
-                            age_max = eligibility.get('maximumAge', '')
-                            age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
-
-                            url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
-                            spinal_hit = 1 if contains_spinal(title, summary, detailed_description) else 0
-
-                            search_results.append({
-                                "nct_id": nct_id,
-                                "title": title,
-                                "detailed_description": detailed_description,
-                                "conditions": conditions_list,
-                                "interventions": interventions_list,
-                                "phases": phases_list,
-                                "study_type": study_type,
-                                "status": status,
-                                "start_date": start_date,
-                                "completion_date": completion_date,
-                                "sponsor": sponsor_name,
-                                "enrollment": str(enrollment),
-                                "age_range": age_range,
-                                "url": url_study,
-                                "spinal_hit": spinal_hit,
-                                "semantic_score": None,
-                                "search_strategy": strategy_params['name']  # Add for debugging
-                            })
-                        except Exception as e:
-                            logger.error(f"Error parsing clinical trial: {e}")
-                            continue
-
-                    # If we found results, break out of the strategy loop
-                    if search_results:
-                        break
-                        
-                else:
-                    logger.info(f"  No studies found with {strategy_params['name']} ({date_filter_name})")
-                    
-            except requests.RequestException as e:
-                logger.error(f"  API request failed for {strategy_params['name']} ({date_filter_name}): {e}")
-                continue
+        logger.info("  Trying with date filter")
+        logger.debug(f"  Request params: {params_with_date}")
         
-        # If we found results, break out of the strategy loop
+        try:
+            response = requests.get(base_url, params=params_with_date, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            studies = data.get('studies', [])
+            total_count = data.get('totalCount', 0)
+            
+            logger.info(f"  API Response: {len(studies)} studies returned, totalCount: {total_count}")
+            
+            if studies:
+                logger.info(f"SUCCESS: Found {len(studies)} studies with {strategy_params['name']} (with date filter)")
+                
+                # Process the studies
+                for study in studies:
+                    try:
+                        protocol_section = study.get('protocolSection', {})
+                        identification = protocol_section.get('identificationModule', {})
+                        nct_id = identification.get('nctId', '')
+                        title = identification.get('briefTitle', '')
+
+                        description = protocol_section.get('descriptionModule', {})
+                        summary = description.get('briefSummary', '')
+                        detailed_description = description.get('detailedDescription', '') or summary
+                        
+                        all_text = (title + " " + summary + " " + detailed_description).lower()
+                        has_exosome = any(term in all_text for term in ['exosome', 'extracellular vesicle', 'ev', 'microvesicle'])
+                        has_neuro = any(term in all_text for term in ['neuro', 'neural', 'nerve', 'cns', 'spinal', 'brain'])
+                        
+                        logger.debug(f"  Study {nct_id}: exosome={has_exosome}, neuro={has_neuro}")
+                        logger.debug(f"    Title: {title[:100]}...")
+
+                        status_module = protocol_section.get('statusModule', {})
+                        status = status_module.get('overallStatus', '')
+                        start_date = status_module.get('startDateStruct', {}).get('date', '')
+                        completion_date = status_module.get('completionDateStruct', {}).get('date', '')
+
+                        design = protocol_section.get('designModule', {})
+                        study_type = design.get('studyType', '')
+                        enrollment = design.get('enrollmentInfo', {}).get('count', '')
+
+                        conditions_module = protocol_section.get('conditionsModule', {})
+                        conditions_list = conditions_module.get('conditions', [])
+
+                        interventions_module = protocol_section.get('armsInterventionsModule', {})
+                        interventions_list = [i.get('name', '') for i in interventions_module.get('interventions', [])]
+
+                        phases = design.get('phases', [])
+                        phases_list = [p for p in phases if p]
+
+                        sponsor_module = protocol_section.get('sponsorCollaboratorsModule', {})
+                        sponsor_name = sponsor_module.get('leadSponsor', {}).get('name', '')
+
+                        eligibility = protocol_section.get('eligibilityModule', {})
+                        age_min = eligibility.get('minimumAge', '')
+                        age_max = eligibility.get('maximumAge', '')
+                        age_range = f"{age_min} - {age_max}" if age_min or age_max else "N/A"
+
+                        url_study = f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else ""
+                        spinal_hit = 1 if contains_spinal(title, summary, detailed_description) else 0
+
+                        search_results.append({
+                            "nct_id": nct_id,
+                            "title": title,
+                            "detailed_description": detailed_description,
+                            "conditions": conditions_list,
+                            "interventions": interventions_list,
+                            "phases": phases_list,
+                            "study_type": study_type,
+                            "status": status,
+                            "start_date": start_date,
+                            "completion_date": completion_date,
+                            "sponsor": sponsor_name,
+                            "enrollment": str(enrollment),
+                            "age_range": age_range,
+                            "url": url_study,
+                            "spinal_hit": spinal_hit,
+                            "semantic_score": None,
+                            "search_strategy": strategy_params['name']
+                        })
+                    except Exception as e:
+                        logger.error(f"Error parsing clinical trial: {e}")
+                        continue
+                
+                if search_results:
+                    break
+
+            else:
+                logger.info(f"  No studies found with {strategy_params['name']} (with date filter)")
+
+        except requests.RequestException as e:
+            logger.error(f"  API request failed for {strategy_params['name']} (with date filter): {e}")
+            continue
+
         if search_results:
             break
 
     logger.info(f"Final result: Found {len(search_results)} clinical trials")
     
     if search_results:
-        # Show which strategy worked
         strategies_used = set(result.get('search_strategy', 'Unknown') for result in search_results)
         logger.info(f"Successful strategies: {strategies_used}")
     
     return search_results[:max_records]
+
 
 
 
