@@ -28,6 +28,9 @@ jobs:
         echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
         echo "EMAIL_RECIPIENT=${{ secrets.EMAIL_RECIPIENT }}" >> .env
 
+    - name: List files for debugging
+      run: ls -R  
+
     - name: Run stock monitor script
       run: python NRX_Stock_Report.py
 
