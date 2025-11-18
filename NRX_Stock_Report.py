@@ -31,14 +31,15 @@ def fetch_data(ticker, days=14):
 def process_symbol(symbol, ticker):
     df = fetch_data(ticker)
     if df.empty:
-        print(f"No data returned for {symbol} ({ticker})")
+        print(f"No data returned for {symbol} ({ticker}). Skipping.")
         return None
    
     if 'Close' not in df.columns:
-        print(f"'Close' column not found for {symbol} ({ticker})")
+        print(f"'Close' column missing for {symbol} ({ticker}). Columns found: {df.columns.tolist()}")
         return None    
         
     df = df.dropna(subset=['Close'])
+    
     df['Daily Change %'] = df['Close'].pct_change() * 100
     df['Weekly Change %'] = df['Close'].pct_change(periods=5) * 100
     latest = df.iloc[-1]
@@ -69,6 +70,8 @@ def main():
     parts = []
     for symbol, ticker in TICKERS.items():
         result = process_symbol(symbol, ticker)
+        if result is None:
+            continue
         parts.append(result)
 
     # Make simple HTML report
