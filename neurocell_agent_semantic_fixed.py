@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-neurocell_agent_semantic_fixed.py
+neurocell_agent_semantic_improved.py
 
 This script automates the search for relevant scientific articles and clinical trials
 using a combination of keyword and semantic search. It fetches data from PubMed and
 ClinicalTrials.gov, filters it for relevance, stores it in an SQLite database,
 exports it to CSV files, and sends an email report.
+
+IMPROVEMENTS:
+- Stricter exosome filter with regex word boundaries
+- Higher semantic threshold for clinical trials (0.45)
+- Combined relevance scoring (semantic + keyword hits)
+- More specific semantic search terms
+- Better handling of empty search parameters
 """
 
 import os
@@ -15,6 +22,7 @@ import sqlite3
 import logging
 import requests
 import smtplib
+import re
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -22,23 +30,18 @@ from email.mime.base import MIMEBase
 from email import encoders
 from typing import List, Dict, Any
 from Bio import Entrez
-from dotenv import load_dotenv # Used to load secrets/config locally or in CI/CD
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer, util
 import torch
 
-# Load environment variables.
-# FIX: The GitHub Action creates a file named '.env'. This command loads either '.env' (for CI/CD)
-# or '.env_semantic' (for local testing), prioritizing the standard '.env' if present.
+# Load environment variables
 if os.path.exists(".env"):
     load_dotenv(".env")
 elif os.path.exists(".env_semantic"):
     load_dotenv(".env_semantic")
-else:
-    # If neither is found, variables will default to hardcoded values or fail.
-    pass
 
 # -------------------------
-# Configuration (CRITICAL FIXES HERE)
+# Configuration
 # -------------------------
 DB_FILE = os.getenv("DB_FILE", "neurocell_database_semantic.db")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
@@ -48,13 +51,12 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "chen.limor@gmail.com")
 
-# Retrieve search terms from environment variables. Use robust defaults.
-PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND Spinal")
-CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles")
-CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR optic nerve")
+# Search terms with better defaults
+PUBMED_TERM = os.getenv("PUBMED_TERM", "exosomes AND (spinal cord OR neural OR CNS OR optic nerve)")
+CLINICALTRIALS_INTERVENTION = os.getenv("CLINICALTRIALS_INTERVENTION", "exosomes OR extracellular vesicles OR exosome therapy")
+CLINICALTRIALS_CONDITION = os.getenv("CLINICALTRIALS_CONDITION", "spinal cord injury OR optic nerve injury OR central nervous system")
 
-# FIX: Construct the combined search expression dynamically, ensuring terms are not empty.
-# This prevents malformed queries like 'intr:() AND cond:()' when a secret is empty.
+# Construct clinical trials search expression
 search_parts = []
 if CLINICALTRIALS_INTERVENTION:
     search_parts.append(f"intr:({CLINICALTRIALS_INTERVENTION})")
@@ -62,20 +64,29 @@ if CLINICALTRIALS_CONDITION:
     search_parts.append(f"cond:({CLINICALTRIALS_CONDITION})")
 
 CLINICALTRIALS_SEARCH_EXPRESSION = " AND ".join(search_parts) if search_parts else "nervous system regeneration"
-if not CLINICALTRIALS_SEARCH_EXPRESSION:
-    # Fallback to a very general term if all secrets are empty
-    CLINICALTRIALS_SEARCH_EXPRESSION = "nervous system regeneration"
 
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK_PUBMED = int(os.getenv("DAYS_BACK_PUBMED", 7))
 DAYS_BACK_TRIALS = int(os.getenv("DAYS_BACK_TRIALS", 7))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD", 0.29))
-SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.35))
-# FIX: Ensure SEMANTIC_SEARCH_TERMS is an array of non-empty strings.
+
+# IMPROVED: Raised threshold for trials to match PubMed
+SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD_PUBMED", 0.45))
+SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.45))  # Changed from 0.30
+
+# IMPROVED: More specific semantic search terms
 raw_terms = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
-    "exosomes spinal cord injury, extracellular vesicles neural repair, targeted neurological therapy, brain injury exosome"
+    "exosome therapy spinal cord injury, "
+    "extracellular vesicles neural regeneration, "
+    "exosomal treatment CNS damage, "
+    "mesenchymal stem cell exosomes spinal injury, "
+    "exosome-mediated nerve repair, "
+    "therapeutic exosomes optic nerve, "
+    "exosome delivery central nervous system, "
+    "neuroprotective exosomes brain injury, "
+    "exosome spinal cord repair, "
+    "extracellular vesicle neurological therapy"
 ).split(",")
 SEMANTIC_SEARCH_TERMS = [s.strip() for s in raw_terms if s.strip()]
 
@@ -87,7 +98,7 @@ PUBMED_FULL_CSV = "all_pubmed_semantic_database.csv"
 TRIALS_FULL_CSV = "all_trials_semantic_database.csv"
 
 # -------------------------
-# Logging (No change)
+# Logging
 # -------------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -105,13 +116,12 @@ except Exception as e:
     model = None
 
 # -------------------------
-# Utils (No change)
+# Utils
 # -------------------------
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def contains_spinal(*texts: List[str]) -> bool:
-    # A simple keyword hit is retained for easy database filtering.
     for t in texts:
         if not t:
             continue
@@ -121,7 +131,7 @@ def contains_spinal(*texts: List[str]) -> bool:
 
 def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: float) -> List[Dict[str, Any]]:
     if not model:
-        logger.warning("Semantic model not loaded — skipping semantic ing.")
+        logger.warning("Semantic model not loaded — skipping semantic filtering.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
@@ -130,9 +140,8 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
         logger.info("No documents to filter")
         return []
 
-    # FIX: Check if terms are empty after loading from environment (critical for 0.0 scores)
     if not terms:
-        logger.warning("No semantic search terms provided from environment/secrets. Scores will be 0.0.")
+        logger.warning("No semantic search terms provided. Scores will be 0.0.")
         for d in docs:
             d['semantic_score'] = 0.0
         return docs
@@ -151,7 +160,6 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
         title = doc.get('title') or ''
         abstract = doc.get('abstract') or doc.get('detailed_description') or '' 
         
-        # Combine title and abstract/description for a rich text body
         doc_text = (title + " " + abstract).strip()
         
         if not doc_text:
@@ -182,15 +190,12 @@ def semantic_filter(docs: List[Dict[str, Any]], terms: List[str], threshold: flo
     logger.info(f"Semantic filtering: {len(filtered_docs)}/{len(docs)} documents passed threshold {threshold}")
     return filtered_docs
 
-# Mandatory exosomes filter 
-
+# IMPROVED: Stricter mandatory exosome filter with regex
 def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Hard filter to ensure documents contain exosome/EV terminology
+    Hard filter to ensure documents contain exosome/EV terminology with word boundaries
+    to avoid false matches like "events" matching "ev"
     """
-    import re
-    
-    # Use word boundaries to avoid false matches like "events" matching "ev"
     exosome_patterns = [
         r'\bexosome\b',
         r'\bexosomes\b', 
@@ -201,7 +206,9 @@ def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         r'\bmicrovesicles\b',
         r'\bEVs\b',  # Capital EVs is more specific
         r'\bexosome-derived\b',
-        r'\bexosome therapy\b'
+        r'\bexosome therapy\b',
+        r'\bexosome-mediated\b',
+        r'\btherapeutic exosome\b'
     ]
     
     filtered_docs = []
@@ -210,7 +217,8 @@ def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         abstract = (doc.get('abstract') or doc.get('detailed_description') or '').lower()
         full_text = title + " " + abstract
         
-        if any(term in full_text for term in exosome_terms):
+        # Check if any pattern matches
+        if any(re.search(pattern, full_text, re.IGNORECASE) for pattern in exosome_patterns):
             filtered_docs.append(doc)
         else:
             logger.debug(f"Filtered out (no exosome terms): {doc.get('title', '')[:50]}...")
@@ -218,8 +226,39 @@ def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     logger.info(f"Mandatory exosome filter: {len(filtered_docs)}/{len(docs)} documents contain exosome/EV terms")
     return filtered_docs
 
+# NEW: Combined relevance scoring
+def calculate_relevance_score(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Calculate a combined relevance score based on semantic score + keyword hits
+    """
+    cns_terms = ['spinal cord', 'spinal', 'sci', 'central nervous system', 'cns', 
+                 'optic nerve', 'brain injury', 'neural', 'neurological', 'nerve injury']
+    exo_terms = ['exosome', 'extracellular vesicle', 'exosomal', 'microvesicle']
+    
+    for doc in docs:
+        title = (doc.get('title') or '').lower()
+        abstract = (doc.get('abstract') or doc.get('detailed_description') or '').lower()
+        full_text = title + " " + abstract
+        
+        # Count keyword hits
+        cns_hits = sum(1 for term in cns_terms if term in full_text)
+        exo_hits = sum(1 for term in exo_terms if term in full_text)
+        
+        # Boost semantic score if both categories are present
+        semantic_score = doc.get('semantic_score', 0)
+        relevance_boost = 0.1 * min(cns_hits, 3) + 0.1 * min(exo_hits, 2)
+        
+        doc['combined_score'] = round(semantic_score + relevance_boost, 4)
+        doc['cns_hits'] = cns_hits
+        doc['exo_hits'] = exo_hits
+        
+        logger.debug(f"Doc: '{doc.get('title', '')[:50]}' - Semantic: {semantic_score:.4f}, "
+                    f"CNS hits: {cns_hits}, Exo hits: {exo_hits}, Combined: {doc['combined_score']:.4f}")
+    
+    return docs
+
 # -------------------------
-# DB init (No change)
+# DB init
 # -------------------------
 def init_db(path: str = DB_FILE):
     conn = sqlite3.connect(path)
@@ -236,7 +275,8 @@ def init_db(path: str = DB_FILE):
         url TEXT,
         spinal_hit INTEGER,
         first_seen TEXT,
-        semantic_score REAL
+        semantic_score REAL,
+        combined_score REAL
     );
     """)
     c.execute("""
@@ -257,27 +297,21 @@ def init_db(path: str = DB_FILE):
         url TEXT,
         spinal_hit INTEGER,
         first_seen TEXT,
-        semantic_score REAL
+        semantic_score REAL,
+        combined_score REAL
     );
     """)
     conn.commit()
     conn.close()
 
 # -------------------------
-# PubMed fetcher (No change)
+# PubMed fetcher
 # -------------------------
 def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int = DAYS_BACK_PUBMED) -> List[Dict[str, Any]]:
-    """
-    Fixed PubMed search with better query construction and debugging
-    """
-    # ISSUE 1: Your search might be too broad or malformed
-    # Let's add debugging and fix the query structure
-    
     logger.info(f"PubMed search term (RAW): '{term}'")
     logger.info(f"Parameters: days_back={days_back}, retmax={max_records}")
     
     try:
-        # DEBUGGING: Let's see what the actual query looks like
         logger.info("Attempting PubMed esearch...")
         
         search_handle = Entrez.esearch(
@@ -286,7 +320,7 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
             retmax=max_records, 
             sort="date",
             reldate=days_back,
-            usehistory="y"  # Add this for better search handling
+            usehistory="y"
         )
         search_record = Entrez.read(search_handle)
         search_handle.close()
@@ -294,12 +328,10 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
         ids = search_record.get("IdList", [])
         logger.info(f"PubMed esearch returned {len(ids)} article IDs")
         
-        # DEBUGGING: Log the first few IDs to verify
         if ids:
             logger.info(f"First 5 PMIDs: {ids[:5]}")
         else:
             logger.warning("No PubMed articles found - check your search term syntax")
-            # Let's try a simpler version of your search term
             simple_term = "exosomes AND (nerve OR neural OR CNS)"
             logger.info(f"Trying simplified search: {simple_term}")
             
@@ -320,7 +352,7 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
 
         time.sleep(RATE_LIMIT_DELAY)
         
-        # Fetch details in smaller batches to avoid timeouts
+        # Fetch details in smaller batches
         batch_size = 20
         all_results = []
         
@@ -346,23 +378,19 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
                     
                     title = str(art.get("ArticleTitle", "")) or ""
                     
-                    # Better abstract extraction
                     abstract_list = art.get("Abstract", {}).get("AbstractText", [])
                     if isinstance(abstract_list, list):
                         abstract = " ".join([str(a) for a in abstract_list])
                     else:
                         abstract = str(abstract_list) if abstract_list else ""
                     
-                    # DEBUGGING: Log what we found
                     logger.debug(f"Article {i+j+1}: PMID={pmid}")
                     logger.debug(f"  Title: {title[:100]}...")
                     logger.debug(f"  Abstract length: {len(abstract)}")
                     
-                    # Check if this article actually matches our terms
                     title_lower = title.lower()
                     abstract_lower = abstract.lower()
                     
-                    # Look for our key terms
                     has_exosome = any(term in title_lower or term in abstract_lower 
                                     for term in ['exosome', 'extracellular vesicle', 'ev'])
                     has_neuro = any(term in title_lower or term in abstract_lower 
@@ -374,7 +402,6 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
                     
                     logger.debug(f"  Relevance check: exosome={has_exosome}, neuro={has_neuro}, score={relevance_score}")
                     
-                    # Extract other fields...
                     authors = []
                     author_list = art.get("AuthorList", [])
                     if isinstance(author_list, list):
@@ -417,7 +444,7 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
                         "url": url,
                         "spinal_hit": spinal,
                         "semantic_score": None,
-                        "relevance_score": relevance_score  # Add this for debugging
+                        "relevance_score": relevance_score
                     }
                     
                     batch_results.append(result)
@@ -427,11 +454,10 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
                     continue
             
             all_results.extend(batch_results)
-            time.sleep(RATE_LIMIT_DELAY)  # Rate limit between batches
+            time.sleep(RATE_LIMIT_DELAY)
         
         logger.info(f"Successfully parsed {len(all_results)} PubMed articles")
         
-        # DEBUGGING: Show relevance distribution
         relevance_dist = {}
         for result in all_results:
             score = result.get('relevance_score', 0)
@@ -445,10 +471,8 @@ def fetch_pubmed_fixed(term: str, max_records: int = MAX_RECORDS, days_back: int
         logger.exception(f"PubMed fetch error: {e}")
         return []
 
-
-
 # -------------------------
-# ClinicalTrials fetcher (No change needed since API expression is corrected above)
+# ClinicalTrials fetcher
 # -------------------------
 def fetch_clinical_trials_fixed(
     search_intervention: str = "exosomes",
@@ -456,24 +480,17 @@ def fetch_clinical_trials_fixed(
     days_back: int = DAYS_BACK_TRIALS,
     max_records: int = MAX_RECORDS
 ) -> List[Dict[str, Any]]:
-    """
-    Fixed Clinical Trials search with better debugging and fallback strategies
-    """
     logger.info(f"ClinicalTrials.gov search - intervention: '{search_intervention}', condition: '{search_condition}'")
     logger.info(f"Days back: {days_back}, Max records: {max_records}")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     search_results = []
-    page_token = None
 
     date_cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     logger.info(f"Date cutoff: {date_cutoff}")
 
-    # Try different search strategies
-    
     search_strategies = []
     
-    # Strategy 1: Your original terms
     if search_intervention and search_condition:
         search_strategies.append({
             'query.intr': search_intervention,
@@ -481,21 +498,18 @@ def fetch_clinical_trials_fixed(
             'name': 'Original terms'
         })
     
-    # Strategy 2: Just intervention
     if search_intervention:
         search_strategies.append({
             'query.intr': search_intervention,
             'name': 'Intervention only'
         })
     
-    # Strategy 3: Just condition
     if search_condition:
         search_strategies.append({
             'query.cond': search_condition,
             'name': 'Condition only'
         })
     
-    # Strategy 4: Combined search
     if search_intervention or search_condition:
         combined_term = []
         if search_intervention:
@@ -508,7 +522,6 @@ def fetch_clinical_trials_fixed(
             'name': 'Combined term search'
         })
     
-    # Strategy 5: Fallback broad search
     search_strategies.append({
         'query.term': 'exosomes OR "extracellular vesicles"',
         'name': 'Fallback broad search'
@@ -522,12 +535,10 @@ def fetch_clinical_trials_fixed(
             'format': 'json',
         }
         
-        # Add the strategy-specific parameters
         for key, value in strategy_params.items():
             if key != 'name':
                 params[key] = value
         
-        # Only add date filter, no fallback without date filter
         params_with_date = params.copy()
         params_with_date['filter.advanced'] = f'AREA[LastUpdatePostDate]RANGE[{date_cutoff},MAX]'
         
@@ -547,7 +558,6 @@ def fetch_clinical_trials_fixed(
             if studies:
                 logger.info(f"SUCCESS: Found {len(studies)} studies with {strategy_params['name']} (with date filter)")
                 
-                # Process the studies
                 for study in studies:
                     try:
                         protocol_section = study.get('protocolSection', {})
@@ -639,11 +649,8 @@ def fetch_clinical_trials_fixed(
     
     return search_results[:max_records]
 
-
-
-
 # -------------------------
-# DB upsert helpers (No change)
+# DB upsert helpers
 # -------------------------
 def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not articles:
@@ -657,16 +664,15 @@ def upsert_pubmed(db: str, articles: List[Dict[str, Any]]) -> List[Dict[str, Any
         try:
             cur.execute("""
                 INSERT INTO pubmed_articles
-                (pmid, title, abstract, authors, publication_date, journal, doi, url, spinal_hit, first_seen, semantic_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (pmid, title, abstract, authors, publication_date, journal, doi, url, spinal_hit, first_seen, semantic_score, combined_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 a["pmid"], a["title"], a["abstract"], a["authors"], 
                 a["publication_date"], a["journal"], a["doi"], a["url"], 
-                a["spinal_hit"], now_ts(), a.get("semantic_score")
+                a["spinal_hit"], now_ts(), a.get("semantic_score"), a.get("combined_score")
             ))
             new_items.append(a)
         except sqlite3.IntegrityError:
-            # Article already exists
             continue
         except Exception as e:
             logger.error(f"Error inserting article {a.get('pmid', 'unknown')}: {e}")
@@ -689,8 +695,8 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         try:
             cur.execute("""
                 INSERT INTO clinical_trials
-                (nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date, completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen, semantic_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (nct_id, title, detailed_description, conditions, interventions, phases, study_type, status, start_date, completion_date, sponsor, enrollment, age_range, url, spinal_hit, first_seen, semantic_score, combined_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 t["nct_id"], t["title"], t["detailed_description"], 
                 "; ".join(t.get("conditions", [])),
@@ -700,11 +706,10 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 t.get("start_date", ""), t.get("completion_date", ""),
                 t.get("sponsor", ""), str(t.get("enrollment", "")), 
                 t.get("age_range", ""), t.get("url", ""), 
-                t.get("spinal_hit", 0), now_ts(), t.get("semantic_score")
+                t.get("spinal_hit", 0), now_ts(), t.get("semantic_score"), t.get("combined_score")
             ))
             new_items.append(t)
         except sqlite3.IntegrityError:
-            # Trial already exists
             continue
         except Exception as e:
             logger.error(f"Error inserting trial {t.get('nct_id', 'unknown')}: {e}")
@@ -716,7 +721,7 @@ def upsert_trials(db: str, trials: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return new_items
 
 # -------------------------
-# CSV helpers (No change)
+# CSV helpers
 # -------------------------
 def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV):
     if not rows: 
@@ -724,7 +729,7 @@ def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV)
         
     file_exists = os.path.isfile(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
-        fieldnames = ["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score"]
+        fieldnames = ["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score","combined_score"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
@@ -740,7 +745,8 @@ def append_pubmed_csv(rows: List[Dict[str, Any]], path: str = PUBMED_WEEKLY_CSV)
                 "url": r["url"],
                 "spinal_hit": "YES" if r["spinal_hit"] else "NO",
                 "first_seen": now_ts(),
-                "semantic_score": r.get("semantic_score", "")
+                "semantic_score": r.get("semantic_score", ""),
+                "combined_score": r.get("combined_score", "")
             })
 
 def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV):
@@ -749,7 +755,7 @@ def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV)
         
     file_exists = os.path.isfile(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
-        fieldnames = ["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score"]
+        fieldnames = ["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score","combined_score"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
@@ -771,39 +777,40 @@ def append_trials_csv(rows: List[Dict[str, Any]], path: str = TRIALS_WEEKLY_CSV)
                 "url": r.get("url",""),
                 "spinal_hit": "YES" if r["spinal_hit"] else "NO",
                 "first_seen": now_ts(),
-                "semantic_score": r.get("semantic_score", "")
+                "semantic_score": r.get("semantic_score", ""),
+                "combined_score": r.get("combined_score", "")
             })
 
 # -------------------------
-# Export full CSVs (No change)
+# Export full CSVs
 # -------------------------
 def export_full_csvs(db: str = DB_FILE):
     conn = sqlite3.connect(db)
     cur = conn.cursor()
     
     # PubMed
-    cur.execute("SELECT pmid,title,abstract,authors,publication_date,journal,doi,url,spinal_hit,first_seen,semantic_score FROM pubmed_articles")
+    cur.execute("SELECT pmid,title,abstract,authors,publication_date,journal,doi,url,spinal_hit,first_seen,semantic_score,combined_score FROM pubmed_articles")
     rows = cur.fetchall()
     with open(PUBMED_FULL_CSV,"w",newline="",encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score"])
+        writer.writerow(["pmid","title","abstract","authors","publication_date","journal","doi","url","spinal_hit","first_seen","semantic_score","combined_score"])
         for r in rows:
-            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],"YES" if r[8] else "NO",r[9], r[10]])
+            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],"YES" if r[8] else "NO",r[9], r[10], r[11]])
     
     # Trials
-    cur.execute("SELECT nct_id,title,detailed_description,conditions,interventions,phases,study_type,status,start_date,completion_date,sponsor,enrollment,age_range,url,spinal_hit,first_seen,semantic_score FROM clinical_trials")
+    cur.execute("SELECT nct_id,title,detailed_description,conditions,interventions,phases,study_type,status,start_date,completion_date,sponsor,enrollment,age_range,url,spinal_hit,first_seen,semantic_score,combined_score FROM clinical_trials")
     rows = cur.fetchall()
     with open(TRIALS_FULL_CSV,"w",newline="",encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score"])
+        writer.writerow(["nct_id","title","detailed_description","conditions","interventions","phases","study_type","status","start_date","completion_date","sponsor","enrollment","age_range","url","spinal_hit","first_seen","semantic_score","combined_score"])
         for r in rows:
-            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11],r[12],r[13],"YES" if r[14] else "NO",r[15], r[16]])
+            writer.writerow([r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11],r[12],r[13],"YES" if r[14] else "NO",r[15], r[16], r[17]])
     
     conn.close()
     logger.info("Exported full database to CSV files")
 
 # -------------------------
-# Email function (FIXED)
+# Email function
 # -------------------------
 def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]], stats: Dict[str,int], pubmed_term: str, trials_intervention: str, trials_condition: str) -> bool:
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD):
@@ -816,7 +823,6 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"CNS-Exosomes Weekly Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}"
     
-    # Display ClinicalTrials search terms clearly
     trials_terms_display = f"{trials_intervention} (Intervention)"
     if trials_condition:
         trials_terms_display += f" AND {trials_condition} (Condition)"
@@ -828,15 +834,21 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
     html += f"<p>New Clinical Trials this week: {stats.get('new_trials',0)}</p>"
     
     if new_pubmed:
-        html += "<h3>New PubMed Articles (with Semantic Scores)</h3><ul>"
-        for a in sorted(new_pubmed, key=lambda x: x.get('semantic_score', 0), reverse=True):
-            html += f"<li><a href='{a['url']}'>{a['title']}</a> (Score: {a.get('semantic_score', 'N/A')})</li>"
+        html += "<h3>New PubMed Articles (with Combined Scores)</h3><ul>"
+        for a in sorted(new_pubmed, key=lambda x: x.get('combined_score', 0), reverse=True):
+            sem_score = a.get('semantic_score', 'N/A')
+            comb_score = a.get('combined_score', 'N/A')
+            html += f"<li><a href='{a['url']}'>{a['title']}</a><br>"
+            html += f"<small>Semantic: {sem_score} | Combined: {comb_score}</small></li>"
         html += "</ul>"
         
     if new_trials:
-        html += "<h3>New Clinical Trials (with Semantic Scores)</h3><ul>"
-        for t in sorted(new_trials, key=lambda x: x.get('semantic_score', 0), reverse=True):
-            html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t.get('status','')}) (Score: {t.get('semantic_score', 'N/A')})</li>"
+        html += "<h3>New Clinical Trials (with Combined Scores)</h3><ul>"
+        for t in sorted(new_trials, key=lambda x: x.get('combined_score', 0), reverse=True):
+            sem_score = t.get('semantic_score', 'N/A')
+            comb_score = t.get('combined_score', 'N/A')
+            html += f"<li><a href='{t['url']}'>{t['title']}</a> ({t.get('status','')})<br>"
+            html += f"<small>Semantic: {sem_score} | Combined: {comb_score}</small></li>"
         html += "</ul>"
     
     part1 = MIMEText(html, "html")
@@ -865,16 +877,17 @@ def send_email(new_pubmed: List[Dict[str,Any]], new_trials: List[Dict[str,Any]],
         return False
 
 # -------------------------
-# Main weekly update (No change)
+# Main weekly update
 # -------------------------
 def weekly_update():
     logger.info("=== Starting Weekly Update ===")
     init_db()
 
-    # Step 1: Fetch data using improved searches
+    # Step 1: Fetch data
     logger.info("Step 1: Fetching PubMed articles...")
-    # NOTE: fetch_pubmed will now use the revised PUBMED_TERM from config
     pubmed_articles = fetch_pubmed_fixed(PUBMED_TERM, MAX_RECORDS * 2, DAYS_BACK_PUBMED)
+    
+    logger.info("Step 2: Fetching Clinical Trials...")
     trials = fetch_clinical_trials_fixed(
        search_intervention=CLINICALTRIALS_INTERVENTION,
        search_condition=CLINICALTRIALS_CONDITION,
@@ -882,7 +895,7 @@ def weekly_update():
        max_records=MAX_RECORDS * 2
     )
 
-    # Step 2: Apply mandatory exosome filter first
+    # Step 2: Apply mandatory exosome filter
     logger.info("Step 3: Applying mandatory exosome/EV filter to PubMed articles...")
     exosome_pubmed = mandatory_exosome_filter(pubmed_articles)
 
@@ -896,29 +909,36 @@ def weekly_update():
     logger.info("Step 6: Applying semantic filtering to Clinical Trials...")
     relevant_trials = semantic_filter(exosome_trials, SEMANTIC_SEARCH_TERMS, SEMANTIC_THRESHOLD_TRIALS)
     
-    # Step 3: Take the top N results and sort by semantic score
-    logger.info("Step 5: Sorting and limiting results...")
-    final_pubmed = sorted(relevant_pubmed, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
-    final_trials = sorted(relevant_trials, key=lambda x: x.get('semantic_score', 0), reverse=True)[:MAX_RECORDS]
+    # Step 4: Calculate combined relevance scores
+    logger.info("Step 7: Calculating combined relevance scores for PubMed...")
+    relevant_pubmed = calculate_relevance_score(relevant_pubmed)
+    
+    logger.info("Step 8: Calculating combined relevance scores for Clinical Trials...")
+    relevant_trials = calculate_relevance_score(relevant_trials)
+    
+    # Step 5: Sort and limit by combined score
+    logger.info("Step 9: Sorting and limiting results by combined score...")
+    final_pubmed = sorted(relevant_pubmed, key=lambda x: x.get('combined_score', 0), reverse=True)[:MAX_RECORDS]
+    final_trials = sorted(relevant_trials, key=lambda x: x.get('combined_score', 0), reverse=True)[:MAX_RECORDS]
     
     logger.info(f"Final selection: {len(final_pubmed)} PubMed articles, {len(final_trials)} clinical trials")
 
-    # Step 4: Upsert into DB and get new items
-    logger.info("Step 6: Updating database...")
+    # Step 6: Upsert into DB and get new items
+    logger.info("Step 10: Updating database...")
     new_pubmed = upsert_pubmed(DB_FILE, final_pubmed)
     new_trials = upsert_trials(DB_FILE, final_trials)
 
-    # Step 5: Append weekly CSVs
-    logger.info("Step 7: Updating CSV files...")
+    # Step 7: Append weekly CSVs
+    logger.info("Step 11: Updating CSV files...")
     append_pubmed_csv(new_pubmed)
     append_trials_csv(new_trials)
 
-    # Step 6: Export full CSVs
-    logger.info("Step 8: Exporting full database to CSV...")
+    # Step 8: Export full CSVs
+    logger.info("Step 12: Exporting full database to CSV...")
     export_full_csvs()
 
-    # Step 7: Send summary email
-    logger.info("Step 9: Sending email report...")
+    # Step 9: Send summary email
+    logger.info("Step 13: Sending email report...")
     stats = {"new_pubmed": len(new_pubmed), "new_trials": len(new_trials)}
     email_sent = send_email(new_pubmed, new_trials, stats, PUBMED_TERM, CLINICALTRIALS_INTERVENTION, CLINICALTRIALS_CONDITION)
     
@@ -926,25 +946,29 @@ def weekly_update():
     logger.info("=== Weekly Update Complete ===")
     logger.info(f"Summary:")
     logger.info(f"  - PubMed articles fetched: {len(pubmed_articles)}")
+    logger.info(f"  - PubMed articles after exosome filter: {len(exosome_pubmed)}")
     logger.info(f"  - PubMed articles after semantic filtering: {len(relevant_pubmed)}")
     logger.info(f"  - New PubMed articles added to database: {len(new_pubmed)}")
     logger.info(f"  - Clinical trials fetched: {len(trials)}")
+    logger.info(f"  - Clinical trials after exosome filter: {len(exosome_trials)}")
     logger.info(f"  - Clinical trials after semantic filtering: {len(relevant_trials)}")
     logger.info(f"  - New clinical trials added to database: {len(new_trials)}")
     logger.info(f"  - Email sent: {'Yes' if email_sent else 'No'}")
     
     return {
         "pubmed_fetched": len(pubmed_articles),
-        "pubmed_filtered": len(relevant_pubmed),
+        "pubmed_exosome_filtered": len(exosome_pubmed),
+        "pubmed_semantic_filtered": len(relevant_pubmed),
         "pubmed_new": len(new_pubmed),
         "trials_fetched": len(trials),
-        "trials_filtered": len(relevant_trials),
+        "trials_exosome_filtered": len(exosome_trials),
+        "trials_semantic_filtered": len(relevant_trials),
         "trials_new": len(new_trials),
         "email_sent": email_sent
     }
 
 # -------------------------
-# Entry point for manual execution
+# Entry point
 # -------------------------
 if __name__ == "__main__":
     try:
@@ -952,8 +976,7 @@ if __name__ == "__main__":
         logger.info("Script completed successfully")
         print("Weekly update completed!")
         print(f"Results: {results}")
-        exit(0) # Successful exit
+        exit(0)
     except Exception as e:
         logger.exception("Script failed unexpectedly")
-        # Ensure a non-zero exit code to alert the GitHub Action runner
         exit(1)
