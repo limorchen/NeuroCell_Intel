@@ -7,13 +7,21 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+from dotenv import load_dotenv
+import os
 import os
 import re
+
+load_dotenv()
 
 # Set these up as env variables or secrets in your workflow for email security
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT")
+
+print(f"DEBUG: EMAIL_USER set: {bool(EMAIL_USER)}")
+print(f"DEBUG: EMAIL_PASSWORD set: {bool(EMAIL_PASSWORD)}")
+print(f"DEBUG: EMAIL_RECIPIENT set: {bool(EMAIL_RECIPIENT)}")
 
 # Market tickers for Nurexone Biologic
 TICKERS = {
