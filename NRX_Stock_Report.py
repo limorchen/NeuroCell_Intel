@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import os
+import re
 
 # Set these up as env variables or secrets in your workflow for email security
 EMAIL_USER = os.environ.get("EMAIL_USER")
