@@ -30,6 +30,14 @@ def fetch_data(ticker, days=14):
 
 def process_symbol(symbol, ticker):
     df = fetch_data(ticker)
+    if df.empty:
+        print(f"No data returned for {symbol} ({ticker})")
+        return None
+   
+    if 'Close' not in df.columns:
+        print(f"'Close' column not found for {symbol} ({ticker})")
+        return None    
+        
     df = df.dropna(subset=['Close'])
     df['Daily Change %'] = df['Close'].pct_change() * 100
     df['Weekly Change %'] = df['Close'].pct_change(periods=5) * 100
