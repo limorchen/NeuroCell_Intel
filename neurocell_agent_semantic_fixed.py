@@ -70,8 +70,8 @@ MAX_RECORDS = int(os.getenv("MAX_RECORDS", 50))
 DAYS_BACK_PUBMED = int(os.getenv("DAYS_BACK_PUBMED", 7))
 DAYS_BACK_TRIALS = int(os.getenv("DAYS_BACK_TRIALS", 7))
 RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
-SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD", 0.28))
-SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.30))
+SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD", 0.29))
+SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.35))
 # FIX: Ensure SEMANTIC_SEARCH_TERMS is an array of non-empty strings.
 raw_terms = os.getenv(
     "SEMANTIC_SEARCH_TERMS",
@@ -188,8 +188,21 @@ def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     """
     Hard filter to ensure documents contain exosome/EV terminology
     """
-    exosome_terms = ['exosome', 'exosomes', 'extracellular vesicle', 'extracellular vesicles', 
-                     'ev', 'evs', 'microvesicle', 'exosomal']
+    import re
+    
+    # Use word boundaries to avoid false matches like "events" matching "ev"
+    exosome_patterns = [
+        r'\bexosome\b',
+        r'\bexosomes\b', 
+        r'\bexosomal\b',
+        r'\bextracellular vesicle\b',
+        r'\bextracellular vesicles\b',
+        r'\bmicrovesicle\b',
+        r'\bmicrovesicles\b',
+        r'\bEVs\b',  # Capital EVs is more specific
+        r'\bexosome-derived\b',
+        r'\bexosome therapy\b'
+    ]
     
     filtered_docs = []
     for doc in docs:
@@ -204,7 +217,6 @@ def mandatory_exosome_filter(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     
     logger.info(f"Mandatory exosome filter: {len(filtered_docs)}/{len(docs)} documents contain exosome/EV terms")
     return filtered_docs
-
 
 # -------------------------
 # DB init (No change)
