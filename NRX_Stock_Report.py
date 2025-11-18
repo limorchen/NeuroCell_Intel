@@ -5,12 +5,10 @@ from datetime import datetime, timedelta
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from dotenv import load_dotenv
 import os
-import os
-import re
+import base64
+from io import BytesIO
 
 load_dotenv()
 
@@ -41,24 +39,18 @@ def fetch_data(ticker, days=14):
 def process_symbol(symbol, ticker):
     df = fetch_data(ticker)
     
-    # Check for empty DataFrame
     if df.empty:
         print(f"[WARN] No data returned for {symbol} ({ticker}). Skipping this ticker.")
         return None
     
-    # Print columns received to debug missing 'Close'
     print(f"[DEBUG] Columns for {symbol} ({ticker}): {list(df.columns)}")
     
-    # Check if 'Close' column exists
     if 'Close' not in df.columns:
         print(f"[WARN] 'Close' column missing for {symbol} ({ticker}). Data columns: {list(df.columns)}")
         print(f"[DEBUG] Data snippet:\n{df.head()}")
         return None
     
-    # Now safe to dropna on 'Close'
     df = df.dropna(subset=['Close'])
-    
-    # Continue processing...
     
     df['Daily Change %'] = df['Close'].pct_change() * 100
     df['Weekly Change %'] = df['Close'].pct_change(periods=5) * 100
@@ -66,7 +58,9 @@ def process_symbol(symbol, ticker):
     day_change = latest['Daily Change %']
     week_change = latest['Weekly Change %']
     last_price = latest['Close']
-    # Plot and save graph
+
+    # Save chart image in memory (BytesIO) instead of disk
+    buf = BytesIO()
     plt.figure(figsize=(10,4))
     plt.plot(df.index, df['Close'], label=f'{symbol} price')
     plt.title(f'{symbol} - Closing Price')
@@ -74,16 +68,21 @@ def process_symbol(symbol, ticker):
     plt.ylabel('Price')
     plt.legend()
     plt.grid()
-    img_path = f"{symbol.replace(':','_')}_price.png"
-    plt.savefig(img_path)
+    plt.savefig(buf, format='png')
     plt.close()
+    buf.seek(0)
+
+    # Encode image bytes to base64 string for inline embedding
+    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    buf.close()
+
     return {
         "symbol": symbol,
         "ticker": ticker,
         "last_price": round(last_price, 3),
         "day_change": round(day_change, 2),
         "week_change": round(week_change, 2),
-        "graph": img_path
+        "graph_base64": img_base64
     }
 
 def main():
@@ -94,29 +93,23 @@ def main():
             continue
         parts.append(result)
 
-    # Make simple HTML report
-    body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2><table border='1'><tr><th>Market</th><th>Price</th><th>Daily Change %</th><th>Weekly Change %</th></tr>"
+    # Create HTML report with inline images
+    body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2><table border='1' cellpadding='5' cellspacing='0'><tr><th>Market</th><th>Price</th><th>Daily Change %</th><th>Weekly Change %</th><th>Chart</th></tr>"
     for item in parts:
-        body += f"<tr><td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['day_change']}</td><td>{item['week_change']}</td></tr>"
-    body += "</table><br>"
+        body += f"<tr><td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['day_change']}</td><td>{item['week_change']}</td>"
+        # Embed the base64 image directly in HTML <img>
+        body += f"<td><img src='data:image/png;base64,{item['graph_base64']}' alt='Chart for {item['symbol']}' width='400'/></td></tr>"
+    body += "</table>"
 
-    # Set up email with images attached
-    msg = MIMEMultipart()
+    msg = MIMEMultipart("alternative")
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECIPIENT
     msg['Subject'] = "Nurexone Daily Stock Report"
 
-    msg.attach(MIMEText(body, 'html'))
-    # Attach price charts
-    for item in parts:
-        with open(item['graph'], 'rb') as f:
-            part = MIMEBase('application', "octet-stream")
-            part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="{item["graph"]}"')
-            msg.attach(part)
+    # Attach the HTML body
+    msg.attach(MIMEText(body, "html"))
 
-    # Send email
+    # Send the email
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(EMAIL_USER, EMAIL_PASSWORD)
         smtp.sendmail(EMAIL_USER, EMAIL_RECIPIENT, msg.as_string())
