@@ -59,6 +59,16 @@ def process_symbol(symbol, ticker):
     week_change = latest['Weekly Change %']
     last_price = latest['Close']
 
+    # Try to get currency safely
+    currency = "N/A"
+    try:
+        ticker_info = yf.Ticker(ticker)
+        currency = ticker_info.info.get('currency', 'N/A')
+    except Exception as e:
+        print(f"[WARN] Could not fetch currency for {symbol} ({ticker}): {e}")
+
+    print(f"[DEBUG] Currency for {symbol} is {currency}")
+
     # Save chart image in memory (BytesIO) instead of disk
     buf = BytesIO()
     plt.figure(figsize=(10,4))
@@ -82,6 +92,7 @@ def process_symbol(symbol, ticker):
         "last_price": round(last_price, 3),
         "day_change": round(day_change, 2),
         "week_change": round(week_change, 2),
+        "currency": currency,
         "graph_base64": img_base64
     }
 
@@ -93,10 +104,12 @@ def main():
             continue
         parts.append(result)
 
-    # Create HTML report with inline images
-    body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2><table border='1' cellpadding='5' cellspacing='0'><tr><th>Market</th><th>Price</th><th>Daily Change %</th><th>Weekly Change %</th><th>Chart</th></tr>"
+    # Create HTML report with inline images including currency
+    body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2><table border='1' cellpadding='5' cellspacing='0'>"
+    body += "<tr><th>Market</th><th>Price</th><th>Currency</th><th>Daily Change %</th><th>Weekly Change %</th><th>Chart</th></tr>"
     for item in parts:
-        body += f"<tr><td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['currency']}</td>"
+        body += f"<tr>"
+        body += f"<td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['currency']}</td>"
         body += f"<td>{item['day_change']}</td><td>{item['week_change']}</td>"
         body += f"<td><img src='data:image/png;base64,{item['graph_base64']}' alt='Chart for {item['symbol']}' width='400'/></td></tr>"
     body += "</table>"
