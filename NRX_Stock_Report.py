@@ -30,15 +30,25 @@ def fetch_data(ticker, days=14):
 
 def process_symbol(symbol, ticker):
     df = fetch_data(ticker)
+    
+    # Check for empty DataFrame
     if df.empty:
-        print(f"No data returned for {symbol} ({ticker}). Skipping.")
+        print(f"[WARN] No data returned for {symbol} ({ticker}). Skipping this ticker.")
         return None
-   
+    
+    # Print columns received to debug missing 'Close'
+    print(f"[DEBUG] Columns for {symbol} ({ticker}): {list(df.columns)}")
+    
+    # Check if 'Close' column exists
     if 'Close' not in df.columns:
-        print(f"'Close' column missing for {symbol} ({ticker}). Columns found: {df.columns.tolist()}")
-        return None    
-        
+        print(f"[WARN] 'Close' column missing for {symbol} ({ticker}). Data columns: {list(df.columns)}")
+        print(f"[DEBUG] Data snippet:\n{df.head()}")
+        return None
+    
+    # Now safe to dropna on 'Close'
     df = df.dropna(subset=['Close'])
+    
+    # Continue processing...
     
     df['Daily Change %'] = df['Close'].pct_change() * 100
     df['Weekly Change %'] = df['Close'].pct_change(periods=5) * 100
