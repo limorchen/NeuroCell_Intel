@@ -39,7 +39,7 @@ jobs:
         echo "DAYS_BACK_PUBMED=7" >> .env
         echo "DAYS_BACK_TRIALS=14" >> .env
         echo "SEMANTIC_THRESHOLD_PUBMED=0.45" >> .env
-        echo "SEMANTIC_THRESHOLD_TRIALS=0.35" >> .env
+        echo "SEMANTIC_THRESHOLD_TRIALS=0.30" >> .env
         
     - name: Run Python script
       run: python neurocell_agent_semantic_improved.py
