@@ -25,7 +25,9 @@ TICKERS = {
 def fetch_data(ticker, days=14):
     end = datetime.today()
     start = end - timedelta(days=days)
-    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
+    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), group_by='ticker')
+    if ticker in df.columns.levels[0]:
+        df = df[ticker]
     return df
 
 def process_symbol(symbol, ticker):
