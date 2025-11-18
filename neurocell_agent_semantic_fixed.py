@@ -72,7 +72,7 @@ RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", 0.5))
 
 # IMPROVED: Raised threshold for trials to match PubMed
 SEMANTIC_THRESHOLD_PUBMED = float(os.getenv("SEMANTIC_THRESHOLD_PUBMED", 0.45))
-SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.35))  # Changed from 0.30
+SEMANTIC_THRESHOLD_TRIALS = float(os.getenv("SEMANTIC_THRESHOLD_TRIALS", 0.30))  # Changed from 0.30
 
 # IMPROVED: More specific semantic search terms
 raw_terms = os.getenv(
