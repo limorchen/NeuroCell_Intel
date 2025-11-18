@@ -39,8 +39,8 @@ jobs:
         echo "MAX_RECORDS=50" >> .env
         echo "DAYS_BACK_PUBMED=7" >> .env
         echo "DAYS_BACK_TRIALS=14" >> .env
-        echo "SEMANTIC_THRESHOLD=0.28" >> .env
-        echo "SEMANTIC_THRESHOLD_TRIALS=0.26" >> .env
+        echo "SEMANTIC_THRESHOLD=0.35" >> .env
+        echo "SEMANTIC_THRESHOLD_TRIALS=0.35" >> .env
         
     - name: Run Python script
       run: python neurocell_agent_semantic_fixed.py
