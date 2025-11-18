@@ -96,8 +96,8 @@ def main():
     # Create HTML report with inline images
     body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2><table border='1' cellpadding='5' cellspacing='0'><tr><th>Market</th><th>Price</th><th>Daily Change %</th><th>Weekly Change %</th><th>Chart</th></tr>"
     for item in parts:
-        body += f"<tr><td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['day_change']}</td><td>{item['week_change']}</td>"
-        # Embed the base64 image directly in HTML <img>
+        body += f"<tr><td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['currency']}</td>"
+        body += f"<td>{item['day_change']}</td><td>{item['week_change']}</td>"
         body += f"<td><img src='data:image/png;base64,{item['graph_base64']}' alt='Chart for {item['symbol']}' width='400'/></td></tr>"
     body += "</table>"
 
