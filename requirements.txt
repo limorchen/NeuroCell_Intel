@@ -16,6 +16,10 @@ spacy
 sentence-transformers
 scikit-learn
 
+# Stock monitoring
+yfinance
+matplotlib
+
 # Already included
 biopython
 faiss-cpu
