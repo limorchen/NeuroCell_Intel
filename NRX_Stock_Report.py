@@ -104,25 +104,31 @@ def main():
             continue
         parts.append(result)
 
-    # Create HTML report with inline images including currency
-    body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2><table border='1' cellpadding='5' cellspacing='0'>"
-    body += "<tr><th>Market</th><th>Price</th><th>Currency</th><th>Daily Change %</th><th>Weekly Change %</th><th>Chart</th></tr>"
+    # Create HTML report with table for textual data only (no chart column)
+    body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2>"
+    body += "<table border='1' cellpadding='5' cellspacing='0'>"
+    body += "<tr><th>Market</th><th>Price</th><th>Currency</th><th>Daily Change %</th><th>Weekly Change %</th></tr>"
     for item in parts:
         body += f"<tr>"
         body += f"<td>{item['symbol']}</td><td>{item['last_price']}</td><td>{item['currency']}</td>"
         body += f"<td>{item['day_change']}</td><td>{item['week_change']}</td>"
-        body += f"<td><img src='data:image/png;base64,{item['graph_base64']}' alt='Chart for {item['symbol']}' width='400'/></td></tr>"
+        body += "</tr>"
     body += "</table>"
+
+    # Append charts below the table, labeled by ticker symbol
+    body += "<br><h3>Price Charts</h3>"
+    for item in parts:
+        body += f"<h4>{item['symbol']}</h4>"
+        body += f"<img src='data:image/png;base64,{item['graph_base64']}' alt='Chart for {item['symbol']}' width='600'/>"
+        body += "<br>"
 
     msg = MIMEMultipart("alternative")
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECIPIENT
     msg['Subject'] = "Nurexone Daily Stock Report"
 
-    # Attach the HTML body
     msg.attach(MIMEText(body, "html"))
 
-    # Send the email
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(EMAIL_USER, EMAIL_PASSWORD)
         smtp.sendmail(EMAIL_USER, EMAIL_RECIPIENT, msg.as_string())
