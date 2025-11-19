@@ -5,14 +5,14 @@ from datetime import datetime, timedelta
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from dotenv import load_dotenv
 import os
-import base64
 from io import BytesIO
 
 load_dotenv()
 
-# Set these up as env variables or secrets in your workflow for email security
+# Environment variables for email credentials and recipients
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT")
@@ -31,7 +31,10 @@ TICKERS = {
 def fetch_data(ticker, days=14):
     end = datetime.today()
     start = end - timedelta(days=days)
-    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), group_by='ticker')
+    df = yf.download(ticker,
+                     start=start.strftime("%Y-%m-%d"),
+                     end=end.strftime("%Y-%m-%d"),
+                     group_by='ticker')
     if ticker in df.columns.levels[0]:
         df = df[ticker]
     return df
@@ -59,7 +62,6 @@ def process_symbol(symbol, ticker):
     week_change = latest['Weekly Change %']
     last_price = latest['Close']
 
-    # Try to get currency safely
     currency = "N/A"
     try:
         ticker_info = yf.Ticker(ticker)
@@ -69,22 +71,18 @@ def process_symbol(symbol, ticker):
 
     print(f"[DEBUG] Currency for {symbol} is {currency}")
 
-    # Save chart image in memory (BytesIO) instead of disk
+    # Save chart image in memory
     buf = BytesIO()
-    plt.figure(figsize=(10,4))
+    plt.figure(figsize=(8,3))
     plt.plot(df.index, df['Close'], label=f'{symbol} price')
     plt.title(f'{symbol} - Closing Price')
     plt.xlabel('Date')
     plt.ylabel('Price')
     plt.legend()
     plt.grid()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format='png', dpi=80)
     plt.close()
     buf.seek(0)
-
-    # Encode image bytes to base64 string for inline embedding
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-    buf.close()
 
     return {
         "symbol": symbol,
@@ -93,7 +91,7 @@ def process_symbol(symbol, ticker):
         "day_change": round(day_change, 2),
         "week_change": round(week_change, 2),
         "currency": currency,
-        "graph_base64": img_base64
+        "image_buffer": buf  # Keep buffer open for email embedding
     }
 
 def main():
@@ -104,7 +102,6 @@ def main():
             continue
         parts.append(result)
 
-    # Create HTML report with table for textual data only (no chart column)
     body = "<h2>Nurexone Biologic (NRX) - Daily Market Report</h2>"
     body += "<table border='1' cellpadding='5' cellspacing='0'>"
     body += "<tr><th>Market</th><th>Price</th><th>Currency</th><th>Daily Change %</th><th>Weekly Change %</th></tr>"
@@ -115,19 +112,30 @@ def main():
         body += "</tr>"
     body += "</table>"
 
-    # Append charts below the table, labeled by ticker symbol
     body += "<br><h3>Price Charts</h3>"
-    for item in parts:
+    for idx, item in enumerate(parts):
+        cid = f"chart{idx}"
         body += f"<h4>{item['symbol']}</h4>"
-        body += f"<img src='data:image/png;base64,{item['graph_base64']}' alt='Chart for {item['symbol']}' width='600'/>"
-        body += "<br>"
+        body += f"<img src='cid:{cid}' alt='Chart for {item['symbol']}' width='300'/><br>"
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("related")
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECIPIENT
     msg['Subject'] = "Nurexone Daily Stock Report"
 
-    msg.attach(MIMEText(body, "html"))
+    msg_alternative = MIMEMultipart("alternative")
+    msg.attach(msg_alternative)
+
+    msg_alternative.attach(MIMEText(body, "html"))
+
+    # Attach images with CIDs
+    for idx, item in enumerate(parts):
+        img_data = item['image_buffer'].getvalue()
+        mime_img = MIMEImage(img_data, 'png')
+        mime_img.add_header('Content-ID', f"<chart{idx}>")
+        mime_img.add_header('Content-Disposition', 'inline', filename=f"{item['symbol']}_chart.png")
+        msg.attach(mime_img)
+        item['image_buffer'].close()
 
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(EMAIL_USER, EMAIL_PASSWORD)
