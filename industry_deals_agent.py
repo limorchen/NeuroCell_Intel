@@ -651,8 +651,9 @@ def is_exosome_relevant(text, title, log_check=False):
         "saudi arabia riyadh", "business hub", "finance minister", "regional expansion", "tourism promotion", "tourism program", "tourist promotion",
     "airlines to promote", "direct flights", "ho chi minh city department of tourism",
     "northern europe tourism", "copenhagen denmark /prnewswire",
-]
+        
     ]
+    
     if any(term in combined for term in NON_SCIENCE_TERMS):
         if not log_check:
             return False
