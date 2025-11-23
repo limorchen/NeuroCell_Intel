@@ -59,7 +59,8 @@ SPAM_TERMS = [
     "webinar", "sponsored", "whitepaper", "advertise",
     "sign up to read", "subscribe", "newsletter",
     "market research", "market size", "market report", "market insights",
-    "pipeline insights", "download", "forecast", "market analysis"
+    "pipeline insights", "download", "forecast", "market analysis", "premium content", "premium webinar", "fiercebiotech premium",
+    "/premium/webinar", "register for this webinar",
 ]
 
 EXOSOME_TERMS = [
@@ -524,10 +525,14 @@ def search_for_deal_amount(title, companies, event_type):
 # -----------------------------------------------------
 
 def extract_companies(text):
-    """Extract company names with aggressive filtering"""
+    """Extract company names with improved aggressive filtering"""
     doc = nlp(text)
     orgs = []
     
+    REMOVE_SUFFIXES = [
+        " - tipranks", " tipranks", "the manila times", " - msn",
+        " acquisition", " diagnostics acquisition"
+    ]
     IGNORE_ORGS = [
         "msn", "manila times", "reuters", "bloomberg", "fiercebiotech",
         "endpoints", "yahoo", "google", "facebook", "twitter", "linkedin",
@@ -538,35 +543,44 @@ def extract_companies(text):
         "genengnews", "labiotech", "fiercepharma"
     ]
     
-    REMOVE_SUFFIXES = [
-        " - tipranks", " tipranks", "the manila times", " - msn",
-        " acquisition", " diagnostics acquisition"
-    ]
-    
+    # Additional stoplist to exclude frequent junk extractions
+    STOP_WORDS = {"the", "a", "an", "group", "company", "inc", "corp", "llc"}
+
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
+            # Remove known suffix noise
             for suffix in REMOVE_SUFFIXES:
                 if t.lower().endswith(suffix):
                     t = t[:-len(suffix)].strip()
-            if len(t) < 2 or len(t.split()) > 6:
+            # Filter out too-short or too-long entities
+            if len(t) < 3:
                 continue
-            if t.lower() in IGNORE_ORGS:
+            if len(t.split()) > 6:
                 continue
+            # Filter common nonsense / stopwords
+            if t.lower() in IGNORE_ORGS or t.lower() in STOP_WORDS:
+                continue
+            # Filter if any known ignore partial matches
             if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
+            # Filter specific problematic words
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
                 continue
             orgs.append(t)
     
+    # Deduplicate (case insensitive)
     seen = set()
     unique_orgs = []
     for org in orgs:
-        if org.lower() not in seen:
-            seen.add(org.lower())
+        org_lower = org.lower()
+        if org_lower not in seen:
+            seen.add(org_lower)
             unique_orgs.append(org)
     
+    # Limit to top 5 companies extracted
     return unique_orgs[:5]
+
 
 def extract_acquisition_details(title, text):
     """Manually extract acquisition details from text"""
@@ -634,7 +648,10 @@ def is_exosome_relevant(text, title, log_check=False):
         "retail", "construction", "energy project", "banking", "investment firm",
         "venture capital", "saudi vision 2030", "entrepreneurship", "office space",
         "mall", "hotel", "infrastructure", "design firm", "architectural",
-        "saudi arabia riyadh", "business hub", "finance minister", "regional expansion"
+        "saudi arabia riyadh", "business hub", "finance minister", "regional expansion", "tourism promotion", "tourism program", "tourist promotion",
+    "airlines to promote", "direct flights", "ho chi minh city department of tourism",
+    "northern europe tourism", "copenhagen denmark /prnewswire",
+]
     ]
     if any(term in combined for term in NON_SCIENCE_TERMS):
         if not log_check:
@@ -1022,6 +1039,18 @@ def run_agent():
         if event == "funding" and not any(t in full_text.lower() for t in EXOSOME_TERMS):
             score -= 0.7
 
+        dealish_signals = 0
+        if money:
+            dealish_signals += 1
+        if any(k in full_text.lower() for k in ["acquisition of", "acquires", "acquired", "deal worth", "transaction value"]):
+            dealish_signals += 1
+        if len(companies) >= 2:
+            dealish_signals += 1
+
+        if event in ["acquisition", "funding"] and dealish_signals < 2:
+            print(f"DEBUG: Skipping low-signal {event} '{title[:60]}...' (signals={dealish_signals})")
+            continue  # Skip this deal, do not append
+
         processed.append({
             "title": title,
             "url": url,
@@ -1037,6 +1066,21 @@ def run_agent():
             "full_text": full_text,
             "score": score
         })
+
+    dealish_signals = 0
+    if money:
+        dealish_signals += 1
+    if any(k in full_text.lower() for k in ["acquisition of", "acquires", "acquired", "deal worth", "transaction value"]):
+        dealish_signals += 1
+    if len(companies) >= 2:
+        dealish_signals += 1
+
+    if event in ["acquisition", "funding"] and dealish_signals < 2:
+        print(f"DEBUG: Skipping low-signal {event} '{title[:60]}...' (signals={dealish_signals})")
+        continue  # Skip this deal, do not append
+
+
+    
 
     print(f"After relevance filtering: {len(processed)} items")
     if not processed:
