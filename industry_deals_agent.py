@@ -228,13 +228,13 @@ def extract_amounts(text):
     # Comprehensive patterns for diverse formats
     amount_patterns = [
         # €10M, $5.5M, £250K
-        r'[\$£€¥]\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
+        r'[\$£€¥]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
         # USD 15 million, EUR 3M, GBP 250 thousand
-        r'(?:USD|EUR|GBP|CAD|AUD|usd|eur|gbp|cad|aud)\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
+        r'(?:USD|EUR|GBP|CAD|AUD|usd|eur|gbp|cad|aud)\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
         # 15 million USD, 15M EUR, 250 thousand dollars
-        r'\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|£|GBP|gbp)?',
+        r'\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|£|GBP|gbp)?',
         # "approximately $3 million", "about €5M", "over $50 thousand"
-        r'(?:approximately|about|around|nearly|up\s+to|over|valued\s+at|worth)\s+[\$£€¥]?\s?\d{1,3}(?:[,\.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
+        r'(?:approximately|about|around|nearly|up\s+to|over|valued\s+at|worth)\s+[\$£€¥]?\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
     ]
 
     matches = []
@@ -615,7 +615,8 @@ def summarize_short(text, max_sent=2):
     sents = re.split(r'(?<=[.!?])\s+', text)
     return " ".join(sents[:max_sent]).strip()
 
-def normalize_title(title):
+def normalize_title_for_dedup(title):
+    """Lightweight title normalization for URL/date-title dedup."""
     title = re.split(r'\s*[-–—]\s*', title)[0]
     for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
         title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
@@ -661,6 +662,7 @@ def is_exosome_relevant(text, title, log_check=False):
         return primary_relevance
 
     return primary_relevance
+
 # -----------------------------------------------------
 # 📧 Email function
 # -----------------------------------------------------
@@ -725,7 +727,6 @@ def export_to_cumulative_database(df_new_deals, filename):
     # Ensure published_dt is clean (no timezone info)
     df_new["published_dt"] = pd.to_datetime(df_new["published_dt"]).dt.tz_localize(None)
 
-
     # 3. Load existing data
     df_existing = pd.DataFrame()
     if os.path.exists(cumulative_filepath):
@@ -784,6 +785,67 @@ def export_to_cumulative_database(df_new_deals, filename):
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to save Excel file. Error: {e}")
         return pd.DataFrame()
+
+
+# -----------------------------------------------------
+# 🆕 Deal-entity–based deduplication (companies + amounts_numeric)
+# -----------------------------------------------------
+def dedupe_by_entities(processed, amount_bin_size=1_000_000):
+    """
+    Additional deduplication layer using:
+      - Sorted company names (lowercased)
+      - Binned primary deal amount (from amounts_numeric)
+    
+    This runs AFTER embedding-based dedupe and before DataFrame creation.
+    """
+    if not processed:
+        return processed
+
+    seen = {}
+    kept = []
+
+    for item in processed:
+        comps = item.get("companies") or []
+        nums = item.get("amounts_numeric") or []
+
+        # If no companies AND no numeric amount -> skip entity-based dedupe for this
+        if not comps and not nums:
+            kept.append(item)
+            continue
+
+        # Canonical company key
+        comps_key = tuple(sorted([c.lower().strip() for c in comps if c and isinstance(c, str)]))
+
+        # Use smallest amount as representative and bin it (in millions)
+        if nums:
+            try:
+                primary_amount = min(nums)
+                bin_val = int(primary_amount // amount_bin_size)
+            except Exception:
+                primary_amount = None
+                bin_val = None
+        else:
+            primary_amount = None
+            bin_val = None
+
+        key = (comps_key, bin_val)
+
+        if key not in seen:
+            seen[key] = item
+            kept.append(item)
+        else:
+            # Keep the higher-score deal for this (companies,amount) key
+            existing = seen[key]
+            if item.get("score", 0) > existing.get("score", 0):
+                # Replace in seen and in kept
+                seen[key] = item
+                # Update kept list: remove old, add new
+                kept = [k for k in kept if k is not existing]
+                kept.append(item)
+
+    print(f"After entity-based deduplication: {len(kept)} items")
+    return kept
+
 
 # ---------------------------------------
 # 🧭 Main pipeline
@@ -850,7 +912,7 @@ def run_agent():
     # Dedupe by normalized title + date
     date_title_map = {}
     for item in collected:
-        norm_title = normalize_title(item.get("title", ""))
+        norm_title = normalize_title_for_dedup(item.get("title", ""))
         pub_date = item.get("published", "")[:10] if item.get("published") else "unknown"
         key = f"{norm_title}_{pub_date}"
         if key not in date_title_map and norm_title and len(norm_title) > 10:
@@ -900,7 +962,6 @@ def run_agent():
             # Print the articles that are failing the relevance filter
             print(f"DEBUG: Skipping '{title[:50]}...' Reasons: {'; '.join(reasons) or 'Generic Filter Fail'}") 
             continue
-
 
         short = summarize_short(full_text, max_sent=2)
         event = classify_event(full_text + " " + title)
@@ -999,6 +1060,11 @@ def run_agent():
                     drop.add(i)
     filtered = [p for idx,p in enumerate(processed) if idx not in drop]
     print(f"Filtered {len(processed)-len(filtered)} embedding duplicates; {len(filtered)} items remain")
+
+    # -----------------
+    # 4b) 🆕 Entity-based deduplication layer
+    # -----------------
+    filtered = dedupe_by_entities(filtered)
 
     # -----------------
     # 5) Prepare DataFrame for export (return only the new deals)
