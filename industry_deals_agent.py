@@ -1068,21 +1068,6 @@ def run_agent():
             "score": score
         })
 
-    dealish_signals = 0
-    if money:
-        dealish_signals += 1
-    if any(k in full_text.lower() for k in ["acquisition of", "acquires", "acquired", "deal worth", "transaction value"]):
-        dealish_signals += 1
-    if len(companies) >= 2:
-        dealish_signals += 1
-
-    if event in ["acquisition", "funding"] and dealish_signals < 2:
-        print(f"DEBUG: Skipping low-signal {event} '{title[:60]}...' (signals={dealish_signals})")
-        continue  # Skip this deal, do not append
-
-
-    
-
     print(f"After relevance filtering: {len(processed)} items")
     if not processed:
         print("No processed items found.")
