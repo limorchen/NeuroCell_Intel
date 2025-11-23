@@ -60,7 +60,7 @@ SPAM_TERMS = [
     "sign up to read", "subscribe", "newsletter",
     "market research", "market size", "market report", "market insights",
     "pipeline insights", "download", "forecast", "market analysis", "premium content", "premium webinar", "fiercebiotech premium",
-    "/premium/webinar", "register for this webinar", "register here", "join this session". 
+    "/premium/webinar", "register for this webinar", "register here", "join this session",
 ]
 
 EXOSOME_TERMS = [
