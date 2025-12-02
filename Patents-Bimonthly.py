@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-import epo_ops
+from epo_ops import Client
 from epo_ops import exceptions as ops_exc
 from lxml import etree
 import pandas as pd
