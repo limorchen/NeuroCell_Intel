@@ -54,3 +54,13 @@ jobs:
           path: data/patents_cumulative.csv
           retention-days: 90
 
+      - name: Run patent search and email
+        env:
+          EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
+          EPO_OPS_SECRET: ${{ secrets.EPO_OPS_SECRET }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python Patents-Bimonthly.py
+
+
