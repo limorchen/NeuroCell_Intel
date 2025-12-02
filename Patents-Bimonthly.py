@@ -13,6 +13,7 @@ from lxml import etree
 
 from epo_ops import Client, models, middlewares
 import epo_ops.exceptions as ops_exc
+
 # ---------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------
@@ -97,36 +98,67 @@ def get_biblio_data(country, number, kind):
             input=models.Docdb(number, country, kind),
             endpoint="biblio"
         )
-    except Exception as e:
-        print(f"Error fetching biblio for {country}{number}{kind}: {e}")
-        return {}
-
-    try:
+        
         root = etree.fromstring(resp.content)
+        ns = {"ex": "http://www.epo.org/exchange"}
+        
+        # Extract title
+        title = root.xpath("string(//ex:invention-title[@lang='en'])", namespaces=ns)
+        if not title:
+            title = root.xpath("string(//ex:invention-title)", namespaces=ns)
+        
+        # Extract applicants
+        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        applicants_str = ", ".join(applicants) if applicants else ""
+        
+        # Extract inventors
+        inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        inventors_str = ", ".join(inventors) if inventors else ""
+        
+        # Extract abstract
+        abstract = root.xpath("string(//ex:abstract[@lang='en']/ex:p)", namespaces=ns)
+        if not abstract:
+            abstract = root.xpath("string(//ex:abstract/ex:p)", namespaces=ns)
+        
+        # Extract publication date
+        pub_date = root.xpath("string(//ex:publication-reference/ex:document-id[@document-id-type='docdb']/ex:date)", namespaces=ns)
+        
+        # Extract priority date
+        priority_date = root.xpath("string(//ex:priority-claims/ex:priority-claim[1]/ex:document-id/ex:date)", namespaces=ns)
+        
         return {
-            "title": root.xpath("string(//invention-title)", namespaces=root.nsmap),
-            "applicants": ", ".join(root.xpath("//applicants//name/text()", namespaces=root.nsmap)),
-            "inventors": ", ".join(root.xpath("//inventors//name/text()", namespaces=root.nsmap)),
-            "abstract": root.xpath("string(//abstract)", namespaces=root.nsmap)
+            "title": title,
+            "applicants": applicants_str,
+            "inventors": inventors_str,
+            "abstract": abstract[:500] if abstract else "",
+            "publication_date": pub_date,
+            "priority_date": priority_date
         }
-    except Exception:
+    except ops_exc.HTTPError as e:
+        if e.response.status_code == 404:
+            print(f"  Biblio not available for {country}{number}")
+        return {}
+    except Exception as e:
+        print(f"  Error fetching biblio for {country}{number}{kind}: {e}")
         return {}
 
 
 def parse_patent_refs(root):
     """Extract DOCDB numbers from search result XML."""
-    ns = {"ex": "http://www.epo.org/exchange"}
+    ns = {
+        "ops": "http://ops.epo.org",
+        "ex": "http://www.epo.org/exchange"
+    }
     results = []
 
-    for pub in root.xpath("//ex:exchange-documents/ex:exchange-document", namespaces=ns):
-        country = pub.get("country")
-        number = pub.get("doc-number")
-        kind = pub.get("kind")
+    # The correct XPath for publication references
+    for pub_ref in root.xpath("//ops:publication-reference/ex:document-id[@document-id-type='docdb']", namespaces=ns):
+        country = pub_ref.xpath("string(ex:country)", namespaces=ns)
+        number = pub_ref.xpath("string(ex:doc-number)", namespaces=ns)
+        kind = pub_ref.xpath("string(ex:kind)", namespaces=ns)
 
-        if not all([country, number, kind]):
-            continue
-
-        results.append((country, number, kind))
+        if country and number and kind:
+            results.append((country, number, kind))
 
     return results
 
@@ -136,40 +168,61 @@ def parse_patent_refs(root):
 # ---------------------------------------------------------------
 
 def get_date_range_two_months():
-    """Return (start_date, end_date) covering the last 2 months."""
+    """Return (start_date, end_date) covering the last 2 months in YYYYMMDD format."""
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=60)
-    return start_date, end_date
+    
+    # Format as YYYYMMDD (no dashes)
+    start_str = start_date.strftime("%Y%m%d")
+    end_str = end_date.strftime("%Y%m%d")
+    
+    return start_str, end_str
 
 
 def search_patents():
     start_date, end_date = get_date_range_two_months()
 
-    cql = f'pd within "{start_date} {end_date}"'
+    # IMPORTANT: Add your search terms here to avoid fetching ALL patents
+    # Example: searching for exosome + CNS patents
+    search_terms = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS'
+    
+    cql = f'{search_terms} and pd within "{start_date} {end_date}"'
     print(f"Running CQL: {cql}")
 
     records = []
     seen = set()
+    count = 0
 
-    for root in scan_patents_cql(cql, batch_size=25):
+    for root in scan_patents_cql(cql, batch_size=25, max_records=500):  # Limit to 500 for safety
         refs = parse_patent_refs(root)
+        print(f"  Found {len(refs)} patents in this batch")
+        
         for country, number, kind in refs:
             key_tuple = (country, number, kind)
             if key_tuple in seen:
                 continue
             seen.add(key_tuple)
+            
+            count += 1
+            print(f"  {count}. Fetching {country}{number}{kind}...", end=" ")
 
             biblio = get_biblio_data(country, number, kind)
+            
             records.append({
                 "country": country,
-                "number": number,
+                "publication_number": number,  # Changed from "number" to "publication_number"
                 "kind": kind,
                 "title": biblio.get("title", ""),
                 "applicants": biblio.get("applicants", ""),
                 "inventors": biblio.get("inventors", ""),
                 "abstract": biblio.get("abstract", ""),
-                "date_found": str(end_date)
+                "publication_date": biblio.get("publication_date", ""),
+                "priority_date": biblio.get("priority_date", ""),
+                "date_found": end_date
             })
+            
+            print(f"✓ {biblio.get('title', 'N/A')[:50]}")
+            time.sleep(0.3)  # Be nice to the API
 
     return pd.DataFrame(records)
 
@@ -179,17 +232,31 @@ def search_patents():
 # ---------------------------------------------------------------
 
 def update_cumulative_csv(df_new):
+    """Merge new results with existing cumulative CSV."""
+    if df_new.empty:
+        print("No new patents found.")
+        if CUMULATIVE_CSV.exists():
+            return pd.read_csv(CUMULATIVE_CSV)
+        return df_new
+    
     if CUMULATIVE_CSV.exists():
         df_old = pd.read_csv(CUMULATIVE_CSV)
+        print(f"Loaded {len(df_old)} existing patents")
+        
+        # Merge and remove duplicates
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
-            subset=["country", "number", "kind"],
+            subset=["country", "publication_number", "kind"],
             keep="first"
         )
+        
+        new_count = len(df_all) - len(df_old)
+        print(f"Added {new_count} new patents")
     else:
         df_all = df_new
+        print(f"Created new database with {len(df_all)} patents")
 
     df_all.to_csv(CUMULATIVE_CSV, index=False)
-    print(f"Saved cumulative CSV with {len(df_all)} records.")
+    print(f"Saved cumulative CSV with {len(df_all)} total records.")
     return df_all
 
 
@@ -198,15 +265,17 @@ def update_cumulative_csv(df_new):
 # ---------------------------------------------------------------
 
 def send_email_with_csv():
+    """Send the updated CSV via email."""
     sender = os.environ.get("SENDER_EMAIL")
     password = os.environ.get("EMAIL_PASSWORD")
     recipient = os.environ.get("RECIPIENT_EMAIL")
 
     if not sender or not recipient or not password:
-        raise ValueError("Missing email credentials in secrets.")
+        print("Warning: Email credentials not found. Skipping email.")
+        return
 
     msg = MIMEMultipart()
-    msg["Subject"] = "Bimonthly Patent Update"
+    msg["Subject"] = f"Bimonthly Patent Update - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = sender
     msg["To"] = recipient
 
@@ -218,11 +287,13 @@ def send_email_with_csv():
     attachment["Content-Disposition"] = 'attachment; filename="patents_cumulative.csv"'
     msg.attach(attachment)
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(sender, password)
-        smtp.send_message(msg)
-
-    print("Email sent successfully.")
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(sender, password)
+            smtp.send_message(msg)
+        print("Email sent successfully.")
+    except Exception as e:
+        print(f"Error sending email: {e}")
 
 
 # ---------------------------------------------------------------
@@ -230,11 +301,19 @@ def send_email_with_csv():
 # ---------------------------------------------------------------
 
 def main():
-    print("Starting 2-month patent search...")
+    print("="*80)
+    print(f"Starting 2-month patent search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*80)
+    
     df_new = search_patents()
     df_all = update_cumulative_csv(df_new)
+    
+    # Optional: send email (only if credentials are set)
     send_email_with_csv()
-    print("Process completed.")
+    
+    print("\n" + "="*80)
+    print("Process completed successfully.")
+    print("="*80)
 
 
 if __name__ == "__main__":
