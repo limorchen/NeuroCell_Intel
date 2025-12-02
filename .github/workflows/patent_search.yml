@@ -9,27 +9,28 @@ on:
 jobs:
   search-patents:
     runs-on: ubuntu-latest
+    
     permissions:
       contents: write
-
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install python-epo-ops-client
-
+      
       - name: List repo files for debugging
         run: ls -R
-
+      
       - name: Run patent search
         env:
           EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
@@ -38,20 +39,20 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: python Patents-Bimonthly.py
-
+      
       - name: Commit and push CSV changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add data/patents_cumulative.csv
-
+          
           if git diff --staged --quiet; then
-              echo "No changes to commit"
+            echo "No changes to commit"
           else
-              git commit -m "Update patents database - $(date +'%Y-%m-%d')"
-              git push
+            git commit -m "Update patents database - $(date +'%Y-%m-%d')"
+            git push
           fi
-
+      
       - name: Upload CSV as artifact
         uses: actions/upload-artifact@v4
         with:
