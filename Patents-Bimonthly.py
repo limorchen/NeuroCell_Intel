@@ -204,7 +204,7 @@ def search_patents():
     # Example: searching for exosome + CNS patents
     search_terms = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS'
     
-    cql = f'{search_terms} and pd within "{start_date} {end_date}"'
+    cql = f'{search_terms} and pd=[{start_date} TO {end_date}]'
     print(f"Running CQL: {cql}")
 
     records = []
