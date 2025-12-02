@@ -1,14 +1,15 @@
 # Core dependencies
 python-dotenv
 requests
-python-dateutil
+python-dateutil>=2.8.0
 feedparser
 
 # Web scraping
 beautifulsoup4
+lxml>=4.9.0
 
 # Data processing
-pandas
+pandas>=1.5.0
 openpyxl
 
 # NLP and ML
@@ -20,14 +21,15 @@ scikit-learn
 yfinance
 matplotlib
 
-# Already included
+# Biology/Science
 biopython
+
+# Search and indexing
 faiss-cpu
+
+# Deep learning
 torch
 
-# Add these new ones for patent monitoring
+# Patent monitoring (EPO OPS API)
 python-epo-ops-client>=1.3.0
-lxml>=4.9.0
-pandas>=1.5.0
 dogpile.cache>=1.1.0
-python-dateutil>=2.8.0
