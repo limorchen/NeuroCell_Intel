@@ -4,8 +4,7 @@ on:
   # Run automatically every 2 months exactly (on the 1st day at 00:00 UTC)
   schedule:
     - cron: '0 0 1 */2 *'  # Every 2 months on the 1st at midnight UTC
-  
-  # Allow manual triggering from GitHub Actions tab
+  # Allow manual triggering
   workflow_dispatch:
 
 jobs:
@@ -28,13 +27,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: List repo files for debugging
+        run: ls -R
       
       - name: Run patent search
         env:
           EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
           EPO_OPS_SECRET: ${{ secrets.EPO_OPS_SECRET }}
         run: |
-          python scripts/search_patents.py
+          python scripts/Patents-Bimonthly.py
       
       - name: Commit and push if changes
         run: |
@@ -42,13 +44,11 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/patents_cumulative.csv
           
-          # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "Update patents database - $(date +'%Y-%m-%d')"
             git push
-          fi
       
       - name: Upload CSV as artifact
         uses: actions/upload-artifact@v4
