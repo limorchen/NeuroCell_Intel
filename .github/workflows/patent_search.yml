@@ -32,7 +32,7 @@ jobs:
         env:
           EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
           EPO_OPS_SECRET: ${{ secrets.EPO_OPS_SECRET }}
-        run: python scripts/Patents-Bimonthly.py
+        run: python Patents-Bimonthly.py   # ✅ updated path to root
 
       - name: Commit and push if changes
         run: |
