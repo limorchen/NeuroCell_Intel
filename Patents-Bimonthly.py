@@ -79,6 +79,7 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
         start = end + 1
         time.sleep(0.2)
 
+
 def get_biblio_data(country, number, kind):
     """Fetch bibliographic data for a single patent"""
     try:
@@ -133,6 +134,7 @@ def get_biblio_data(country, number, kind):
         print(f"Error fetching biblio for {country}{number}: {e}")
         return None
 
+
 def get_first_claim(country, number, kind):
     """Fetch first claim of a patent"""
     try:
@@ -150,6 +152,7 @@ def get_first_claim(country, number, kind):
     except:
         return ""
 
+
 def load_existing_patents():
     """Load existing patents from CSV"""
     if CUMULATIVE_CSV.exists():
@@ -158,6 +161,7 @@ def load_existing_patents():
         return df, existing
     else:
         return pd.DataFrame(), set()
+
 
 def search_and_update(cql_query, max_records=None):
     """Search patents and update CSV"""
@@ -225,6 +229,7 @@ def search_and_update(cql_query, max_records=None):
     print(f"Saved to: {CUMULATIVE_CSV}")
     print(f"{'='*80}\n")
 
+
 # ------------------------ Email Function ------------------------
 def send_email_with_csv(sender, password, recipient, subject, body, attachment_path):
     """Send CSV results via Gmail SSL (port 465)"""
@@ -249,11 +254,17 @@ def send_email_with_csv(sender, password, recipient, subject, body, attachment_p
     except Exception as e:
         print(f"\n✗ Failed to send email: {e}")
 
+
 # ------------------------ Main ------------------------
 if __name__ == "__main__":
-    cql = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS and pd within "20220101 20251130"'
+    # Calculate last 2 months dynamically
+    today = datetime.today()
+    two_months_ago = today - relativedelta(months=2)
+
+    cql = f'(ta=exosomes or ta="extracellular vesicles") and ta=CNS and pd within "{two_months_ago.strftime("%Y%m%d")} {today.strftime("%Y%m%d")}"'
     search_and_update(cql, max_records=None)
 
+    # Send email if secrets are present
     SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
     EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
     RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL")
