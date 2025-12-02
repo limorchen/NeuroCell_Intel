@@ -24,3 +24,10 @@ matplotlib
 biopython
 faiss-cpu
 torch
+
+# Add these new ones for patent monitoring
+python-epo-ops-client>=1.3.0
+lxml>=4.9.0
+pandas>=1.5.0
+dogpile.cache>=1.1.0
+python-dateutil>=2.8.0
