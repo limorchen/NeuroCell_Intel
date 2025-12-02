@@ -179,8 +179,26 @@ def get_date_range_two_months():
     return start_str, end_str
 
 
+def load_existing_patents():
+    """Load existing patents from cumulative CSV and return a set of IDs."""
+    if CUMULATIVE_CSV.exists():
+        df = pd.read_csv(CUMULATIVE_CSV)
+        # Create a set of unique patent identifiers
+        existing = set(
+            df.apply(lambda row: f"{row['country']}{row['publication_number']}{row['kind']}", axis=1)
+        )
+        print(f"Loaded {len(existing)} existing patents from database")
+        return existing
+    else:
+        print("No existing database found - will create new one")
+        return set()
+
+
 def search_patents():
     start_date, end_date = get_date_range_two_months()
+    
+    # Load existing patents to avoid re-fetching
+    existing_ids = load_existing_patents()
 
     # IMPORTANT: Add your search terms here to avoid fetching ALL patents
     # Example: searching for exosome + CNS patents
@@ -190,27 +208,34 @@ def search_patents():
     print(f"Running CQL: {cql}")
 
     records = []
-    seen = set()
     count = 0
+    new_count = 0
+    skipped_count = 0
 
     for root in scan_patents_cql(cql, batch_size=25, max_records=500):  # Limit to 500 for safety
         refs = parse_patent_refs(root)
         print(f"  Found {len(refs)} patents in this batch")
         
         for country, number, kind in refs:
-            key_tuple = (country, number, kind)
-            if key_tuple in seen:
-                continue
-            seen.add(key_tuple)
+            patent_id = f"{country}{number}{kind}"
             
+            # Check if this patent is already in database
+            if patent_id in existing_ids:
+                skipped_count += 1
+                count += 1
+                print(f"  {count}. [SKIP] {patent_id} (already in database)")
+                continue
+            
+            # This is a new patent - fetch full data
+            new_count += 1
             count += 1
-            print(f"  {count}. Fetching {country}{number}{kind}...", end=" ")
+            print(f"  {count}. [NEW] {patent_id}...", end=" ")
 
             biblio = get_biblio_data(country, number, kind)
             
             records.append({
                 "country": country,
-                "publication_number": number,  # Changed from "number" to "publication_number"
+                "publication_number": number,
                 "kind": kind,
                 "title": biblio.get("title", ""),
                 "applicants": biblio.get("applicants", ""),
@@ -223,7 +248,8 @@ def search_patents():
             
             print(f"✓ {biblio.get('title', 'N/A')[:50]}")
             time.sleep(0.3)  # Be nice to the API
-
+    
+    print(f"\nSummary: Found {count} total, {new_count} new, {skipped_count} already in database")
     return pd.DataFrame(records)
 
 
