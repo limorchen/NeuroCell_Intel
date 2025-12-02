@@ -1,7 +1,7 @@
 name: Patent Search and Update
 
 on:
-  # Run automatically every 2 months (on the 1st day at 00:00 UTC)
+  # Run automatically every 2 months exactly (on the 1st day at 00:00 UTC)
   schedule:
     - cron: '0 0 1 */2 *'  # Every 2 months on the 1st at midnight UTC
   
