@@ -10,12 +10,8 @@ from email.mime.application import MIMEApplication
 
 import pandas as pd
 from lxml import etree
-from python_dateutil import parser as dateparser
 
-# EPO OPS client
 from epo_ops import Client, models, middlewares, exc as ops_exc
-
-
 # ---------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------
