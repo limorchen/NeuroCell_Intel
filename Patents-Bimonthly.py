@@ -11,7 +11,8 @@ from email.mime.application import MIMEApplication
 import pandas as pd
 from lxml import etree
 
-from epo_ops import Client, models, middlewares, exc as ops_exc
+from epo_ops import Client, models, middlewares
+import epo_ops.exceptions as ops_exc
 # ---------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------
