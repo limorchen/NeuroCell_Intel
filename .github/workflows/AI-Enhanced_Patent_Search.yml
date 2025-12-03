@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 name: AI-Enhanced_Patent_Search.yml
-=======
-name: AI-Enhanced Patent Search
->>>>>>> d3a49d5 (Add AI-Enhanced Patent Search workflow)
 
 on:
   workflow_dispatch:  # manual trigger
