@@ -585,7 +585,64 @@ TOTAL DATABASE: {len(df_all)} patents
     except Exception as e:
         print(f"✗ Error sending email: {e}")
 
+# ---------------------------------------------------------------
+# CSV Correction Utility (Run once)
+# ---------------------------------------------------------------
 
+def manual_csv_fixer():
+    """Forces the correct column structure into the cumulative CSV."""
+    if not CUMULATIVE_CSV.exists():
+        print("CSV file not found, skipping manual fix.")
+        return
+        
+    FINAL_COLUMNS = [
+        "country", "publication_number", "kind", "title", "applicants", "inventors", 
+        "abstract", "publication_date", "priority_date", 
+        "relevance_score", "ai_summary", "date_added", "is_new"
+    ]
+    
+    try:
+        df = pd.read_csv(CUMULATIVE_CSV)
+        
+        # Check if the columns are already present
+        if 'relevance_score' in df.columns and 'ai_summary' in df.columns:
+            print("CSV already has the required analysis columns. Skipping manual fix.")
+            return
+
+        print("🚨 Fixing CSV structure: Adding missing analysis columns...")
+        
+        # Explicitly reindex to add missing columns, filling with defaults
+        fill_values = {'relevance_score': 0.0, 'ai_summary': '', 'date_added': ''}
+        df = df.reindex(columns=FINAL_COLUMNS).fillna(fill_values)
+
+        # Save the corrected DataFrame back to the file
+        df.to_csv(CUMULATIVE_CSV, index=False)
+        print(f"✓ CSV file structure corrected. Total records: {len(df)}")
+        
+    except Exception as e:
+        print(f"ERROR: Failed to run manual CSV fix: {e}")
+
+# ---------------------------------------------------------------
+# Modify Main function to call the fixer
+# ---------------------------------------------------------------
+def main():
+    print("="*80)
+    print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
+    print(f"AI summaries: {'Enabled' if claude_client else 'Disabled'}")
+    print("="*80)
+    
+    # 🚨 CALL THE FIXER HERE
+    manual_csv_fixer() 
+    
+    df_new = search_patents()
+    df_all = update_cumulative_csv(df_new)
+    
+    send_email_with_csv(df_all)
+    
+    print("\n" + "="*80)
+    print("Process completed successfully.")
+    print("="*80)
 # ---------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------
