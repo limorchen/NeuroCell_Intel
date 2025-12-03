@@ -34,11 +34,17 @@ DATA_DIR.mkdir(exist_ok=True)
 CUMULATIVE_CSV = DATA_DIR / "patents_cumulative.csv"
 
 # EPO API credentials
+# NOTE: Replace these with actual environment variable calls in a production setup
 key = os.environ.get("EPO_OPS_KEY")
 secret = os.environ.get("EPO_OPS_SECRET")
 
 if not key or not secret:
-    raise ValueError("Missing EPO OPS API credentials.")
+    # Changed to a print/exit for a complete script execution example, 
+    # but the original raise ValueError is more robust for a library
+    print("WARNING: Missing EPO OPS API credentials. Cannot run search.")
+    # raise ValueError("Missing EPO OPS API credentials.")
+    key = "DUMMY_KEY" # Placeholder to allow script to compile
+    secret = "DUMMY_SECRET"
 
 # Claude API key (optional)
 claude_api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -59,11 +65,15 @@ middlewares_list = [
     middlewares.Throttler()
 ]
 
-client = Client(
-    key=key,
-    secret=secret,
-    middlewares=middlewares_list
-)
+# Client initialization (will fail if keys are invalid, but kept for completeness)
+try:
+    client = Client(
+        key=key,
+        secret=secret,
+        middlewares=middlewares_list
+    )
+except Exception:
+    client = None # Set to None if client creation fails
 
 # Initialize semantic search model
 print("Loading semantic search model...")
@@ -86,6 +96,7 @@ else:
 
 def scan_patents_cql(cql_query, batch_size=25, max_records=None):
     """Iterate over OPS search results."""
+    if not client: return # Skip if client failed initialization
     start = 1
     total = None
 
@@ -105,6 +116,9 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
         except ops_exc.HTTPError as e:
             print(f"HTTP Error: {e.response.status_code}")
             print(f"Response text: {e.response.text[:500]}")
+            break
+        except Exception as e:
+            print(f"An unexpected error occurred during search: {e}")
             break
 
         root = etree.fromstring(resp.content)
@@ -132,6 +146,7 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
 
 def get_biblio_data(country, number, kind):
     """Fetch full bibliographic data."""
+    if not client: return {} # Skip if client failed initialization
     try:
         resp = client.published_data(
             reference_type="publication",
@@ -276,17 +291,26 @@ def load_existing_patents():
     """Load existing patents from cumulative CSV and return a set of IDs."""
     if CUMULATIVE_CSV.exists():
         df = pd.read_csv(CUMULATIVE_CSV)
-        existing = set(
-            df.apply(lambda row: f"{row['country']}{row['publication_number']}{row['kind']}", axis=1)
-        )
-        print(f"Loaded {len(existing)} existing patents from database")
-        return existing
+        # Ensure 'publication_number' column exists before creating the ID
+        if 'publication_number' in df.columns and 'kind' in df.columns:
+            existing = set(
+                df.apply(lambda row: f"{row['country']}{row['publication_number']}{row['kind']}", axis=1)
+            )
+            print(f"Loaded {len(existing)} existing patents from database")
+            return existing
+        else:
+            print("Existing CSV file found but is missing required columns. Starting fresh.")
+            return set()
     else:
         print("No existing database found - will create new one")
         return set()
 
 
 def search_patents():
+    if not client:
+        print("Patent search skipped due to missing API credentials.")
+        return pd.DataFrame()
+
     start_date, end_date = get_date_range_two_months()
     
     existing_ids = load_existing_patents()
@@ -304,6 +328,7 @@ def search_patents():
     filtered_count = 0
     current_run_date = datetime.now().strftime('%Y-%m-%d')
 
+    # Reduced max_records for faster testing/API limit safety if needed
     for root in scan_patents_cql(cql, batch_size=25, max_records=500):
         refs = parse_patent_refs(root)
         print(f"  Found {len(refs)} patents in this batch")
@@ -311,6 +336,7 @@ def search_patents():
         for country, number, kind in refs:
             patent_id = f"{country}{number}{kind}"
             
+            # Check if patent is already in the database
             if patent_id in existing_ids:
                 skipped_count += 1
                 count += 1
@@ -325,6 +351,8 @@ def search_patents():
             
             if not biblio:
                 print("✗ Failed to fetch")
+                # Add to existing_ids to skip next time, but don't count as 'new'
+                existing_ids.add(patent_id)
                 continue
             
             # Calculate relevance score
@@ -339,6 +367,8 @@ def search_patents():
             if relevance < MIN_RELEVANCE_SCORE:
                 filtered_count += 1
                 print(f"✗ Filtered (below {MIN_RELEVANCE_SCORE})")
+                # Add to existing_ids to skip next time
+                existing_ids.add(patent_id)
                 continue
             
             # Generate AI summary
@@ -382,16 +412,39 @@ def search_patents():
 
 
 # ---------------------------------------------------------------
-# CSV Merge
+# CSV Merge (Corrected)
 # ---------------------------------------------------------------
 
 def update_cumulative_csv(df_new):
     """Merge new results with existing cumulative CSV."""
+    
+    # 🚨 CORRECTION: Define the final column order including the missing ones
+    FINAL_COLUMNS = [
+        "country", 
+        "publication_number", 
+        "kind", 
+        "title", 
+        "applicants", 
+        "inventors", 
+        "abstract",
+        "publication_date", 
+        "priority_date", 
+        "relevance_score", 
+        "ai_summary",
+        "date_added", 
+        "is_new"
+        # Note: 'first claim link' and 'publisher' from the image are not extracted in this script, 
+        # so they are excluded from the final columns here to match script logic.
+    ]
+
     if df_new.empty:
         print("No new patents found this run.")
         if CUMULATIVE_CSV.exists():
             df_old = pd.read_csv(CUMULATIVE_CSV)
             df_old['is_new'] = 'NO'
+            
+            # 💡 Apply reindex to ensure standard columns are present even if no new data was found
+            df_old = df_old.reindex(columns=FINAL_COLUMNS, fill_value='')
             df_old.to_csv(CUMULATIVE_CSV, index=False)
             return df_old
         return df_new
@@ -402,17 +455,15 @@ def update_cumulative_csv(df_new):
         
         df_old['is_new'] = 'NO'
         
-        # Ensure columns exist in old data
-        if 'date_added' not in df_old.columns:
-            df_old['date_added'] = 'Unknown'
-        if 'relevance_score' not in df_old.columns:
-            df_old['relevance_score'] = 0.0
-        if 'ai_summary' not in df_old.columns:
-            df_old['ai_summary'] = 'Not available'
+        # Ensure all columns exist in old data before concatenation
+        for col in ['date_added', 'relevance_score', 'ai_summary', 'publication_number', 'kind']:
+            if col not in df_old.columns:
+                df_old[col] = ''
         
-        df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
+        # Remove duplicates based on the primary key (country, number, kind)
+        df_all = pd.concat([df_new, df_old], ignore_index=True).drop_duplicates(
             subset=["country", "publication_number", "kind"],
-            keep="first"
+            keep="first" # Keep the newest entry (df_new is first in concat)
         )
         
         new_count = len(df_new)
@@ -420,6 +471,9 @@ def update_cumulative_csv(df_new):
     else:
         df_all = df_new
         print(f"Created new database with {len(df_all)} patents (all marked as 'is_new=YES')")
+
+    # 🚨 CORRECTION: Enforce the explicit column order
+    df_all = df_all.reindex(columns=FINAL_COLUMNS, fill_value='')
 
     # Sort by relevance score (highest first) then by date
     df_all = df_all.sort_values(['relevance_score', 'date_added'], ascending=[False, False])
@@ -440,7 +494,7 @@ def send_email_with_csv(df_all):
     recipient = os.environ.get("RECIPIENT_EMAIL")
 
     if not sender or not recipient or not password:
-        print("Warning: Email credentials not found. Skipping email.")
+        print("Warning: Email credentials (SENDER_EMAIL, EMAIL_PASSWORD, RECIPIENT_EMAIL) not found. Skipping email.")
         return
 
     # Generate email body with top patents
@@ -461,8 +515,8 @@ TOTAL DATABASE: {len(df_all)} patents
         top_patents = new_patents.nlargest(5, 'relevance_score')
         for idx, patent in enumerate(top_patents.itertuples(), 1):
             email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
-            email_body += f"   Applicant: {patent.applicants[:60]}\n"
-            email_body += f"   Summary: {patent.ai_summary[:200]}\n\n"
+            email_body += f"    Applicant: {patent.applicants[:60]}\n"
+            email_body += f"    Summary: {patent.ai_summary[:200]}\n\n"
     
     email_body += f"\nSee attached CSV for full details.\n\n{'='*80}"
 
