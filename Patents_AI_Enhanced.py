@@ -416,9 +416,7 @@ def search_patents():
 # ---------------------------------------------------------------
 
 def update_cumulative_csv(df_new):
-    """Merge new results with existing cumulative CSV."""
-    
-    # 🚨 CORRECTION: Define the final column order including the missing ones
+    # Define FINAL_COLUMNS list here (as provided in the previous correction)
     FINAL_COLUMNS = [
         "country", 
         "publication_number", 
@@ -433,18 +431,17 @@ def update_cumulative_csv(df_new):
         "ai_summary",
         "date_added", 
         "is_new"
-        # Note: 'first claim link' and 'publisher' from the image are not extracted in this script, 
-        # so they are excluded from the final columns here to match script logic.
     ]
-
+    
     if df_new.empty:
         print("No new patents found this run.")
         if CUMULATIVE_CSV.exists():
             df_old = pd.read_csv(CUMULATIVE_CSV)
             df_old['is_new'] = 'NO'
             
-            # 💡 Apply reindex to ensure standard columns are present even if no new data was found
+            # 🚨 NEW CRITICAL LINE: Enforce the new column structure on the old data
             df_old = df_old.reindex(columns=FINAL_COLUMNS, fill_value='')
+            
             df_old.to_csv(CUMULATIVE_CSV, index=False)
             return df_old
         return df_new
