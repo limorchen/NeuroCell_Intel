@@ -204,13 +204,14 @@ def search_patents():
     # Example: searching for exosome + CNS patents
     search_terms = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS'
     
-    cql = f'{search_terms} and pd=[{start_date} TO {end_date}]'
+    cql = f'{search_terms} and pd within "{start_date} {end_date}"'
     print(f"Running CQL: {cql}")
 
     records = []
     count = 0
     new_count = 0
     skipped_count = 0
+    current_run_date = datetime.now().strftime('%Y-%m-%d')
 
     for root in scan_patents_cql(cql, batch_size=25, max_records=500):  # Limit to 500 for safety
         refs = parse_patent_refs(root)
@@ -243,7 +244,8 @@ def search_patents():
                 "abstract": biblio.get("abstract", ""),
                 "publication_date": biblio.get("publication_date", ""),
                 "priority_date": biblio.get("priority_date", ""),
-                "date_found": end_date
+                "date_added": current_run_date,
+                "is_new": "YES"
             })
             
             print(f"✓ {biblio.get('title', 'N/A')[:50]}")
@@ -260,26 +262,37 @@ def search_patents():
 def update_cumulative_csv(df_new):
     """Merge new results with existing cumulative CSV."""
     if df_new.empty:
-        print("No new patents found.")
+        print("No new patents found this run.")
         if CUMULATIVE_CSV.exists():
-            return pd.read_csv(CUMULATIVE_CSV)
+            df_old = pd.read_csv(CUMULATIVE_CSV)
+            # Mark all existing patents as NOT new
+            df_old['is_new'] = 'NO'
+            df_old.to_csv(CUMULATIVE_CSV, index=False)
+            return df_old
         return df_new
     
     if CUMULATIVE_CSV.exists():
         df_old = pd.read_csv(CUMULATIVE_CSV)
         print(f"Loaded {len(df_old)} existing patents")
         
-        # Merge and remove duplicates
+        # Mark all OLD patents as NOT new
+        df_old['is_new'] = 'NO'
+        
+        # Ensure date_added exists in old data
+        if 'date_added' not in df_old.columns:
+            df_old['date_added'] = 'Unknown'
+        
+        # Merge: old patents (marked NO) + new patents (marked YES)
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
             subset=["country", "publication_number", "kind"],
             keep="first"
         )
         
-        new_count = len(df_all) - len(df_old)
-        print(f"Added {new_count} new patents")
+        new_count = len(df_new)
+        print(f"Added {new_count} new patents (marked as 'is_new=YES')")
     else:
         df_all = df_new
-        print(f"Created new database with {len(df_all)} patents")
+        print(f"Created new database with {len(df_all)} patents (all marked as 'is_new=YES')")
 
     df_all.to_csv(CUMULATIVE_CSV, index=False)
     print(f"Saved cumulative CSV with {len(df_all)} total records.")
