@@ -34,7 +34,6 @@ DATA_DIR.mkdir(exist_ok=True)
 CUMULATIVE_CSV = DATA_DIR / "patents_cumulative.csv"
 
 # EPO API credentials
-# NOTE: Replace these with actual environment variable calls in a production setup
 key = os.environ.get("EPO_OPS_KEY")
 secret = os.environ.get("EPO_OPS_SECRET")
 
@@ -65,7 +64,7 @@ middlewares_list = [
     middlewares.Throttler()
 ]
 
-# Client initialization (will fail if keys are invalid, but kept for completeness)
+# Client initialization
 try:
     client = Client(
         key=key,
@@ -96,7 +95,7 @@ else:
 
 def scan_patents_cql(cql_query, batch_size=25, max_records=None):
     """Iterate over OPS search results."""
-    if not client: return # Skip if client failed initialization
+    if not client: return
     start = 1
     total = None
 
@@ -145,8 +144,10 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
 
 
 def get_biblio_data(country, number, kind):
-    """Fetch full bibliographic data."""
-    if not client: return {} # Skip if client failed initialization
+    """Fetch full bibliographic data. (Simplified for existing records - only abstract/title needed)"""
+    # NOTE: This function is preserved from the original script and fetches full data.
+    # For processing existing records, we assume abstract/title are already in the CSV.
+    if not client: return {} 
     try:
         resp = client.published_data(
             reference_type="publication",
@@ -185,7 +186,7 @@ def get_biblio_data(country, number, kind):
             "title": title,
             "applicants": applicants_str,
             "inventors": inventors_str,
-            "abstract": abstract,  # Keep full abstract for AI processing
+            "abstract": abstract,
             "publication_date": pub_date,
             "priority_date": priority_date
         }
@@ -412,11 +413,70 @@ def search_patents():
 
 
 # ---------------------------------------------------------------
+# Processing Existing Data (New Function)
+# ---------------------------------------------------------------
+
+def process_existing_records(df_old):
+    """
+    Checks existing records for missing relevance scores and AI summaries 
+    and calculates them where necessary.
+    """
+    # Force necessary columns to exist, filling missing with empty string
+    for col in ['title', 'abstract', 'relevance_score', 'ai_summary']:
+        if col not in df_old.columns:
+            df_old[col] = ''
+            
+    # Identify records that are missing either score or summary
+    # Check if relevance_score is 0.0 or if ai_summary is missing (empty string/NaN)
+    missing_mask = (df_old['relevance_score'].isnull()) | \
+                   (df_old['relevance_score'] == 0.0) | \
+                   (df_old['ai_summary'].apply(lambda x: not x or x == 'Summary generation failed'))
+                   
+    # Filter to only patents that need updating
+    df_to_update = df_old[missing_mask].copy()
+    
+    if df_to_update.empty:
+        print("No existing records require scoring or summarization.")
+        return df_old
+        
+    print(f"\n⚡ Processing {len(df_to_update)} existing records for scoring/summaries...")
+    updated_count = 0
+
+    for index, row in df_to_update.iterrows():
+        title = row['title'] if pd.notna(row['title']) else ""
+        abstract = row['abstract'] if pd.notna(row['abstract']) else ""
+        patent_id = f"{row['country']}{row['publication_number']}"
+        
+        # Skip if no text available for analysis
+        if not title and not abstract:
+            print(f"  [SKIP] {patent_id} - No title or abstract.")
+            continue
+            
+        # 1. Calculate Relevance Score
+        relevance = calculate_relevance_score(title, abstract)
+        
+        # 2. Generate AI Summary
+        ai_summary = generate_ai_summary(title, abstract, "")
+        
+        # Update the original DataFrame in place
+        df_old.loc[index, 'relevance_score'] = round(relevance, 3)
+        df_old.loc[index, 'ai_summary'] = ai_summary
+        updated_count += 1
+        
+        print(f"  [UPDATED] {patent_id} | Score: {relevance:.2f} | Title: {title[:40]}...")
+        time.sleep(0.3) # Respect API rate limits
+        
+    print(f"✓ Finished processing. Updated {updated_count} existing records.")
+    return df_old
+
+
+# ---------------------------------------------------------------
 # CSV Merge (Corrected)
 # ---------------------------------------------------------------
 
 def update_cumulative_csv(df_new):
-    # Define FINAL_COLUMNS list here (as provided in the previous correction)
+    """Merge new results with existing cumulative CSV and process old data."""
+    
     FINAL_COLUMNS = [
         "country", 
         "publication_number", 
@@ -427,40 +487,25 @@ def update_cumulative_csv(df_new):
         "abstract",
         "publication_date", 
         "priority_date", 
-        "relevance_score", 
-        "ai_summary",
+        "relevance_score", # Must be present
+        "ai_summary",      # Must be present
         "date_added", 
         "is_new"
     ]
-    
-    if df_new.empty:
-        print("No new patents found this run.")
-        if CUMULATIVE_CSV.exists():
-            df_old = pd.read_csv(CUMULATIVE_CSV)
-            df_old['is_new'] = 'NO'
-            
-            # 🚨 NEW CRITICAL LINE: Enforce the new column structure on the old data
-            df_old = df_old.reindex(columns=FINAL_COLUMNS, fill_value='')
-            
-            df_old.to_csv(CUMULATIVE_CSV, index=False)
-            return df_old
-        return df_new
-    
+
     if CUMULATIVE_CSV.exists():
         df_old = pd.read_csv(CUMULATIVE_CSV)
-        print(f"Loaded {len(df_old)} existing patents")
         
+        # 1. PROCESS EXISTING DATA: Fill in missing scores/summaries on df_old
+        df_old = process_existing_records(df_old)
+        
+        # Prepare old data for merge
         df_old['is_new'] = 'NO'
         
-        # Ensure all columns exist in old data before concatenation
-        for col in ['date_added', 'relevance_score', 'ai_summary', 'publication_number', 'kind']:
-            if col not in df_old.columns:
-                df_old[col] = ''
-        
-        # Remove duplicates based on the primary key (country, number, kind)
+        # Combine new and old data. New data is prioritized ('keep="first"').
         df_all = pd.concat([df_new, df_old], ignore_index=True).drop_duplicates(
             subset=["country", "publication_number", "kind"],
-            keep="first" # Keep the newest entry (df_new is first in concat)
+            keep="first"
         )
         
         new_count = len(df_new)
@@ -469,7 +514,7 @@ def update_cumulative_csv(df_new):
         df_all = df_new
         print(f"Created new database with {len(df_all)} patents (all marked as 'is_new=YES')")
 
-    # 🚨 CORRECTION: Enforce the explicit column order
+    # 2. Enforce the explicit column order for the final file
     df_all = df_all.reindex(columns=FINAL_COLUMNS, fill_value='')
 
     # Sort by relevance score (highest first) then by date
@@ -509,11 +554,13 @@ TOTAL DATABASE: {len(df_all)} patents
     if len(new_patents) > 0:
         email_body += "\n🔥 TOP 5 MOST RELEVANT NEW PATENTS:\n\n"
         
-        top_patents = new_patents.nlargest(5, 'relevance_score')
-        for idx, patent in enumerate(top_patents.itertuples(), 1):
-            email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
-            email_body += f"    Applicant: {patent.applicants[:60]}\n"
-            email_body += f"    Summary: {patent.ai_summary[:200]}\n\n"
+        # Only use top patents if 'relevance_score' is not entirely missing
+        if 'relevance_score' in new_patents.columns:
+            top_patents = new_patents.nlargest(5, 'relevance_score')
+            for idx, patent in enumerate(top_patents.itertuples(), 1):
+                email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
+                email_body += f"    Applicant: {patent.applicants[:60]}\n"
+                email_body += f"    Summary: {patent.ai_summary[:200]}\n\n"
     
     email_body += f"\nSee attached CSV for full details.\n\n{'='*80}"
 
