@@ -1,4 +1,4 @@
-name: AI-Enhanced Patent Search
+name: AI-Enhanced_Patent_Search
 
 on:
   workflow_dispatch:  # manual trigger
