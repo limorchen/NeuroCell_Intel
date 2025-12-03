@@ -1,4 +1,4 @@
-name: AI-Enhanced_Patent_Search
+name: AI-Enhanced_Patent_Search.yml
 
 on:
   workflow_dispatch:  # manual trigger
