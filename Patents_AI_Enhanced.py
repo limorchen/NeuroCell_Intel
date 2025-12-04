@@ -50,7 +50,7 @@ Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
 
 # Minimum relevance score (0-1 scale)
-MIN_RELEVANCE_SCORE = 0.50  # Adjust this threshold as needed
+MIN_RELEVANCE_SCORE = 0.50  # Adjust this threshold as needed
 
 middlewares_list = [
     middlewares.Dogpile(),
@@ -124,6 +124,7 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
         if start > end:
             break
 
+        # 🚨 FIX: Corrected indentation here to resolve IndentationError 🚨
         try:
             resp = client.published_data_search(
                 cql=cql_query,
@@ -179,11 +180,11 @@ def get_biblio_data(country, number, kind):
         if not title:
             title = root.xpath("string(//ex:invention-title)", namespaces=ns)
         
-        # Extract applicants
+        # 🚨 FIX: Using the reliable namespaced XPaths for applicants 🚨
         applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
         applicants_str = ", ".join(applicants) if applicants else ""
-      
-        # Extract inventors
+        
+        # 🚨 FIX: Using the reliable namespaced XPaths for inventors 🚨
         inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
         inventors_str = ", ".join(inventors) if inventors else ""
 
@@ -208,10 +209,10 @@ def get_biblio_data(country, number, kind):
         }
     except ops_exc.HTTPError as e:
         if e.response.status_code == 404:
-            print(f"  Biblio not available for {country}{number}")
+            print(f"  Biblio not available for {country}{number}")
         return {}
     except Exception as e:
-        print(f"  Error fetching biblio for {country}{number}{kind}: {e}")
+        print(f"  Error fetching biblio for {country}{number}{kind}: {e}")
         return {}
 
 
@@ -314,7 +315,7 @@ def search_patents():
     # Reduced max_records for faster testing/API limit safety if needed
     for root in scan_patents_cql(cql, batch_size=25, max_records=500):
         refs = parse_patent_refs(root)
-        print(f"  Found {len(refs)} patents in this batch")
+        print(f"  Found {len(refs)} patents in this batch")
         
         for country, number, kind in refs:
             patent_id = f"{country}{number}{kind}"
@@ -323,11 +324,11 @@ def search_patents():
             if patent_id in existing_ids:
                 skipped_count += 1
                 count += 1
-                print(f"  {count}. [SKIP] {patent_id} (already in database)")
+                print(f"  {count}. [SKIP] {patent_id} (already in database)")
                 continue
             
             count += 1
-            print(f"  {count}. [NEW] {patent_id}...", end=" ")
+            print(f"  {count}. [NEW] {patent_id}...", end=" ")
 
             # Fetch bibliographic data
             biblio = get_biblio_data(country, number, kind)
@@ -359,7 +360,7 @@ def search_patents():
             ai_summary = generate_ai_summary(
                 biblio.get("title", ""),
                 biblio.get("abstract", ""),
-                ""  # Claims not fetched in this version for speed
+                ""  # Claims not fetched in this version for speed
             )
             
             new_count += 1
@@ -385,10 +386,10 @@ def search_patents():
     
     print(f"\n{'='*80}")
     print(f"Summary:")
-    print(f"  Total found: {count}")
-    print(f"  Already in DB: {skipped_count}")
-    print(f"  Below relevance threshold ({MIN_RELEVANCE_SCORE}): {filtered_count}")
-    print(f"  Added to database: {new_count}")
+    print(f"  Total found: {count}")
+    print(f"  Already in DB: {skipped_count}")
+    print(f"  Below relevance threshold ({MIN_RELEVANCE_SCORE}): {filtered_count}")
+    print(f"  Added to database: {new_count}")
     print(f"{'='*80}\n")
     
     return pd.DataFrame(records)
@@ -398,19 +399,13 @@ def search_patents():
 # Processing Existing Data (Final, Robust Function)
 # ---------------------------------------------------------------
 
-from datetime import datetime, timedelta
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
-import numpy as np
-import pandas as pd
-
 # Define RESEARCH_FOCUS (assuming this is defined globally in your script)
 # RESEARCH_FOCUS = "..." 
 
 # Initialize semantic model and focus embedding (assuming this is done globally)
 # semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
 # research_focus_embedding = semantic_model.encode(RESEARCH_FOCUS)
-   
+    
 def calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding):
     """Calculates cosine similarity between the patent and the research focus."""
     patent_text = title + " " + abstract
@@ -428,6 +423,8 @@ def calculate_relevance_score(title, abstract, semantic_model, research_focus_em
         )[0][0]
         return float(similarity)
     except Exception as e:
+        # NOTE: This error often happens if title/abstract are empty strings, 
+        # but the check above should prevent it.
         print(f"Error calculating score: {e}")
         return 0.0
 
@@ -456,7 +453,7 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
     missing_score = (df['relevance_score'] <= 0.001)
     
     # Identify records with missing or placeholder summaries
-    summary_col = df['ai_summary'].fillna('').str.lower()
+    summary_col = df['ai_summary'].fillna('').astype(str).str.lower()
     missing_summary = (summary_col == '') | \
                       summary_col.str.contains('not available') | \
                       summary_col.str.contains('summary generation failed')
@@ -482,8 +479,9 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
             abstract = str(row['abstract']) if pd.notna(row['abstract']) else ""
             score = calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding)
             
+            # 🚨 FIX: Summary generation now uses the cleaned 'abstract' string, preventing 'float' split error 🚨
             # 2. AI Summary (Heuristic)
-            abstract_text = abstract.split('.') # Use the cleaned 'abstract' variable
+            abstract_text = abstract.split('.') # Use the cleaned 'abstract' variable (which is guaranteed to be a string)
             summary = '.'.join(abstract_text[:3]).strip()
             # Use the cleaned 'title' variable for a better fallback than the raw row value
             summary = summary if len(summary) > 10 else title
@@ -492,10 +490,12 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
             df.loc[index, 'relevance_score'] = score
             df.loc[index, 'ai_summary'] = summary
             
-            print(f"  [UPDATED] {row['country']}{row['publication_number']} - Score: {score:.4f}")
+            print(f"  [UPDATED] {row['country']}{row['publication_number']} - Score: {score:.4f}")
             
         except Exception as e:
-            print(f"  [ERROR] Could not process {row['country']}{row['publication_number']}: {e}")
+            # Added patent ID to the error print for better tracking
+            patent_id = f"{row['country']}{row['publication_number']}"
+            print(f"  [ERROR] Could not process {patent_id}: {e}")
             df.loc[index, 'ai_summary'] = "Summary generation failed."
     
     # --- 4. SORT AND RETURN ---
@@ -523,7 +523,7 @@ def update_cumulative_csv(df_new):
         "publication_date", 
         "priority_date", 
         "relevance_score", # Must be present
-        "ai_summary",      # Must be present
+        "ai_summary",      # Must be present
         "date_added", 
         "is_new"
     ]
@@ -624,8 +624,8 @@ TOTAL DATABASE: {len(df_all)} patents
         top_patents = new_patents.nlargest(5, 'relevance_score')
         for idx, patent in enumerate(top_patents.itertuples(), 1):
             email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
-            email_body += f"  Applicant: {patent.applicants[:60]}\n"
-            email_body += f"  Summary: {patent.ai_summary[:200]}\n\n"
+            email_body += f"  Applicant: {patent.applicants[:60]}\n"
+            email_body += f"  Summary: {patent.ai_summary[:200]}\n\n"
     
     email_body += f"\nSee attached CSV for full details.\n\n{'='*80}"
 
