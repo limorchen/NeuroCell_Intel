@@ -261,10 +261,11 @@ def parse_patent_refs(root):
 # Search Logic
 # ---------------------------------------------------------------
 
-def get_date_range_two_months():
-    """Return (start_date, end_date) covering the last 2 months in YYYYMMDD format."""
+# 🚨 FIX 1: Date range increased to 365 days to prevent future date error 🚨
+def get_date_range_one_year():
+    """Return (start_date, end_date) covering the last 1 year in YYYYMMDD format."""
     end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=60)
+    start_date = end_date - timedelta(days=365)
     
     start_str = start_date.strftime("%Y%m%d")
     end_str = end_date.strftime("%Y%m%d")
@@ -287,7 +288,8 @@ def load_existing_patents():
 
 
 def search_patents():
-    start_date, end_date = get_date_range_two_months()
+    # 🚨 FIX 1b: Use the new 1-year date range function 🚨
+    start_date, end_date = get_date_range_one_year()
     
     existing_ids = load_existing_patents()
 
@@ -402,7 +404,7 @@ def update_cumulative_csv(df_new):
         
         df_old['is_new'] = 'NO'
         
-        # Ensure columns exist in old data
+        # Ensure columns exist in old data (Redundant due to ensure_ai_columns_exist, but safe)
         if 'date_added' not in df_old.columns:
             df_old['date_added'] = 'Unknown'
         if 'relevance_score' not in df_old.columns:
@@ -427,6 +429,31 @@ def update_cumulative_csv(df_new):
     df_all.to_csv(CUMULATIVE_CSV, index=False)
     print(f"Saved cumulative CSV with {len(df_all)} total records.")
     return df_all
+
+
+# ---------------------------------------------------------------
+# Column Initialization Logic (FIX 2a)
+# ---------------------------------------------------------------
+def ensure_ai_columns_exist():
+    """Reads existing data and adds/updates AI columns if they are missing."""
+    if not CUMULATIVE_CSV.exists():
+        return
+    
+    df = pd.read_csv(CUMULATIVE_CSV)
+    
+    # Check for the presence of the new AI columns
+    if 'relevance_score' not in df.columns or 'ai_summary' not in df.columns:
+        print("⚡ Processing existing records: Adding missing AI columns with default values.")
+        
+        if 'relevance_score' not in df.columns:
+            df['relevance_score'] = 0.0
+        if 'ai_summary' not in df.columns:
+            df['ai_summary'] = 'Not available'
+        
+        df.to_csv(CUMULATIVE_CSV, index=False)
+        print(f"✓ AI columns successfully initialized for {len(df)} existing records.")
+    else:
+        print("✓ AI columns already present in existing database.")
 
 
 # ---------------------------------------------------------------
@@ -461,8 +488,8 @@ TOTAL DATABASE: {len(df_all)} patents
         top_patents = new_patents.nlargest(5, 'relevance_score')
         for idx, patent in enumerate(top_patents.itertuples(), 1):
             email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
-            email_body += f"   Applicant: {patent.applicants[:60]}\n"
-            email_body += f"   Summary: {patent.ai_summary[:200]}\n\n"
+            email_body += f"  Applicant: {patent.applicants[:60]}\n"
+            email_body += f"  Summary: {patent.ai_summary[:200]}\n\n"
     
     email_body += f"\nSee attached CSV for full details.\n\n{'='*80}"
 
@@ -494,10 +521,14 @@ TOTAL DATABASE: {len(df_all)} patents
 
 def main():
     print("="*80)
-    print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # 🚨 FIX 2b: Update print statement 🚨
+    print(f"Starting 1-Year AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
     print(f"AI summaries: {'Enabled' if claude_client else 'Disabled'}")
     print("="*80)
+    
+    # 🚨 FIX 2c: Initialize AI columns for existing data 🚨
+    ensure_ai_columns_exist() 
     
     df_new = search_patents()
     df_all = update_cumulative_csv(df_new)

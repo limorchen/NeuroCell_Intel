@@ -41,6 +41,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
+      # REMOVE the debugging 'cat' step if you added it, as it's no longer needed.
+      # If you kept it, you can leave it, but it's not essential for the fix.
+      
       - name: Run AI-enhanced patent search
         env:
           EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
@@ -49,7 +52,8 @@ jobs:
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-        run: python Patents-Bimonthly.py
+        # 🚨 CRITICAL CHANGE: RUNNING Patents_AI_Enhanced.py 🚨
+        run: python Patents_AI_Enhanced.py
       
       - name: Commit and push CSV changes
         run: |
