@@ -411,13 +411,8 @@ import pandas as pd
 # semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
 # research_focus_embedding = semantic_model.encode(RESEARCH_FOCUS)
 
+
 def calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding):
-    """Calculates cosine similarity between the patent and the research focus."""
-    patent_text = title + " " + abstract
-    if not patent_text.strip():
-        return 0.0
-    
-    def calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding):
     """Calculates cosine similarity between the patent and the research focus."""
     patent_text = title + " " + abstract
     if not patent_text.strip():
