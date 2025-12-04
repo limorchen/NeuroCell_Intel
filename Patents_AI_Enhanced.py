@@ -180,13 +180,17 @@ def get_biblio_data(country, number, kind):
             title = root.xpath("string(//ex:invention-title)", namespaces=ns)
         
         # Extract applicants
-        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
-        applicants_str = ", ".join(applicants) if applicants else ""
+        applicants = root.xpath("//applicant/applicant-name/name/text()") 
+        if not applicants:
+             applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        applicants_str = ", ".join(applicants) if applicants else ""# Extract applicants
         
         # Extract inventors
-        inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        inventors = root.xpath("//inventor/inventor-name/name/text()")
+        if not inventors:
+             inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
         inventors_str = ", ".join(inventors) if inventors else ""
-        
+
         # Extract abstract
         abstract = root.xpath("string(//ex:abstract[@lang='en']/ex:p)", namespaces=ns)
         if not abstract:
@@ -483,9 +487,10 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
             score = calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding)
             
             # 2. AI Summary (Heuristic)
-            abstract_text = row['abstract'].split('.')
+            abstract_text = abstract.split('.') # Use the cleaned 'abstract' variable
             summary = '.'.join(abstract_text[:3]).strip()
-            summary = summary if len(summary) > 10 else row['abstract'] # Fallback if first sentences are too short
+            # Use the cleaned 'title' variable for a better fallback than the raw row value
+            summary = summary if len(summary) > 10 else title
 
             # Update the main DataFrame (df)
             df.loc[index, 'relevance_score'] = score
