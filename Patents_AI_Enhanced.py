@@ -139,7 +139,7 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
             break
 
         root = etree.fromstring(resp.content)
-        ns = {"ops": "http://ops.epo.org"}
+        ns = {"ex": "http://www.epo.org/exchange"} # <<< THIS MUST BE PRESENT AND CORRECT
 
         if total is None:
             total_str = root.xpath("string(//ops:biblio-search/@total-result-count)", namespaces=ns)
@@ -180,15 +180,11 @@ def get_biblio_data(country, number, kind):
             title = root.xpath("string(//ex:invention-title)", namespaces=ns)
         
         # Extract applicants
-        applicants = root.xpath("//applicant/applicant-name/name/text()") 
-        if not applicants:
-             applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
-        applicants_str = ", ".join(applicants) if applicants else ""# Extract applicants
-        
+        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        applicants_str = ", ".join(applicants) if applicants else ""
+      
         # Extract inventors
-        inventors = root.xpath("//inventor/inventor-name/name/text()")
-        if not inventors:
-             inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
         inventors_str = ", ".join(inventors) if inventors else ""
 
         # Extract abstract
