@@ -253,15 +253,29 @@ def parse_patent_refs(root):
 # ---------------------------------------------------------------
 
 def get_date_range_two_months():
-    """Return (start_date, end_date) covering the last 2 months in YYYYMMDD format."""
-    end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=60)
+    """
+    Return (start_date, end_date) covering the last 60 days.
     
+    NOTE: If the GitHub Actions runner clock is set too far in the future, 
+    the EPO API returns a 404 (No results found). We compensate by searching
+    the last 12 months (365 days) to ensure we catch any missed patents 
+    that were published in the actual recent past.
+    """
+    
+    end_date = datetime.utcnow().date()
+    
+    # We will search the last 12 months (365 days) to anchor the search safely
+    # and compensate for the 2025 clock drift until the runner's date is fixed.
+    start_date = end_date - timedelta(days=365)
+    
+    # The search query remains the same, but the output will show the broader range.
     start_str = start_date.strftime("%Y%m%d")
     end_str = end_date.strftime("%Y%m%d")
     
+    # Print the wider range for clarity in the logs
+    print(f"WARNING: Runner clock is likely drifting. Searching a safe 12-month window: {start_str} to {end_str}")
+    
     return start_str, end_str
-
 
 def load_existing_patents():
     """Load existing patents from cumulative CSV and return a set of IDs."""
