@@ -50,7 +50,7 @@ Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
 
 # Minimum relevance score (0-1 scale)
-MIN_RELEVANCE_SCORE = 0.50  # Adjust this threshold as needed
+MIN_RELEVANCE_SCORE = 0.50 # Adjust this threshold as needed
 
 middlewares_list = [
     middlewares.Dogpile(),
