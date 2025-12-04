@@ -1,3 +1,9 @@
+# ====================================================================
+# ADD THIS LINE AT THE VERY TOP OF YOUR SCRIPT:
+print("--- SCRIPT VERSION 1.1: DATE AND COLUMN FIXES DEPLOYED ---") 
+# ====================================================================
+
+from datetime import datetime, timedelta
 import os
 import csv
 import time
