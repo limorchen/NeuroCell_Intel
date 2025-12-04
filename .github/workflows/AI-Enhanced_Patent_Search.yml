@@ -41,14 +41,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      # REMOVE the debugging 'cat' step if you added it, as it's no longer needed.
-      # If you kept it, you can leave it, but it's not essential for the fix.
-      
+      # 🚨 NEW DEBUGGING STEP 🚨
+      - name: Show contents of Patents-Bimonthly.py for debugging
+        run: cat Patents-Bimonthly.py
+
       - name: Run AI-enhanced patent search
         env:
           EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
           EPO_OPS_SECRET: ${{ secrets.EPO_OPS_SECRET }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
