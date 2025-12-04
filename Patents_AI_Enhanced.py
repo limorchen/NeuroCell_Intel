@@ -527,7 +527,7 @@ def update_cumulative_csv(df_new):
         df_old = pd.read_csv(CUMULATIVE_CSV)
         
         # 1. PROCESS EXISTING DATA: Fill in missing scores/summaries on df_old
-        df_old = process_existing_records(df_old)
+        df_old = process_existing_records(df_old, semantic_model, research_focus_embedding)
         
         # Prepare old data for merge
         df_old['is_new'] = 'NO'
