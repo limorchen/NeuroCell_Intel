@@ -2,6 +2,7 @@ import os
 import csv
 import time
 import smtplib
+import sys # Added for explicit exit on model load failure
 from datetime import datetime, timedelta
 from pathlib import Path
 from email.mime.text import MIMEText
@@ -17,14 +18,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 from epo_ops import Client, models, middlewares
 import epo_ops.exceptions as ops_exc
 
-# Import Claude API (optional - will work without it)
-try:
-    import anthropic
-    CLAUDE_AVAILABLE = True
-except ImportError:
-    CLAUDE_AVAILABLE = False
-    print("Warning: anthropic package not installed. AI summaries will be disabled.")
-
 # ---------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------
@@ -38,15 +31,9 @@ key = os.environ.get("EPO_OPS_KEY")
 secret = os.environ.get("EPO_OPS_SECRET")
 
 if not key or not secret:
-    # Changed to a print/exit for a complete script execution example, 
-    # but the original raise ValueError is more robust for a library
     print("WARNING: Missing EPO OPS API credentials. Cannot run search.")
-    # raise ValueError("Missing EPO OPS API credentials.")
     key = "DUMMY_KEY" # Placeholder to allow script to compile
     secret = "DUMMY_SECRET"
-
-# Claude API key (optional)
-claude_api_key = os.environ.get("ANTHROPIC_API_KEY")
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
@@ -74,24 +61,49 @@ try:
 except Exception:
     client = None # Set to None if client creation fails
 
-# Initialize semantic search model
-print("Loading semantic search model...")
-semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
-research_focus_embedding = semantic_model.encode(RESEARCH_FOCUS)
-print("✓ Semantic model ready")
-
-# Initialize Claude client if available
-if CLAUDE_AVAILABLE and claude_api_key:
-    claude_client = anthropic.Anthropic(api_key=claude_api_key)
-    print("✓ Claude API ready")
-else:
-    claude_client = None
-    print("✗ Claude API not available (summaries will be disabled)")
+# Initialize semantic search model (Used for Relevance Scoring)
+try:
+    print("Loading semantic search model...")
+    # Using a small, fast, and cached model
+    semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
+    research_focus_embedding = semantic_model.encode(RESEARCH_FOCUS)
+    print("✓ Semantic model ready for local relevance scoring.")
+except Exception as e:
+    print(f"FATAL ERROR: Could not load SentenceTransformer model. Please ensure 'sentence-transformers' is in requirements.txt. Error: {e}")
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------
-# Helper Functions
+# Helper Functions (Local AI/Summary is the key change here)
 # ---------------------------------------------------------------
+
+# The function below replaces the Claude API call
+def generate_ai_summary(title, abstract, claims=""):
+    """
+    Generate concise AI summary using a simple local heuristic 
+    (first 3 sentences of the abstract).
+    
+    This function replaces the paid Anthropic API call.
+    """
+    
+    if not abstract:
+        return "Insufficient data for summary"
+        
+    # Heuristic: Take the first 3 sentences of the abstract as a summary
+    sentences = abstract.split('.')
+    summary_sentences = sentences[:3] 
+    ai_summary = '.'.join(summary_sentences).strip()
+
+    # Ensure the summary ends with a period if it's not empty
+    if ai_summary and not ai_summary.endswith('.'):
+        ai_summary += '.'
+
+    # Fallback to the title if the abstract is too short
+    if len(ai_summary) < 20 and title:
+        return f"Summary: {title.strip()}"
+        
+    return ai_summary
+
 
 def scan_patents_cql(cql_query, batch_size=25, max_records=None):
     """Iterate over OPS search results."""
@@ -144,9 +156,7 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
 
 
 def get_biblio_data(country, number, kind):
-    """Fetch full bibliographic data. (Simplified for existing records - only abstract/title needed)"""
-    # NOTE: This function is preserved from the original script and fetches full data.
-    # For processing existing records, we assume abstract/title are already in the CSV.
+    """Fetch full bibliographic data."""
     if not client: return {} 
     try:
         resp = client.published_data(
@@ -200,7 +210,7 @@ def get_biblio_data(country, number, kind):
 
 
 def calculate_relevance_score(title, abstract):
-    """Calculate semantic similarity to research focus."""
+    """Calculate semantic similarity to research focus (using local model)."""
     if not title and not abstract:
         return 0.0
     
@@ -217,41 +227,6 @@ def calculate_relevance_score(title, abstract):
     )[0][0]
     
     return float(similarity)
-
-
-def generate_ai_summary(title, abstract, claims=""):
-    """Generate concise AI summary using Claude."""
-    if not claude_client:
-        return "AI summary not available (Claude API not configured)"
-    
-    if not title and not abstract:
-        return "Insufficient data for summary"
-    
-    try:
-        prompt = f"""Summarize this patent in 2-3 concise sentences. Focus on:
-1. The main innovation or technology
-2. The target disease or medical condition
-3. Practical clinical application
-
-Title: {title}
-Abstract: {abstract[:1000]}
-{f'First Claim: {claims[:500]}' if claims else ''}
-
-Provide a clear, jargon-free summary suitable for researchers."""
-
-        message = claude_client.messages.create(
-            model="claude-3-haiku-20240307",  # Fast and economical
-            max_tokens=200,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        return message.content[0].text.strip()
-    
-    except Exception as e:
-        print(f"    Error generating summary: {e}")
-        return "Summary generation failed"
 
 
 def parse_patent_refs(root):
@@ -372,7 +347,7 @@ def search_patents():
                 existing_ids.add(patent_id)
                 continue
             
-            # Generate AI summary
+            # Generate AI summary (using the local function)
             print("Summarizing...", end=" ")
             ai_summary = generate_ai_summary(
                 biblio.get("title", ""),
@@ -437,6 +412,8 @@ def process_existing_records(df_old):
     # Missing if score is 0.0 OR if summary is empty/failed message
     missing_mask = (df_old['relevance_score'] <= 0.0) | \
                    (df_old['ai_summary'].fillna('').apply(lambda x: not x or 'Summary generation failed' in x or 'not available' in x))
+    # Note: 'Summary generation failed' is the original failure message when Claude was disabled.
+    # The new local function won't generate this, but it protects against old data.
                    
     df_to_update = df_old[missing_mask].copy()
     
@@ -450,7 +427,7 @@ def process_existing_records(df_old):
     for index, row in df_to_update.iterrows():
         try:
             # Locate the original index to update df_old in place
-            original_index = row.name # Using the index from the .copy() is usually safe here
+            original_index = row.name 
             
             title = row['title'] if pd.notna(row['title']) else ""
             abstract = row['abstract'] if pd.notna(row['abstract']) else ""
@@ -460,13 +437,12 @@ def process_existing_records(df_old):
                 # Still set the relevance score to 0.0 explicitly if no text
                 df_old.loc[original_index, 'relevance_score'] = 0.0
                 df_old.loc[original_index, 'ai_summary'] = "No text available for analysis."
-                # print(f"  [SKIP] {patent_id} - No title or abstract.")
                 continue
                 
-            # 1. Calculate Relevance Score
+            # 1. Calculate Relevance Score (uses local model)
             relevance = calculate_relevance_score(title, abstract)
             
-            # 2. Generate AI Summary (only if relevance meets minimum)
+            # 2. Generate AI Summary (uses local function)
             if relevance >= MIN_RELEVANCE_SCORE:
                 ai_summary = generate_ai_summary(title, abstract, "")
             else:
@@ -478,7 +454,7 @@ def process_existing_records(df_old):
             updated_count += 1
             
             print(f"  [UPDATED] {patent_id} | Score: {relevance:.2f} | Title: {title[:40]}...")
-            time.sleep(0.3)
+            time.sleep(0.05) # Reduced sleep for faster local processing
             
         except Exception as e:
             # Handle single record error without crashing the loop
@@ -491,7 +467,7 @@ def process_existing_records(df_old):
     return df_old
 
 # ---------------------------------------------------------------
-# CSV Merge (Corrected)
+# CSV Merge
 # ---------------------------------------------------------------
 
 def update_cumulative_csv(df_new):
@@ -546,7 +522,7 @@ def update_cumulative_csv(df_new):
 
 
 # ---------------------------------------------------------------
-# Email Sending (Enhanced)
+# Email Sending
 # ---------------------------------------------------------------
 
 def send_email_with_csv(df_all):
@@ -592,12 +568,12 @@ TOTAL DATABASE: {len(df_all)} patents
     body = MIMEText(email_body, "plain")
     msg.attach(body)
 
-    with open(CUMULATIVE_CSV, "rb") as f:
-        attachment = MIMEApplication(f.read(), Name="patents_cumulative.csv")
-    attachment["Content-Disposition"] = 'attachment; filename="patents_cumulative.csv"'
-    msg.attach(attachment)
-
     try:
+        with open(CUMULATIVE_CSV, "rb") as f:
+            attachment = MIMEApplication(f.read(), Name="patents_cumulative.csv")
+        attachment["Content-Disposition"] = 'attachment; filename="patents_cumulative.csv"'
+        msg.attach(attachment)
+
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(sender, password)
             smtp.send_message(msg)
@@ -606,59 +582,18 @@ TOTAL DATABASE: {len(df_all)} patents
         print(f"✗ Error sending email: {e}")
 
 # ---------------------------------------------------------------
-# CSV Correction Utility (Run once)
-# ---------------------------------------------------------------
-
-def manual_csv_fixer():
-    """Forces the correct column structure into the cumulative CSV."""
-    if not CUMULATIVE_CSV.exists():
-        print("CSV file not found, skipping manual fix.")
-        return
-        
-    FINAL_COLUMNS = [
-        "country", "publication_number", "kind", "title", "applicants", "inventors", 
-        "abstract", "publication_date", "priority_date", 
-        "relevance_score", "ai_summary", "date_added", "is_new"
-    ]
-    
-    try:
-        df = pd.read_csv(CUMULATIVE_CSV)
-        
-        # Check if the columns are already present
-        if 'relevance_score' in df.columns and 'ai_summary' in df.columns:
-            print("CSV already has the required analysis columns. Skipping manual fix.")
-            return
-
-        print("🚨 Fixing CSV structure: Adding missing analysis columns...")
-        
-        # Explicitly reindex to add missing columns, filling with defaults
-        fill_values = {'relevance_score': 0.0, 'ai_summary': '', 'date_added': ''}
-        df = df.reindex(columns=FINAL_COLUMNS).fillna(fill_values)
-
-        # Save the corrected DataFrame back to the file
-        df.to_csv(CUMULATIVE_CSV, index=False)
-        print(f"✓ CSV file structure corrected. Total records: {len(df)}")
-        
-    except Exception as e:
-        print(f"ERROR: Failed to run manual CSV fix: {e}")
-
-# ---------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------
 
 def main():
     print("="*80)
-    print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting Local AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
-    print(f"AI summaries: {'Enabled' if claude_client else 'Disabled'}")
+    print(f"AI summaries: Local Heuristic (No API Key Required)")
     print("="*80)
-    
-    # 🚨 NOTE: The manual_csv_fixer() call has been removed. 
-    # The file MUST be pre-fixed manually for this to work.
     
     df_new = search_patents()
     
-    # This call now runs the robust process_existing_records on the pre-fixed file.
     df_all = update_cumulative_csv(df_new)
     
     send_email_with_csv(df_all)
