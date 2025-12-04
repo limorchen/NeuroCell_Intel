@@ -643,8 +643,9 @@ def manual_csv_fixer():
         print(f"ERROR: Failed to run manual CSV fix: {e}")
 
 # ---------------------------------------------------------------
-# Main function (Ensure only this version exists in your file)
+# Main
 # ---------------------------------------------------------------
+
 def main():
     print("="*80)
     print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -652,17 +653,14 @@ def main():
     print(f"AI summaries: {'Enabled' if claude_client else 'Disabled'}")
     print("="*80)
     
-    # 1. FIX THE CSV HEADERS
-    manual_csv_fixer() 
+    # 🚨 NOTE: The manual_csv_fixer() call has been removed. 
+    # The file MUST be pre-fixed manually for this to work.
     
-    # 2. RUN SEARCH AND GET NEW PATENTS (df_new is empty in your case)
     df_new = search_patents()
     
-    # 3. UPDATE/PROCESS EXISTING PATENTS
-    # This calls process_existing_records to score/summarize the 39 existing patents.
+    # This call now runs the robust process_existing_records on the pre-fixed file.
     df_all = update_cumulative_csv(df_new)
     
-    # 4. SEND EMAIL
     send_email_with_csv(df_all)
     
     print("\n" + "="*80)
@@ -672,4 +670,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
