@@ -643,26 +643,4 @@ def main():
     print("\n" + "="*80)
     print("Process completed successfully.")
     print("="*80)
-# ---------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------
 
-def main():
-    print("="*80)
-    print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
-    print(f"AI summaries: {'Enabled' if claude_client else 'Disabled'}")
-    print("="*80)
-    
-    df_new = search_patents()
-    df_all = update_cumulative_csv(df_new)
-    
-    send_email_with_csv(df_all)
-    
-    print("\n" + "="*80)
-    print("Process completed successfully.")
-    print("="*80)
-
-
-if __name__ == "__main__":
-    main()
