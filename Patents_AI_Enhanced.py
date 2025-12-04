@@ -419,10 +419,11 @@ def calculate_relevance_score(title, abstract, semantic_model, research_focus_em
     
     try:
         patent_embedding = semantic_model.encode(patent_text, convert_to_tensor=True)
-        # Ensure the embeddings are numpy arrays for cosine_similarity
+        # Embeddings are already NumPy arrays, no .cpu().numpy() needed
+        patent_embedding = semantic_model.encode(patent_text)
         similarity = cosine_similarity(
-            research_focus_embedding.cpu().numpy().reshape(1, -1),
-            patent_embedding.cpu().numpy().reshape(1, -1)
+            research_focus_embedding.reshape(1, -1),
+            patent_embedding.reshape(1, -1)
         )[0][0]
         return float(similarity)
     except Exception as e:
