@@ -476,8 +476,10 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
     # Calculate scores and summaries
     for index, row in df_to_update.iterrows():
         try:
-            # 1. Relevance Score
-            score = calculate_relevance_score(row['title'], row['abstract'], semantic_model, research_focus_embedding)
+            # 1. Relevance Score - Ensure title/abstract are strings
+            title = str(row['title']) if pd.notna(row['title']) else ""
+            abstract = str(row['abstract']) if pd.notna(row['abstract']) else ""
+            score = calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding)
             
             # 2. AI Summary (Heuristic)
             abstract_text = row['abstract'].split('.')
