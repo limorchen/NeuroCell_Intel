@@ -413,26 +413,31 @@ def search_patents():
 
 
 # ---------------------------------------------------------------
-# Processing Existing Data (New Function)
+# Processing Existing Data (Final, Robust Function)
 # ---------------------------------------------------------------
 
 def process_existing_records(df_old):
     """
     Checks existing records for missing relevance scores and AI summaries 
-    and calculates them where necessary.
+    and calculates them where necessary. This version is highly robust to errors.
     """
-    # Force necessary columns to exist, filling missing with empty string
-    for col in ['title', 'abstract', 'relevance_score', 'ai_summary']:
+    
+    # 1. Force necessary columns to exist, filling missing with empty string/zero
+    for col in ['title', 'abstract', 'relevance_score', 'ai_summary', 'country', 'publication_number', 'kind']:
         if col not in df_old.columns:
+            # Add missing columns with placeholder data
             df_old[col] = ''
-            
-    # Identify records that are missing either score or summary
-    # Check if relevance_score is 0.0 or if ai_summary is missing (empty string/NaN)
-    missing_mask = (df_old['relevance_score'].isnull()) | \
-                   (df_old['relevance_score'] == 0.0) | \
-                   (df_old['ai_summary'].apply(lambda x: not x or x == 'Summary generation failed'))
+            if col == 'relevance_score':
+                df_old[col] = 0.0
+
+    # Ensure 'relevance_score' is numeric for comparison
+    df_old['relevance_score'] = pd.to_numeric(df_old['relevance_score'], errors='coerce').fillna(0.0)
+
+    # 2. Identify records that are missing either score or summary
+    # Missing if score is 0.0 OR if summary is empty/failed message
+    missing_mask = (df_old['relevance_score'] <= 0.0) | \
+                   (df_old['ai_summary'].fillna('').apply(lambda x: not x or 'Summary generation failed' in x or 'not available' in x))
                    
-    # Filter to only patents that need updating
     df_to_update = df_old[missing_mask].copy()
     
     if df_to_update.empty:
@@ -443,32 +448,47 @@ def process_existing_records(df_old):
     updated_count = 0
 
     for index, row in df_to_update.iterrows():
-        title = row['title'] if pd.notna(row['title']) else ""
-        abstract = row['abstract'] if pd.notna(row['abstract']) else ""
-        patent_id = f"{row['country']}{row['publication_number']}"
-        
-        # Skip if no text available for analysis
-        if not title and not abstract:
-            print(f"  [SKIP] {patent_id} - No title or abstract.")
-            continue
+        try:
+            # Locate the original index to update df_old in place
+            original_index = row.name # Using the index from the .copy() is usually safe here
             
-        # 1. Calculate Relevance Score
-        relevance = calculate_relevance_score(title, abstract)
-        
-        # 2. Generate AI Summary
-        ai_summary = generate_ai_summary(title, abstract, "")
-        
-        # Update the original DataFrame in place
-        df_old.loc[index, 'relevance_score'] = round(relevance, 3)
-        df_old.loc[index, 'ai_summary'] = ai_summary
-        updated_count += 1
-        
-        print(f"  [UPDATED] {patent_id} | Score: {relevance:.2f} | Title: {title[:40]}...")
-        time.sleep(0.3) # Respect API rate limits
-        
+            title = row['title'] if pd.notna(row['title']) else ""
+            abstract = row['abstract'] if pd.notna(row['abstract']) else ""
+            patent_id = f"{row['country']}{row['publication_number']}"
+            
+            if not title and not abstract:
+                # Still set the relevance score to 0.0 explicitly if no text
+                df_old.loc[original_index, 'relevance_score'] = 0.0
+                df_old.loc[original_index, 'ai_summary'] = "No text available for analysis."
+                # print(f"  [SKIP] {patent_id} - No title or abstract.")
+                continue
+                
+            # 1. Calculate Relevance Score
+            relevance = calculate_relevance_score(title, abstract)
+            
+            # 2. Generate AI Summary (only if relevance meets minimum)
+            if relevance >= MIN_RELEVANCE_SCORE:
+                ai_summary = generate_ai_summary(title, abstract, "")
+            else:
+                ai_summary = "N/A - Below Relevance Threshold"
+            
+            # 3. Update the original DataFrame
+            df_old.loc[original_index, 'relevance_score'] = round(relevance, 3)
+            df_old.loc[original_index, 'ai_summary'] = ai_summary
+            updated_count += 1
+            
+            print(f"  [UPDATED] {patent_id} | Score: {relevance:.2f} | Title: {title[:40]}...")
+            time.sleep(0.3)
+            
+        except Exception as e:
+            # Handle single record error without crashing the loop
+            error_id = f"{row.get('country')}{row.get('publication_number')}"
+            print(f"  [ERROR] Failed to process record {error_id}. Error: {e}")
+            df_old.loc[original_index, 'ai_summary'] = f"Processing failed due to error: {e}"
+            continue
+
     print(f"✓ Finished processing. Updated {updated_count} existing records.")
     return df_old
-
 
 # ---------------------------------------------------------------
 # CSV Merge (Corrected)
