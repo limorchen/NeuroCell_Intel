@@ -419,10 +419,11 @@ def calculate_relevance_score(title, abstract, semantic_model, research_focus_em
     
     try:
         patent_embedding = semantic_model.encode(patent_text, convert_to_tensor=True)
-        # Ensure the embeddings are numpy arrays for cosine_similarity
+        # Embeddings are already NumPy arrays, no .cpu().numpy() needed
+        patent_embedding = semantic_model.encode(patent_text)
         similarity = cosine_similarity(
-            research_focus_embedding.cpu().numpy().reshape(1, -1),
-            patent_embedding.cpu().numpy().reshape(1, -1)
+            research_focus_embedding.reshape(1, -1),
+            patent_embedding.reshape(1, -1)
         )[0][0]
         return float(similarity)
     except Exception as e:
@@ -475,8 +476,10 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
     # Calculate scores and summaries
     for index, row in df_to_update.iterrows():
         try:
-            # 1. Relevance Score
-            score = calculate_relevance_score(row['title'], row['abstract'], semantic_model, research_focus_embedding)
+            # 1. Relevance Score - Ensure title/abstract are strings
+            title = str(row['title']) if pd.notna(row['title']) else ""
+            abstract = str(row['abstract']) if pd.notna(row['abstract']) else ""
+            score = calculate_relevance_score(title, abstract, semantic_model, research_focus_embedding)
             
             # 2. AI Summary (Heuristic)
             abstract_text = row['abstract'].split('.')
