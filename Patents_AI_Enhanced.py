@@ -547,7 +547,7 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
 def update_cumulative_csv(df_new):
     """Merge new results with existing cumulative CSV and process old data."""
     
-    FFINAL_COLUMNS = [
+    FINAL_COLUMNS = [
     "country",
     "publication_number",
     "kind",
