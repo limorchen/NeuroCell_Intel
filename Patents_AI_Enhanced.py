@@ -167,7 +167,8 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
 
 def get_biblio_data(country, number, kind):
     """Fetch full bibliographic data."""
-    if not client: return {} 
+    if not client: 
+        return {} 
     try:
         resp = client.published_data(
             reference_type="publication",
@@ -183,13 +184,41 @@ def get_biblio_data(country, number, kind):
         if not title:
             title = root.xpath("string(//ex:invention-title)", namespaces=ns)
         
-        # 🚨 FIX: Using the reliable namespaced XPaths for applicants 🚨
-        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
-        applicants_str = ", ".join(applicants) if applicants else ""
+        # Extract applicants - try multiple paths
+        applicants = []
         
-        # 🚨 FIX: Using the reliable namespaced XPaths for inventors 🚨
+        # Try standard path
+        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        
+        # If empty, try without namespace
+        if not applicants:
+            applicants = root.xpath("//*[local-name()='applicant-name']/*[local-name()='name']/text()")
+        
+        # If still empty, try parties/applicants path
+        if not applicants:
+            applicants = root.xpath("//ex:parties/ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        
+        # Clean up applicant names
+        applicants = [a.strip() for a in applicants if a.strip()]
+        applicants_str = ", ".join(applicants[:3]) if applicants else "Not available"  # Limit to first 3
+        
+        # Extract inventors - try multiple paths
+        inventors = []
+        
+        # Try standard path
         inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
-        inventors_str = ", ".join(inventors) if inventors else ""
+        
+        # If empty, try without namespace
+        if not inventors:
+            inventors = root.xpath("//*[local-name()='inventor-name']/*[local-name()='name']/text()")
+        
+        # If still empty, try parties/inventors path
+        if not inventors:
+            inventors = root.xpath("//ex:parties/ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        
+        # Clean up inventor names
+        inventors = [i.strip() for i in inventors if i.strip()]
+        inventors_str = ", ".join(inventors[:3]) if inventors else "Not available"  # Limit to first 3
 
         # Extract abstract
         abstract = root.xpath("string(//ex:abstract[@lang='en']/ex:p)", namespaces=ns)
@@ -212,10 +241,10 @@ def get_biblio_data(country, number, kind):
         }
     except ops_exc.HTTPError as e:
         if e.response.status_code == 404:
-            print(f"  Biblio not available for {country}{number}")
+            print(f"  Biblio not available for {country}{number}")
         return {}
     except Exception as e:
-        print(f"  Error fetching biblio for {country}{number}{kind}: {e}")
+        print(f"  Error fetching biblio for {country}{number}{kind}: {e}")
         return {}
 
 
