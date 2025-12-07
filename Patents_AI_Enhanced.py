@@ -360,7 +360,7 @@ def search_patents():
             ai_summary = generate_ai_summary(
                 biblio.get("title", ""),
                 biblio.get("abstract", ""),
-                ""  # Claims not fetched in this version for speed
+                "" # Claims not fetched in this version for speed
             )
             
             new_count += 1
