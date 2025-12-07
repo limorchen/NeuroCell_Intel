@@ -397,6 +397,8 @@ def search_patents():
             
             new_count += 1
             
+            link = f"https://worldwide.espacenet.com/patent/search/family/{country}{number}{kind}"
+            
             records.append({
                 "country": country,
                 "publication_number": number,
@@ -409,6 +411,7 @@ def search_patents():
                 "priority_date": biblio.get("priority_date", ""),
                 "relevance_score": round(relevance, 3),
                 "ai_summary": ai_summary,
+                "link": link,
                 "date_added": current_run_date,
                 "is_new": "YES"
             })
@@ -544,21 +547,22 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
 def update_cumulative_csv(df_new):
     """Merge new results with existing cumulative CSV and process old data."""
     
-    FINAL_COLUMNS = [
-        "country", 
-        "publication_number", 
-        "kind", 
-        "title", 
-        "applicants", 
-        "inventors", 
-        "abstract",
-        "publication_date", 
-        "priority_date", 
-        "relevance_score", # Must be present
-        "ai_summary", # Must be present
-        "date_added", 
-        "is_new"
-    ]
+    FFINAL_COLUMNS = [
+    "country",
+    "publication_number",
+    "kind",
+    "title",
+    "applicants",
+    "inventors",
+    "abstract",
+    "publication_date",
+    "priority_date",
+    "relevance_score",
+    "ai_summary",
+    "link",          # <--- ADD THIS
+    "date_added",
+    "is_new"
+   ]
 
     if CUMULATIVE_CSV.exists():
         df_old = pd.read_csv(CUMULATIVE_CSV)
