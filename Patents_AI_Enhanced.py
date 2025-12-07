@@ -43,9 +43,9 @@ if not key or not secret:
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
-Exosome-based drug delivery systems for central nervous system diseases,
+Exosome-based drug delivery systems for central nervous system diseases and conditions,
 including therapeutic applications for neurodegenerative conditions,
-brain cancer, stroke, and genetic brain disorders.
+brain cancer, stroke, spinal cord injury and genetic brain disorders.
 Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
 
@@ -153,7 +153,7 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
             total = int(total_str)
             print(f"Total results: {total}")
 
-        print(f"Fetching records {start}–{end}...")
+        print(f"Fetching records {start}{end}...")
         yield root
 
         if end >= total:
@@ -347,7 +347,7 @@ def search_patents():
     # Reduced max_records for faster testing/API limit safety if needed
     for root in scan_patents_cql(cql, batch_size=25, max_records=500):
         refs = parse_patent_refs(root)
-        print(f"  Found {len(refs)} patents in this batch")
+        print(f" Found {len(refs)} patents in this batch")
         
         for country, number, kind in refs:
             patent_id = f"{country}{number}{kind}"
@@ -356,11 +356,11 @@ def search_patents():
             if patent_id in existing_ids:
                 skipped_count += 1
                 count += 1
-                print(f"  {count}. [SKIP] {patent_id} (already in database)")
+                print(f" {count}. [SKIP] {patent_id} (already in database)")
                 continue
             
             count += 1
-            print(f"  {count}. [NEW] {patent_id}...", end=" ")
+            print(f" {count}. [NEW] {patent_id}...", end=" ")
 
             # Fetch bibliographic data
             biblio = get_biblio_data(country, number, kind)
@@ -418,10 +418,10 @@ def search_patents():
     
     print(f"\n{'='*80}")
     print(f"Summary:")
-    print(f"  Total found: {count}")
-    print(f"  Already in DB: {skipped_count}")
-    print(f"  Below relevance threshold ({MIN_RELEVANCE_SCORE}): {filtered_count}")
-    print(f"  Added to database: {new_count}")
+    print(f" Total found: {count}")
+    print(f" Already in DB: {skipped_count}")
+    print(f" Below relevance threshold ({MIN_RELEVANCE_SCORE}): {filtered_count}")
+    print(f" Added to database: {new_count}")
     print(f"{'='*80}\n")
     
     return pd.DataFrame(records)
@@ -522,12 +522,12 @@ def process_existing_records(df_old, semantic_model, research_focus_embedding):
             df.loc[index, 'relevance_score'] = score
             df.loc[index, 'ai_summary'] = summary
             
-            print(f"  [UPDATED] {row['country']}{row['publication_number']} - Score: {score:.4f}")
+            print(f" [UPDATED] {row['country']}{row['publication_number']} - Score: {score:.4f}")
             
         except Exception as e:
             # Added patent ID to the error print for better tracking
             patent_id = f"{row['country']}{row['publication_number']}"
-            print(f"  [ERROR] Could not process {patent_id}: {e}")
+            print(f" [ERROR] Could not process {patent_id}: {e}")
             df.loc[index, 'ai_summary'] = "Summary generation failed."
     
     # --- 4. SORT AND RETURN ---
