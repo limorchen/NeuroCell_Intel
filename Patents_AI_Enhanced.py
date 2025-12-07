@@ -523,7 +523,7 @@ def update_cumulative_csv(df_new):
         "publication_date", 
         "priority_date", 
         "relevance_score", # Must be present
-        "ai_summary",      # Must be present
+        "ai_summary", # Must be present
         "date_added", 
         "is_new"
     ]
