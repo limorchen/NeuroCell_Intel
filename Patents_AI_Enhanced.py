@@ -140,7 +140,10 @@ def scan_patents_cql(cql_query, batch_size=25, max_records=None):
             break
 
         root = etree.fromstring(resp.content)
-        ns = {"ex": "http://www.epo.org/exchange"} # <<< THIS MUST BE PRESENT AND CORRECT
+        ns = {
+            "ops": "http://ops.epo.org",           # ADD THIS LINE
+            "ex": "http://www.epo.org/exchange"
+   }
 
         if total is None:
             total_str = root.xpath("string(//ops:biblio-search/@total-result-count)", namespaces=ns)
