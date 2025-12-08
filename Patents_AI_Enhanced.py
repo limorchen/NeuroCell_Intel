@@ -653,6 +653,20 @@ NEW PATENTS: {len(new_patents)}
 TOTAL DATABASE: {len(df_all)} patents
 
 """
+
+    # -------------------------------------------------------------------
+    # Add search terms and semantic search phrase to the email
+    # -------------------------------------------------------------------
+    email_body += f"""
+SEARCH TERMS:
+{SEARCH_TERMS}
+
+SEMANTIC SEARCH FOCUS:
+{RESEARCH_FOCUS}
+{'='*80}
+"""
+
+  
     
     if len(new_patents) > 0:
         email_body += "\n🔥 TOP 5 MOST RELEVANT NEW PATENTS:\n\n"
