@@ -48,6 +48,7 @@ including therapeutic applications for neurodegenerative conditions,
 brain cancer, stroke, spinal cord injury and genetic brain disorders.
 Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
+SEARCH_TERMS = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS'
 
 # Minimum relevance score (0-1 scale)
 MIN_RELEVANCE_SCORE = 0.50 # Adjust this threshold as needed
@@ -332,9 +333,8 @@ def search_patents():
     existing_ids = load_existing_patents()
 
     # Search terms
-    search_terms = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS'
-    
-    cql = f'{search_terms} and pd within "{start_date} {end_date}"'
+    cql = f'{SEARCH_TERMS} and pd within "{start_date} {end_date}"'
+
     print(f"Running CQL: {cql}")
 
     records = []
