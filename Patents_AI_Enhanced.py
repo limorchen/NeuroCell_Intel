@@ -170,9 +170,10 @@ def get_biblio_data(country, number, kind):
     if not client: 
         return {} 
     try:
+        # Use epodoc format which is more reliable
         resp = client.published_data(
             reference_type="publication",
-            input=models.Docdb(number, country, kind),
+            input=models.Epodoc(f"{country}{number}"),  # Changed to Epodoc format
             endpoint="biblio"
         )
         
@@ -187,38 +188,38 @@ def get_biblio_data(country, number, kind):
         # Extract applicants - try multiple paths
         applicants = []
         
-        # Try standard path
-        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        # Path 1: Standard bibliographic-data path
+        applicants = root.xpath("//ex:bibliographic-data/ex:parties/ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
         
-        # If empty, try without namespace
+        # Path 2: Without parties wrapper
+        if not applicants:
+            applicants = root.xpath("//ex:bibliographic-data/ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        
+        # Path 3: Namespace-agnostic fallback
         if not applicants:
             applicants = root.xpath("//*[local-name()='applicant-name']/*[local-name()='name']/text()")
         
-        # If still empty, try parties/applicants path
-        if not applicants:
-            applicants = root.xpath("//ex:parties/ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
-        
         # Clean up applicant names
-        applicants = [a.strip() for a in applicants if a.strip()]
-        applicants_str = ", ".join(applicants[:3]) if applicants else "Not available"  # Limit to first 3
+        applicants = [a.strip() for a in applicants if a and a.strip()]
+        applicants_str = ", ".join(applicants[:3]) if applicants else "Not available"
         
         # Extract inventors - try multiple paths
         inventors = []
         
-        # Try standard path
-        inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        # Path 1: Standard bibliographic-data path
+        inventors = root.xpath("//ex:bibliographic-data/ex:parties/ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
         
-        # If empty, try without namespace
+        # Path 2: Without parties wrapper
+        if not inventors:
+            inventors = root.xpath("//ex:bibliographic-data/ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        
+        # Path 3: Namespace-agnostic fallback
         if not inventors:
             inventors = root.xpath("//*[local-name()='inventor-name']/*[local-name()='name']/text()")
         
-        # If still empty, try parties/inventors path
-        if not inventors:
-            inventors = root.xpath("//ex:parties/ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
-        
         # Clean up inventor names
-        inventors = [i.strip() for i in inventors if i.strip()]
-        inventors_str = ", ".join(inventors[:3]) if inventors else "Not available"  # Limit to first 3
+        inventors = [i.strip() for i in inventors if i and i.strip()]
+        inventors_str = ", ".join(inventors[:3]) if inventors else "Not available"
 
         # Extract abstract
         abstract = root.xpath("string(//ex:abstract[@lang='en']/ex:p)", namespaces=ns)
@@ -246,7 +247,6 @@ def get_biblio_data(country, number, kind):
     except Exception as e:
         print(f"  Error fetching biblio for {country}{number}{kind}: {e}")
         return {}
-
 
 def calculate_relevance_score(title, abstract):
     """Calculate semantic similarity to research focus (using local model)."""
@@ -409,7 +409,7 @@ def search_patents():
                 "abstract": biblio.get("abstract", "")[:500] if biblio.get("abstract") else "",
                 "publication_date": biblio.get("publication_date", ""),
                 "priority_date": biblio.get("priority_date", ""),
-                "relevance_score": round(relevance, 3),
+                "relevance_score": round(relevance, 2),
                 "ai_summary": ai_summary,
                 "link": link,
                 "date_added": current_run_date,
