@@ -296,15 +296,15 @@ def parse_patent_refs(root):
 # Search Logic
 # ---------------------------------------------------------------
 
-def get_date_range_one_year():
-    """Return (start_date, end_date) covering the last 1 year in YYYYMMDD format."""
+def get_date_range_sixty_days():
+    """Return (start_date, end_date) covering the last 60 days in YYYYMMDD format."""
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=60)
+
     start_str = start_date.strftime("%Y%m%d")
     end_str = end_date.strftime("%Y%m%d")
-    print(
-        print(f"Searching a 60-day window: {start_str} to {end_str}")
-    )
+
+    print(f"Searching a 60-day window: {start_str} to {end_str}")
     return start_str, end_str
 
 
