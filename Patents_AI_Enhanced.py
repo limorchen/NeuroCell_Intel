@@ -58,9 +58,10 @@ else:
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
-Exosome-based drug delivery systems for central nervous system diseases and conditions,
+Exosome-based drug delivery systems or unchanged naive exosomes 
+for central nervous system diseases and conditions,
 including therapeutic applications for neurodegenerative conditions,
-brain cancer, stroke, spinal cord injury and genetic brain disorders.
+stroke, spinal cord injury and genetic brain disorders.
 Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
 
