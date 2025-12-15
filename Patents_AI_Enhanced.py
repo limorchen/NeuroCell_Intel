@@ -303,8 +303,7 @@ def get_date_range_one_year():
     start_str = start_date.strftime("%Y%m%d")
     end_str = end_date.strftime("%Y%m%d")
     print(
-        f"WARNING: Runner clock is likely drifting. "
-        f"Searching a safe 12-month window: {start_str} to {end_str}"
+        print(f"Searching a 60-day window: {start_str} to {end_str}")
     )
     return start_str, end_str
 
@@ -332,7 +331,7 @@ def load_existing_patents():
 
 def search_patents():
     """Run OPS search, fetch biblio, score relevance, and return new records as DataFrame."""
-    start_date, end_date = get_date_range_one_year()
+    start_date, end_date = get_date_range_sixty_days()
     existing_ids = load_existing_patents()
 
     cql = f'{SEARCH_TERMS} and pd within "{start_date} {end_date}"'
