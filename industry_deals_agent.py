@@ -639,48 +639,52 @@ def normalize_title_for_dedup(title):
     return title
 
 # MODIFIED: The core relevance filter logic
-def is_exosome_relevant(text, title, log_check=False):
+def is_exosome_relevant(text, title):
+    """
+    Refined relevance filter to prioritize Exosomes/Neuro 
+    and block generic Oncology 'hallucinations'.
+    """
     combined = (title + " " + text).lower()
-
-    # 1. Spam and pure business exclusion filters
-    NON_SCIENCE_TERMS = [
-        "startup", "coworking", "real estate", "hospitality", "marketing",
-        "retail", "construction", "energy project", "banking", "investment firm",
-        "venture capital", "saudi vision 2030", "entrepreneurship", "office space",
-        "mall", "hotel", "infrastructure", "design firm", "architectural",
-        "saudi arabia riyadh", "business hub", "finance minister", "regional expansion", "tourism promotion", "tourism program", "tourist promotion",
-    "airlines to promote", "direct flights", "ho chi minh city department of tourism",
-    "northern europe tourism", "copenhagen denmark /prnewswire",
-        
+    
+    # 1. CORE EXOSOME/EV TERMS (Non-negotiable high signal)
+    EXOSOME_TERMS = [
+        "exosome", "extracellular vesicle", "evs", "vesicle-based",
+        "secretome", "nanovesicle", "exosomal", "nurexone", "evox", "capricor"
     ]
     
-    if any(term in combined for term in NON_SCIENCE_TERMS):
-        if not log_check:
-            return False
+    # 2. NEURO INTEREST
+    NEURO_TERMS = [
+        "neuro", "cns", "alzheimer", "parkinson", "spinal cord", 
+        "brain", "neuron", "multiple sclerosis", "stroke"
+    ]
 
-    # 2. Spam check
-    if any(term in combined for term in SPAM_TERMS):
-        if not log_check:
-            return False
+    # 3. SPAM/FALSE POSITIVE FILTERS
+    # We specifically target 'allosteric' to avoid the 'ALS' confusion
+    ONCO_SPAM = ["kras", "solid tumor", "pan-kras", "allosteric", "oncology pipeline"]
+    
+    # LOGIC CHECK
+    has_ev_context = any(term in combined for term in EXOSOME_TERMS)
+    has_neuro_context = any(term in combined for term in NEURO_TERMS)
+    
+    # Special check: Did it hit 'ALS' only as part of 'allosteric'?
+    # This prevents the Jacobio error.
+    is_allosteric_not_neuro = "allosteric" in combined and not any(n in combined for n in ["spinal", "brain", "neuron", "alzheimer"])
 
-    # 3. Core matching
-    company_match = any(comp.lower() in combined for comp in EXOSOME_COMPANIES)
-    exosome_hits = sum(term in combined for term in EXOSOME_TERMS)
-    core_interest_hit = any(term in combined for term in CORE_INTEREST_TERMS)
+    # FINAL DECISION TREE
+    if is_allosteric_not_neuro:
+        return False # Discard if it's just a chemical property
 
-    # 4. Relevance logic
-    has_exosome_context = (exosome_hits >= 1 or company_match)
-    if len(combined) > 300 and not (core_interest_hit or has_exosome_context):
+    if has_ev_context and has_neuro_context:
+        return True # Gold Standard: Exosome + Neuro
+        
+    if has_ev_context:
+        return True # Generally relevant: Any Exosome news
+        
+    # If it's a huge oncology deal (KRAS) with no Exosome mention, drop it.
+    if any(term in combined for term in ONCO_SPAM) and not has_ev_context:
         return False
 
-    # Require either explicit exosome mention or a known EV company reference
-    primary_relevance = has_exosome_context and len(combined) > 80
-
-    if log_check:
-        return primary_relevance
-
-    return primary_relevance
-
+    return False
 # -----------------------------------------------------
 # 📧 Email function
 # -----------------------------------------------------
