@@ -31,8 +31,7 @@ jobs:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
         with:
-          # Fetches full history so we can push back successfully
-          fetch-depth: 0
+          fetch-depth: 0  # Fetches full history for a successful push
 
       - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
@@ -55,19 +54,26 @@ jobs:
       - name: 💾 Commit and Push updated database
         if: always()
         run: |
-          # Configure Git Bot identity
+          # 1. Configure Git Bot identity
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Stage the specific database file (or the whole folder)
-          git add industry_deals/exosome_deals_DATABASE.xlsx
+          # 2. FILE CHECK: Only proceed if the database file exists
+          FILE_PATH="industry_deals/exosome_deals_DATABASE.xlsx"
           
-          # Only commit and push if there are actually changes staged
-          if git diff --staged --quiet; then
-            echo "No new deals found in database. Nothing to commit."
+          if [ -f "$FILE_PATH" ]; then
+            echo "Database file found. Staging for commit..."
+            git add "$FILE_PATH"
+            
+            # 3. CHANGE CHECK: Only commit if there are actual new changes
+            if git diff --staged --quiet; then
+              echo "No new changes detected in the database. Skipping commit."
+            else
+              git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d')]"
+              git push
+            fi
           else
-            git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d')]"
-            git push
+            echo "⚠️ No database file generated in this run. This is normal if 0 deals were found."
           fi
 
       - name: 📜 Upload log file (Artifact)
