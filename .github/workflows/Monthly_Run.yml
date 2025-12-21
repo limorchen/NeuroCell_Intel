@@ -2,12 +2,17 @@ name: Monthly Intelligence Agent (SMTP 465)
 
 on:
   schedule:
-    - cron: '0 10 14 * *'  # Runs at 10:00 UTC on the 1st of every month
-  workflow_dispatch:      # enables manual run
+    - cron: '0 10 14 * *'  # Runs at 10:00 UTC on the 14th of every month
+  workflow_dispatch:      # Enables manual run
 
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
+    
+    # REQUIRED: Grant permission to push changes back to the repo
+    permissions:
+      contents: write
+      
     env:
       # SMTP 465 credentials
       SMTP_HOST: ${{ secrets.SMTP_HOST_465 }}
@@ -25,6 +30,9 @@ jobs:
     steps:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Fetches full history so we can push back successfully
+          fetch-depth: 0
 
       - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
@@ -44,14 +52,32 @@ jobs:
           python industry_deals_agent.py
           echo "----- Run completed -----"
 
-      - name: 📜 Upload log file
+      - name: 💾 Commit and Push updated database
+        if: always()
+        run: |
+          # Configure Git Bot identity
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Stage the specific database file (or the whole folder)
+          git add industry_deals/exosome_deals_DATABASE.xlsx
+          
+          # Only commit and push if there are actually changes staged
+          if git diff --staged --quiet; then
+            echo "No new deals found in database. Nothing to commit."
+          else
+            git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d')]"
+            git push
+          fi
+
+      - name: 📜 Upload log file (Artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: monthly-run-logs
           path: neurocell_agent.log
 
-      - name: 📦 Upload Excel output
+      - name: 📦 Upload Excel output (Artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
