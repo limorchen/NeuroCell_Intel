@@ -639,14 +639,15 @@ def normalize_title_for_dedup(title):
     return title
 
 # MODIFIED: The core relevance filter logic
-def is_exosome_relevant(text, title):
+def is_exosome_relevant(text, title, log_check=False):
     """
     Refined relevance filter to prioritize Exosomes/Neuro 
     and block generic Oncology 'hallucinations'.
+    Includes log_check argument to stay compatible with the main loop.
     """
     combined = (title + " " + text).lower()
     
-    # 1. CORE EXOSOME/EV TERMS (Non-negotiable high signal)
+    # 1. CORE EXOSOME/EV TERMS
     EXOSOME_TERMS = [
         "exosome", "extracellular vesicle", "evs", "vesicle-based",
         "secretome", "nanovesicle", "exosomal", "nurexone", "evox", "capricor"
@@ -659,7 +660,6 @@ def is_exosome_relevant(text, title):
     ]
 
     # 3. SPAM/FALSE POSITIVE FILTERS
-    # We specifically target 'allosteric' to avoid the 'ALS' confusion
     ONCO_SPAM = ["kras", "solid tumor", "pan-kras", "allosteric", "oncology pipeline"]
     
     # LOGIC CHECK
@@ -667,24 +667,20 @@ def is_exosome_relevant(text, title):
     has_neuro_context = any(term in combined for term in NEURO_TERMS)
     
     # Special check: Did it hit 'ALS' only as part of 'allosteric'?
-    # This prevents the Jacobio error.
     is_allosteric_not_neuro = "allosteric" in combined and not any(n in combined for n in ["spinal", "brain", "neuron", "alzheimer"])
 
     # FINAL DECISION TREE
     if is_allosteric_not_neuro:
-        return False # Discard if it's just a chemical property
+        return False 
 
+    # We want it if it's (Exosome + Neuro) OR (Exosome + Not purely cancer drug)
+    primary_relevance = False
     if has_ev_context and has_neuro_context:
-        return True # Gold Standard: Exosome + Neuro
-        
-    if has_ev_context:
-        return True # Generally relevant: Any Exosome news
-        
-    # If it's a huge oncology deal (KRAS) with no Exosome mention, drop it.
-    if any(term in combined for term in ONCO_SPAM) and not has_ev_context:
-        return False
+        primary_relevance = True 
+    elif has_ev_context and not any(term in combined for term in ONCO_SPAM):
+        primary_relevance = True
 
-    return False
+    return primary_relevance
 # -----------------------------------------------------
 # 📧 Email function
 # -----------------------------------------------------
