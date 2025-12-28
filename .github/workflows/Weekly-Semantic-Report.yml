@@ -53,3 +53,12 @@ jobs:
           *.db
           neurocell_agent_semantic.log
         retention-days: 90
+
+    - name: Commit and push database changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add neurocell_database_semantic.db all_pubmed_semantic_database.csv all_trials_semantic_database.csv
+        git commit -m "Update cumulative database [skip ci]" || echo "No changes to commit"
+        git push
+        
