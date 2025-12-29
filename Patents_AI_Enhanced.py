@@ -300,7 +300,7 @@ def parse_patent_refs(root):
 def get_date_range_sixty_days():
     """Return (start_date, end_date) covering the last 60 days in YYYYMMDD format."""
     end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=60)
+    start_date = end_date - timedelta(days=365)
 
     start_str = start_date.strftime("%Y%m%d")
     end_str = end_date.strftime("%Y%m%d")
