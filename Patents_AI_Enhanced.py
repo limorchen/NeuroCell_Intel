@@ -58,14 +58,16 @@ else:
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
-Exosome-based drug delivery systems or unchanged naive exosomes 
-for central nervous system diseases and conditions,
-including therapeutic applications for neurodegenerative conditions,
-stroke, spinal cord injury and genetic brain disorders.
-Focus on blood-brain barrier penetration and targeted CNS delivery.
+Interactions between sugar moieties (glycans, saccharides, carbohydrates) 
+and the membranes of exosomes or extracellular vesicles (EVs). 
+Focus on using these sugar-membrane interactions to promote the 
+loading of cargo (proteins, small molecules, nucleic acids) into EVs 
+or to enhance the targeting and delivery of EVs via surface glycan 
+modifications. Includes glycoengineering of EV surfaces and 
+lectin-mediated binding for cargo internalization.
 """
 
-SEARCH_TERMS = '(ta=exosomes or ta="extracellular vesicles") and ta=CNS'
+SEARCH_TERMS = '(ta=exosomes or ta="extracellular vesicles") and (ta=sugar or ta=glycan or ta=saccharide or ta=glycosyl*) and (ta=membrane or ta=delivery or ta=loading)'
 
 # Minimum relevance score (0-1 scale)
 MIN_RELEVANCE_SCORE = 0.50  # Adjust this threshold as needed
