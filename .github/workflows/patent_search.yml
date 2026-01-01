@@ -2,9 +2,9 @@ name: Patent Search and Update
 
 on:
   workflow_dispatch:  # manual trigger
-  schedule:
+  #schedule:
     # Runs at 00:00 UTC on the 1st day of every 2nd month (Feb, Apr, Jun, Aug, Oct, Dec)
-    - cron: '0 0 1 */2 *'
+    #- cron: '0 0 1 */2 *'
 
 jobs:
   search-patents:
