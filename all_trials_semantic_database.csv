@@ -6,3 +6,20 @@ NCT06138210,The Effect of GD-iExo-003 in Acute Ischemic Stroke,"This is a multic
 NCT07065409,Treatment of Moyamoya Disease With iPSC-derived Exosomes,"Moyamoya disease is a cerebrovascular disease clinically characterized by chronic progressive stenosis or occlusion at the ends of bilateral internal carotid arteries and the origin of anterior cerebral arteries and middle cerebral arteries, followed by the formation of abnormal vascular networks at the base of the skull. Clinically, patients with Moyamoya disease mainly present with ischemic or hemorrhagic stroke, and there are two peaks of incidence in children aged 3-5 and middle-aged people aged 40-50. Moreover, as the pathogenesis and treatment evaluation of Moyamoya disease are still in the research trough at present, new discoveries are prone to occur and thus attract a great deal of attention. It not only has a beneficial promoting effect on the treatment and diagnosis of patients, but also makes it easier for research topics to be reported in top journals.
 
 This study intends to combine iPSC-EVs local skin transplantation with temporal muscle application to promote muscle angiogenesis and the establishment of extracranial and intracranial collateral circulation after temporal muscle application. The above-mentioned design features high efficiency, safety and convenience, and is an innovative exploration both at home and abroad. We hope to screen out safe, efficient and simple preparation methods and transplantation methods of iPSC-EVs through systematic experiments, establish an effective clinical evaluation system, and provide auxiliary means for intracranial and extracranial blood flow reconstruction surgery in the treatment of Moyamoya disease. Moreover, in terms of topic selection, iPSC is currently one of the most promising directions for innovative treatment worldwide.",Moyamoya Disease,iPSC-EVs,PHASE1,,RECRUITING,,,,,,https://clinicaltrials.gov/study/NCT07065409,0,2025-12-28 13:57:48,0.4576,0.4576,NO
+NCT07334743,Identifying Biomarkers in ALS Patients Using Neuronal Derived Extracellular Vesicles,"Rationale. ENGRAILED1 (EN1) is under consideration as a therapeutic approach for amyotrophic lateral sclerosis (ALS). To assess EN1 target engagement in patients, we aim to identify EN1-responsive biomarkers suitable as Prentice-style surrogate endpoints. We will discover candidates by RNA-seq of neuron-derived extracellular vesicles (NVEC) immuno-isolated from blood. Establishing such biomarkers would enable and de-risk early-phase (I/II) EN1 trials.
+
+Primary endpoint. Discovery: RNA-seq identification of circulating NVEC-borne biomarkers that differ between sporadic ALS patients and healthy controls.
+
+EN1 modulation: Demonstration that these biomarkers are modulated by EN1 in En1+/- mouse models and in ALS patient iPSC-derived motor neurons.
+
+Design. Prospective cohort, N=60 (30 sporadic ALS; 30 healthy controls matched on age/sex).
+
+Population. Adults undergoing diagnostic work-up for suspected sporadic ALS; healthy volunteers without neurological disease.
+
+Key procedures and timeline. Baseline (M0, inpatient): ALSFRS-R, MRC, hand dynamometry, eye-movement recording (MOC); NCS/EMG (NUMIX), TMS/MEP with cortical excitability; neuropsychology; brain \& spinal MRI; pulmonary function testing; CSF (10 mL) and blood (15 mL) for clinical labs and research (NVEC immunocapture → RNA-seq; proteomics).
+
+Follow-up: M6 clinic visit (repeat clinical/electrophysiology/neuropsychology/PFTs as per care) with blood (15 mL); additional routine follow-ups at M12, M18, M24 (clinical; MOC at M12 and M24).
+
+Controls: single visit with blood (3×5 mL EDTA) and cortical excitability; brain MRI for targeting.
+
+Sample size. 60 participants total (30 ALS, 30 controls).",Amyotrophic Lateral Sclerosis; ENGRAILED1,,,,RECRUITING,,,,,,https://clinicaltrials.gov/study/NCT07334743,1,2026-01-14 16:39:52,0.4312,0.5312,YES
