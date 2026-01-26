@@ -56,11 +56,21 @@ PR_PAGES = []
 
 # Keywords needed for DEBUG logging and filter logic
 SPAM_TERMS = [
-    "webinar", "sponsored", "whitepaper", "advertise",
-    "sign up to read", "subscribe", "newsletter",
-    "market research", "market size", "market report", "market insights",
-    "pipeline insights", "download", "forecast", "market analysis", "premium content", "premium webinar", "fiercebiotech premium",
-    "/premium/webinar", "register for this webinar", "register here", "join this session",
+    # Events/Webinars (high confidence spam)
+    "register for this webinar", "join this webinar", "register here", 
+    "join this session", "save the date", "rsvp",
+    
+    # Promotional content
+    "sign up to read", "subscribe to unlock", "premium content access",
+    "/premium/webinar", "fiercebiotech premium",
+    
+    # Reports/Analysis (NOT deals)
+    "download our report", "get the report", "annual report",
+    "market forecast", "industry forecast",
+    
+    # Listicles/Roundups (NOT specific deals)
+    "top 5", "top 10", "biggest deals of", "year in review",
+    "monthly recap", "weekly roundup", "what to expect in 20",
 ]
 
 EXOSOME_TERMS = [
