@@ -984,8 +984,14 @@ def run_agent():
                 reasons.append(f"(EV/Comp: {exosome_hits}/{company_match}, Neuro: {core_interest_hit}, TextLen: {text_len})")
 
             # Check for spam failure
-            if any(term in combined_log for term in SPAM_TERMS):
-                reasons.append("SPAM Term Hit")
+            # Check for spam failure (requires TITLE to contain spam, not just body)
+            spam_in_title = any(term in title.lower() for term in SPAM_TERMS)
+            spam_count_in_text = sum(1 for term in SPAM_TERMS if term in combined_log)
+
+            # Only flag as spam if: spam term in title OR multiple (2+) spam terms in full text
+            if spam_in_title or spam_count_in_text >= 2:
+                reasons.append("SPAM Term Hit")if any(term in combined_log for term in SPAM_TERMS):
+                
             
             # Print the articles that are failing the relevance filter
             print(f"DEBUG: Skipping '{title[:50]}...' Reasons: {'; '.join(reasons) or 'Generic Filter Fail'}") 
