@@ -847,6 +847,24 @@ def main():
             # Optional: add debug here if desired
             continue
 
+         # ===== YOUR FIXES START HERE =====
+        # 1. BLOCK SPAM
+        SPAM_BLOCKLIST = ["webinar", "podcast", "whitepaper", "register", "save the date"]
+        if any(term in title.lower() for term in SPAM_BLOCKLIST):
+            continue
+
+        # 2. REQUIRE EXOSOME + NEURO/DEAL
+        hasev = any(term in full_text.lower() for term in EXOSOME_TERMS)
+        hasneuro = any(term in full_text.lower() for term in CORE_INTEREST_TERMS)
+        hasdeal = any(kw in full_text.lower() for kws in EVENT_KEYWORDS.values() for kw in kws)
+        if not (hasev and (hasneuro or hasdeal)):
+            continue
+
+        # 3. MOVE relevance_score CALC HERE (BEFORE processed.append)
+        relevance_score = compute_relevance_score(title, full_text)
+        if relevance_score < 0.6:
+            continue
+
         event_type = classify_event(full_text)
         indications = detect_indications(full_text)
 
