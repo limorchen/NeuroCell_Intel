@@ -28,7 +28,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetches full history
-          ref: main       # Explicitly check out main branch
+          lfs: true       # Enable Git LFS
+          ref: main
+          
+      - name: 📦 Setup Git LFS
+        run: |
+          git lfs install
+          # Track Excel files if not already tracked
+          if ! grep -q "*.xlsx" .gitattributes 2>/dev/null; then
+            echo "*.xlsx filter=lfs diff=lfs merge=lfs -text" >> .gitattributes
+            echo "✅ Added .xlsx to Git LFS tracking"
+          else
+            echo "✅ Excel files already tracked by Git LFS"
+          fi
           
       - name: 🔍 Check for existing database
         run: |
@@ -72,41 +84,25 @@ jobs:
             echo "✅ Database file found at: $FILE_PATH"
             ls -lh "$FILE_PATH"
             
-            # 3. Pull latest changes first (in case of concurrent runs)
-            git pull --rebase origin main || echo "Pull failed or nothing to pull"
+            # 3. Stage both the database and .gitattributes
+            git add .gitattributes 2>/dev/null || echo "No .gitattributes changes"
+            git add "$FILE_PATH"
             
-            # 4. Stage the file (force add to handle binary files)
-            git add -f "$FILE_PATH"
-            
-            # 5. Check if there are staged changes
+            # 4. Check if there are changes to commit
             if git diff --cached --quiet; then
-              echo "⚠️ No changes detected by Git diff."
-              echo "This can happen with binary files. Checking file modification time..."
-              
-              # Force commit if file was modified in last 5 minutes
-              if [ $(find "$FILE_PATH" -mmin -5 | wc -l) -gt 0 ]; then
-                echo "File was recently modified. Forcing commit..."
-                git commit --allow-empty -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
-              else
-                echo "File appears unchanged. Skipping commit."
-                exit 0
-              fi
+              echo "No changes to commit."
             else
-              echo "✅ Changes detected. Committing..."
+              echo "✅ Committing changes..."
               git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
+              
+              # 5. Push with LFS
+              git push origin main
+              
+              echo "✅ Database successfully committed and pushed via Git LFS!"
             fi
             
-            # 6. Push changes
-            git push origin main || {
-              echo "Push failed. Attempting to pull and retry..."
-              git pull --rebase origin main
-              git push origin main
-            }
-            
-            echo "✅ Database successfully committed and pushed!"
-            
           else
-            echo "⚠️ No database file generated in this run. This is normal if 0 deals were found."
+            echo "⚠️ No database file generated in this run."
           fi
           
       - name: 📜 Upload log file (Artifact)
