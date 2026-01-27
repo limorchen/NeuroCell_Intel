@@ -15,7 +15,6 @@ from email.message import EmailMessage
 import trafilatura
 import time
 
-
 # ---------------------------------------
 # 🔐 Load environment variables
 # ---------------------------------------
@@ -27,52 +26,50 @@ load_dotenv()
 OUTPUT_DIR = "./industry_deals"
 SINCE_DAYS = 35
 TOP_N_TO_EMAIL = 10
-CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx" 
+CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx"
 
-# MODIFIED: Added the new, targeted search feed
 RSS_FEEDS = [
-    # Core Biotech/Pharma Feeds (Working and Stable)
+    # Core Biotech/Pharma Feeds
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
     "https://www.labiotech.eu/feed/",
     "https://www.biocentury.com/rss",
     "https://www.bioworld.com/rss",
     "https://www.evaluate.com/vantage/rss",
-    # 🆕 ADD THESE MORE SPECIFIC SEARCHES:
-    "https://news.google.com/rss/search?q=%22exosome+therapy%22+OR+%22exosome+therapeutics%22&hl=en-US",
-    "https://news.google.com/rss/search?q=Evox+OR+Capricor+OR+Codiak+OR+%22Direct+Biologics%22&hl=en-US",
-    "https://news.google.com/rss/search?q=%22extracellular+vesicle%22+clinical+trial&hl=en-US",
-    
+
     # Stable Public Wire Feeds
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
-    "https://www.globenewswire.com/RssFeed/subjectcode/46-Healthcare%20Business", 
-    "https://finance.yahoo.com/rss/headline?s=MDXH", 
-    
-    # Google News search focused on exosomes deals (Crucial for overall coverage)
+    "https://www.globenewswire.com/RssFeed/subjectcode/46-Healthcare%20Business",
+    "https://finance.yahoo.com/rss/headline?s=MDXH",
+
+    # Google News Searches - Exosome Deals
     "https://news.google.com/rss/search?q=exosome+(acquisition+OR+funding+OR+partnership)&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=%22extracellular+vesicles%22+(deal+OR+funding+OR+partnership)&hl=en-US",
     "https://news.google.com/rss/search?q=exosome+company+(raised+OR+secures+OR+closes)&hl=en-US",
-    
-    # NEW TARGETED FEED: Targeting your core NeuroCell interest
     "https://news.google.com/rss/search?q=exosome+OR+%22extracellular+vesicle%22+AND+(neuro+OR+neurology+OR+regenerat)&hl=en-US&gl=US&ceid=US:en",
+
+    # Specific Company & Therapy Searches
+    "https://news.google.com/rss/search?q=%22exosome+therapy%22+OR+%22exosome+therapeutics%22&hl=en-US",
+    "https://news.google.com/rss/search?q=Evox+OR+Capricor+OR+Codiak+OR+%22Direct+Biologics%22&hl=en-US",
+    "https://news.google.com/rss/search?q=%22extracellular+vesicle%22+clinical+trial&hl=en-US",
 ]
 PR_PAGES = []
 
-# Keywords needed for DEBUG logging and filter logic
+# Refined SPAM Terms - More targeted
 SPAM_TERMS = [
-    # Events/Webinars (high confidence spam)
-    "register for this webinar", "join this webinar", "register here", 
+    # Events/Webinars
+    "register for this webinar", "join this webinar", "register here",
     "join this session", "save the date", "rsvp",
-    
+
     # Promotional content
     "sign up to read", "subscribe to unlock", "premium content access",
     "/premium/webinar", "fiercebiotech premium",
-    
-    # Reports/Analysis (NOT deals)
+
+    # Reports/Analysis
     "download our report", "get the report", "annual report",
     "market forecast", "industry forecast",
-    
-    # Listicles/Roundups (NOT specific deals)
+
+    # Listicles/Roundups
     "top 5", "top 10", "biggest deals of", "year in review",
     "monthly recap", "weekly roundup", "what to expect in 20",
 ]
@@ -83,29 +80,27 @@ EXOSOME_TERMS = [
     "exosomal", "ev therapy", " evs ",
 ]
 
-# Expanded indication keywords
 INDICATION_KEYWORDS = [
-    "neurology","neuro","stroke","als","amyotrophic","parkinson","spinal cord","neurodegeneration",
-    "regenerat","regeneration","repair","rejuvenat","therapeutic",
-    "cancer","oncology","tumor","carcinoma",
-    "cardiovascular","cardiac","heart","myocardial",
-    "inflammatory","autoimmune","immune",
-    "kidney","renal","liver","hepatic",
-    "lung","pulmonary","respiratory",
-    "diagnostic","biomarker","detection","screening",
-    "liquid biopsy","early detection",
-    "drug delivery","therapeutic delivery","targeted therapy"
+    "neurology", "neuro", "stroke", "als", "amyotrophic", "parkinson", "spinal cord", "neurodegeneration",
+    "regenerat", "regeneration", "repair", "rejuvenat", "therapeutic",
+    "cancer", "oncology", "tumor", "carcinoma",
+    "cardiovascular", "cardiac", "heart", "myocardial",
+    "inflammatory", "autoimmune", "immune",
+    "kidney", "renal", "liver", "hepatic",
+    "lung", "pulmonary", "respiratory",
+    "diagnostic", "biomarker", "detection", "screening",
+    "liquid biopsy", "early detection",
+    "drug delivery", "therapeutic delivery", "targeted therapy"
 ]
 
-# Core interest terms for the relaxed filter (subset of INDICATION_KEYWORDS)
 CORE_INTEREST_TERMS = ["neuro", "neurology", "regenerat", "repair", "therapeutic"]
 
 EVENT_KEYWORDS = {
-    "acquisition": ["acquir","acquisition","acquired","merger","merged","buyout","takeover"],
-    "partnership": ["partner","partnership","collaborat","alliance","strategic relationship"],
-    "licensing": ["license","licensing","licensed","in-license","out-license"],
-    "funding": ["funding","raised","series a","series b","grant","investment","seed","financ","venture"],
-    "deal": ["deal", "agreement","term sheet","option agreement","commercialization"]
+    "acquisition": ["acquir", "acquisition", "acquired", "merger", "merged", "buyout", "takeover"],
+    "partnership": ["partner", "partnership", "collaborat", "alliance", "strategic relationship"],
+    "licensing": ["license", "licensing", "licensed", "in-license", "out-license"],
+    "funding": ["funding", "raised", "series a", "series b", "grant", "investment", "seed", "financ", "venture"],
+    "deal": ["deal", "agreement", "term sheet", "option agreement", "commercialization"]
 }
 
 EXOSOME_COMPANIES = [
@@ -113,17 +108,16 @@ EXOSOME_COMPANIES = [
     "exosome diagnostics", "paige.ai", "direct biologics", "kimera labs",
     "aegle therapeutics", "avalon globocare", "aruna bio", "evotec",
     "vesigen", "ciloa", "exosomics", "exopharm", "ilias biologics",
-    "exosome therapeutics", "clara biotech", "lonza", "tavec", 
+    "exosome therapeutics", "clara biotech", "lonza", "tavec",
     "roosterbio", "exocobio", "versatope therapeutics",
-    "nanosomix", "paracrine therapeutics", "exocelbio", 
+    "nanosomix", "paracrine therapeutics", "exocelbio",
     "regeneveda", "mdxhealth", "bio-techne", "nurexone biologic", "biorestorative therapeutics",
     "reneuron", "pl bioscience", "everzom", "exo biologics", "ilbs",
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
-    "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics", "phoenestra gmbh", 
-    "exosla therapeutics", "tiny cargo company", "rion inc.", "exosomica", "exogenus therapeutics", "direct biologics", "ev therapeutics", 
+    "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics", "phoenestra gmbh",
+    "exosla therapeutics", "tiny cargo company", "rion inc.", "exosomica", "exogenus therapeutics", "ev therapeutics",
     "nano24", "pandorum", "nucelion", "nippon shinyaku",
 ]
-
 
 # ---------------------------------------
 # 🧠 Load NLP models
@@ -143,10 +137,9 @@ def fetch_rss_entries(url):
     }
     for attempt in range(2):
         try:
-            # Use requests for better control and pass content to feedparser
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
-                f = feedparser.parse(response.content) 
+                f = feedparser.parse(response.content)
                 return f.entries
             else:
                 print(f"RSS HTTP error (Attempt {attempt+1}/2) {url}: Status {response.status_code}")
@@ -156,34 +149,44 @@ def fetch_rss_entries(url):
             time.sleep(3)
     return []
 
-# MODIFIED: Increased timeout to 15 seconds
-def fetch_article_text(url, timeout=15):
-    """Fetch article text using requests + trafilatura (robust and timeout-safe)."""
+def resolve_google_news_url(google_url):
+    """Extract the actual article URL from Google News redirect."""
     try:
-        # Step 1 — Use requests to fetch raw HTML (with proper timeout)
+        if 'news.google.com' in google_url and '/articles/' in google_url:
+            response = requests.get(
+                google_url,
+                allow_redirects=True,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            return response.url
+        return google_url
+    except Exception as e:
+        print(f"Failed to resolve Google News URL: {str(e)[:50]}")
+        return google_url
+
+def fetch_article_text(url, timeout=15):
+    """Fetch article text using requests + trafilatura."""
+    try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; NeuroCellBot/1.0; +https://neurocellintel.ai)"}
         response = requests.get(url, headers=headers, timeout=timeout)
         if response.status_code != 200 or not response.text:
-            print(f"Empty or invalid response for {url[:50]}...")
             return ""
 
-        # Step 2 — Clean HTML before sending to trafilatura
         soup = BeautifulSoup(response.text, "html.parser")
         for script in soup(["script", "style", "noscript"]):
             script.decompose()
         cleaned_html = str(soup)
 
-        # Step 3 — Extract main text content using trafilatura
         text = trafilatura.extract(
             cleaned_html,
             include_comments=False,
             include_tables=False,
-            favor_recall=True  # improves retention of relevant text
+            favor_recall=True
         )
 
-        # Step 4 — Validation and final cleanup
         if text and len(text) > 100:
-            return text[:10000]  # Limit to 10k characters to prevent oversize fields
+            return text[:10000]
         else:
             return ""
 
@@ -191,44 +194,26 @@ def fetch_article_text(url, timeout=15):
         print(f"Article fetch failed for {url[:50]}...: {str(e)[:50]}")
         return ""
 
-def resolve_google_news_url(google_url):
-    """Extract the actual article URL from Google News redirect."""
-    try:
-        if 'news.google.com' in google_url and '/articles/' in google_url:
-            # Try to extract the actual URL from Google's redirect
-            response = requests.get(google_url, allow_redirects=True, timeout=10, 
-                                   headers={"User-Agent": "Mozilla/5.0"})
-            return response.url
-        return google_url
-    except Exception as e:
-        print(f"Failed to resolve Google News URL: {str(e)[:50]}")
-        return google_url
-
-
 # -----------------------------------------------------
-# 💰 ENHANCED MONEY EXTRACTION AND CONTEXT FUNCTIONS 
+# 💰 MONEY EXTRACTION FUNCTIONS
 # -----------------------------------------------------
-
 def normalize_amount(text):
-    """
-    Enhanced normalization: Converts money string to a single integer amount.
-    """
+    """Converts money string to a single integer amount."""
     if not text or not isinstance(text, str):
         return None
-    
+
     t = text.lower().strip()
-    
     num_match = re.search(r'(\d+(?:[,\s]\d{3})*(?:\.\d+)?)', t)
     if not num_match:
         return None
-    
+
     num_str = num_match.group(1).replace(',', '').replace(' ', '')
-    
+
     try:
         num = float(num_str)
     except Exception:
         return None
-    
+
     # Apply multipliers
     if re.search(r'\b(trillion|tn|t)\b', t):
         num *= 1_000_000_000_000
@@ -238,30 +223,21 @@ def normalize_amount(text):
         num *= 1_000_000
     elif re.search(r'\b(thousand|k)\b', t):
         num *= 1_000
-    
+
     try:
         return int(round(num))
     except Exception:
         return None
 
 def extract_amounts(text):
-    """
-    Extracts all currency amounts (USD, EUR, GBP, etc.) in many textual forms.
-    Captures multi-amount phrases like '$15 million, with $5 million in stock'.
-    Enhanced with better deduplication based on normalized values.
-    """
+    """Extract all currency amounts from text."""
     if not text:
         return []
 
-    # Comprehensive patterns for diverse formats
     amount_patterns = [
-        # €10M, $5.5M, £250K
         r'[\$£€¥]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
-        # USD 15 million, EUR 3M, GBP 250 thousand
         r'(?:USD|EUR|GBP|CAD|AUD|usd|eur|gbp|cad|aud)\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
-        # 15 million USD, 15M EUR, 250 thousand dollars
         r'\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)\s?(?:USD|usd|dollars?|EUR|eur|€|£|GBP|gbp)?',
-        # "approximately $3 million", "about €5M", "over $50 thousand"
         r'(?:approximately|about|around|nearly|up\s+to|over|valued\s+at|worth)\s+[\$£€¥]?\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?\s?(?:trillion|billion|million|thousand|m|b|k|bn|tn)?',
     ]
 
@@ -270,11 +246,15 @@ def extract_amounts(text):
         for m in re.finditer(pat, text, flags=re.IGNORECASE):
             amt = m.group(0).strip()
             amt = re.sub(r'\s+', ' ', amt)
-            # remove lead words (approximately, over, etc.)
-            amt = re.sub(r'^(?:approximately|about|around|nearly|up to|over|valued at|worth)\s+', '', amt, flags=re.I)
+            amt = re.sub(
+                r'^(?:approximately|about|around|nearly|up to|over|valued at|worth)\s+',
+                '',
+                amt,
+                flags=re.I
+            )
             matches.append(amt)
 
-    # Enhanced deduplication - compare normalized numeric values
+    # Deduplication by normalized values
     seen_values = {}
     unique = []
     for m in matches:
@@ -283,48 +263,37 @@ def extract_amounts(text):
             seen_values[normalized_val] = m
             unique.append(m)
         elif not normalized_val:
-            # If can't normalize, use string-based dedup as fallback
             key = re.sub(r'[^\d.]', '', m.lower())
             if key and key not in [re.sub(r'[^\d.]', '', u.lower()) for u in unique]:
                 unique.append(m)
 
     return unique
 
-
 def extract_extended_deal_context(text, amount_str, window_size=300):
-    """
-    Extract extended surrounding context around a dollar amount for better deal structure capture.
-    Returns the context and the position of the amount within it.
-    """
+    """Extract surrounding context around a dollar amount."""
     if not text or not amount_str:
         return "", -1
-    
+
     pattern = re.escape(amount_str)
     match = re.search(pattern, text, re.IGNORECASE)
-    
+
     if match:
         start = max(0, match.start() - window_size)
         end = min(len(text), match.end() + window_size)
         context = text[start:end]
         relative_pos = match.start() - start
         return context, relative_pos
-    
+
     return "", -1
 
-
 def extract_deal_structure(text, amounts):
-    """
-    🆕 ENHANCED: Extract detailed deal structure information from text.
-    Returns a structured description of how the money is being distributed.
-    Improved to capture more patterns and provide better fallback.
-    """
+    """Extract detailed deal structure information."""
     if not amounts or not text:
         return ""
-    
+
     text_lower = text.lower()
     structure_parts = []
-    
-    # Pattern categories for deal structure
+
     structure_patterns = {
         'total_value': [
             r'total (?:acquisition |deal |transaction )?(?:value|price|consideration)(?:\s+is|\s+of)?\s+(?:approximately\s+)?([£$€¥]?[\d.,]+\s*(?:million|billion|m|b|k|thousand)?)',
@@ -361,201 +330,200 @@ def extract_deal_structure(text, amounts):
             r'(?:single|mid|low|high)[\s-]digit\s+royalt(?:y|ies)',
         ]
     }
-    
-    # Extract each component
+
     found_components = {}
-    
+
     for component_type, patterns in structure_patterns.items():
         for pattern in patterns:
             matches = list(re.finditer(pattern, text_lower, re.IGNORECASE))
             if matches:
-                # Get the full matched text for context
                 matched_text = matches[0].group(0)
                 if component_type not in found_components:
                     found_components[component_type] = matched_text
                     break
-    
-    # Build structured description
+
     if 'total_value' in found_components:
         structure_parts.append(f"Total value: {found_components['total_value']}")
-    
     if 'upfront' in found_components:
         structure_parts.append(f"Upfront: {found_components['upfront']}")
-    
     if 'equity' in found_components:
         structure_parts.append(f"Equity: {found_components['equity']}")
-    
     if 'milestone' in found_components:
         structure_parts.append(f"Milestones: {found_components['milestone']}")
-    
     if 'periodic' in found_components:
         structure_parts.append(f"Periodic: {found_components['periodic']}")
-    
     if 'royalty' in found_components:
         structure_parts.append(f"Royalty: {found_components['royalty']}")
-    
-    # If we found structured information, return it
+
     if structure_parts:
         return "; ".join(structure_parts)
-    
-    # Enhanced fallback: Extract sentences containing amounts with deal-related keywords
+
+    # Fallback: Extract sentences with amounts and deal keywords
     deal_keywords = [
         'acquisition', 'purchase', 'valued', 'worth', 'paid', 'payment',
         'closing', 'upfront', 'milestone', 'stock', 'cash', 'consideration',
         'transaction', 'financing', 'raised', 'secured', 'investment'
     ]
-    
+
     sentences_with_amounts = []
     for sent in re.split(r'[.!?]+', text):
         sent_lower = sent.lower()
-        # Check if sentence has both an amount and a deal keyword
         has_amount = any(amt.lower() in sent_lower for amt in amounts[:3])
         has_deal_keyword = any(kw in sent_lower for kw in deal_keywords)
-        
+
         if has_amount and has_deal_keyword:
             clean_sent = sent.strip()
-            if 20 < len(clean_sent) < 200:  # Reasonable sentence length
+            if 20 < len(clean_sent) < 200:
                 sentences_with_amounts.append(clean_sent)
-    
+
     if sentences_with_amounts:
-        # Return up to 2 most relevant sentences
         return " | ".join(sentences_with_amounts[:2])
-    
+
     return ""
 
-
 def validate_deal_amount(amount_str, context, event_type):
-    """
-    Validate if an extracted amount is likely a real deal amount using context.
-    Returns confidence score 0-1.
-    """
+    """Validate if an extracted amount is likely a real deal amount."""
     if not amount_str:
         return 0.0
-    
-    score = 0.5 
+
+    score = 0.5
     context_lower = context.lower()
-    
+
     positive_keywords = [
         'raised', 'raised in', 'closed', 'secured', 'acquired for',
         'purchased for', 'valued at', 'worth', 'funding round',
         'investment', 'series', 'financing', 'deal worth',
         'transaction', 'acquisition price', 'upfront payment'
     ]
-    
+
     for keyword in positive_keywords:
         if keyword in context_lower:
             score += 0.2
             break
-    
+
     negative_keywords = [
         'market size', 'revenue', 'annual', 'quarterly',
         'sales', 'profit', 'loss', 'stock price',
         'market cap', 'valuation of company', 'worth of market'
     ]
-    
+
     for keyword in negative_keywords:
         if keyword in context_lower:
             score -= 0.3
             break
-    
+
     if event_type in ['acquisition', 'funding', 'licensing']:
         score += 0.1
-    
-    # Amount range validation
+
     normalized = normalize_amount(amount_str)
     if normalized:
         if 1_000_000 <= normalized <= 10_000_000_000:
             score += 0.2
         elif normalized < 100_000 or normalized > 100_000_000_000:
             score -= 0.3
-    
+
     return max(0.0, min(1.0, score))
 
-
 def extract_amounts_with_validation(title, text, summary, event_type):
-    """
-    🆕 ENHANCED: Main extraction function that combines extraction + validation + structure
-    Returns list of validated amounts with confidence scores AND deal structure description
-    """
+    """Main extraction function combining extraction + validation + structure."""
     full_text = f"{title} {text} {summary}"
     all_amounts = extract_amounts(full_text)
-    
+
     validated_amounts = []
     for amount in all_amounts:
         context, _ = extract_extended_deal_context(full_text, amount, window_size=300)
         confidence = validate_deal_amount(amount, context, event_type)
-        
-        if confidence >= 0.4: # Threshold for inclusion
+
+        if confidence >= 0.4:
             validated_amounts.append({
                 'amount': amount,
                 'confidence': confidence,
                 'context': context[:300]
             })
-    
+
     validated_amounts.sort(key=lambda x: x['confidence'], reverse=True)
-    
-    # Extract deal structure using all validated amounts
+
     deal_structure = ""
     if validated_amounts:
         amounts_list = [va['amount'] for va in validated_amounts]
         deal_structure = extract_deal_structure(full_text, amounts_list)
-    
+
     return validated_amounts, deal_structure
 
-
 def search_for_deal_amount(title, companies, event_type):
-    """
-    Secondary web scraper (DuckDuckGo HTML) for deal amount fallback.
-    """
+    """Secondary web scraper for deal amount fallback."""
     if event_type not in ["acquisition", "funding"]:
         return []
-    
+
     time.sleep(1)
 
     try:
         company_str = " ".join(companies[:2]) if companies else ""
         search_query = f"{company_str} {event_type} amount million"
         search_url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(search_query)}"
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
+
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
         response = requests.get(search_url, headers=headers, timeout=5)
         if response.status_code != 200:
             return []
-        
+
         soup = BeautifulSoup(response.text, "html.parser")
-        
+
         snippets = []
         for result in soup.find_all('a', class_='result__snippet'):
             snippets.append(result.get_text())
         for result in soup.find_all('a', class_='result__a'):
             snippets.append(result.get_text())
-        
+
         combined_text = " ".join(snippets[:5])
         amounts = extract_amounts(combined_text)
-        
+
         if amounts:
             print(f"🔍 Found amount via search: {amounts[0]} for {title[:50]}...")
             return amounts[:2]
-        
+
         return []
-        
+
     except Exception as e:
         print(f"Search failed: {str(e)[:50]}")
         return []
-# -----------------------------------------------------
 
 # -----------------------------------------------------
-# 📚 REMAINING HELPER FUNCTIONS 
+# 📚 COMPANY EXTRACTION FUNCTIONS
 # -----------------------------------------------------
+def extract_companies_from_title(title):
+    """Extract company names from title using pattern matching."""
+    companies = []
+
+    # Pattern: "Company1 Partners With Company2"
+    partner_pattern = r'([A-Z][A-Za-z0-9]+)\s+(?:Partners|Collaborates|Teams)\s+(?:With|Up With)\s+([A-Z][A-Za-z0-9]+)'
+    match = re.search(partner_pattern, title)
+    if match:
+        companies.extend([match.group(1), match.group(2)])
+
+    # Pattern: "Company Announces/Reports/Completes"
+    company_pattern = r'^([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)?)\s+(?:Announces|Reports|Completes|Partners|Signs)'
+    match = re.search(company_pattern, title)
+    if match:
+        companies.append(match.group(1))
+
+    # Pattern: ticker in parentheses like "(CAPR)"
+    ticker_pattern = r'\(([A-Z]{2,5})\)'
+    match = re.search(ticker_pattern, title)
+    if match:
+        pre_ticker = title.split('(')[0].strip()
+        words = pre_ticker.split()
+        if len(words) >= 2:
+            companies.append(' '.join(words[-2:]))
+
+    return [c for c in companies if len(c) > 2]
 
 def extract_companies(text):
-    """Extract company names with improved aggressive filtering"""
+    """Extract company names using spaCy NER with aggressive filtering."""
     doc = nlp(text)
     orgs = []
-    
+
     REMOVE_SUFFIXES = [
         " - tipranks", " tipranks", "the manila times", " - msn",
         " acquisition", " diagnostics acquisition"
@@ -569,34 +537,27 @@ def extract_companies(text):
         "seeking alpha", "motley fool", "benzinga", "zacks", "biospace",
         "genengnews", "labiotech", "fiercepharma"
     ]
-    
-    # Additional stoplist to exclude frequent junk extractions
+
     STOP_WORDS = {"the", "a", "an", "group", "company", "inc", "corp", "llc"}
 
     for ent in doc.ents:
         if ent.label_ == "ORG":
             t = ent.text.strip()
-            # Remove known suffix noise
             for suffix in REMOVE_SUFFIXES:
                 if t.lower().endswith(suffix):
                     t = t[:-len(suffix)].strip()
-            # Filter out too-short or too-long entities
             if len(t) < 3:
                 continue
             if len(t.split()) > 6:
                 continue
-            # Filter common nonsense / stopwords
             if t.lower() in IGNORE_ORGS or t.lower() in STOP_WORDS:
                 continue
-            # Filter if any known ignore partial matches
             if any(ignore in t.lower() for ignore in IGNORE_ORGS):
                 continue
-            # Filter specific problematic words
             if t.lower() in ["acquisition", "diagnostics", "acquisition from", "bio", "techne"]:
                 continue
             orgs.append(t)
-    
-    # Deduplicate (case insensitive)
+
     seen = set()
     unique_orgs = []
     for org in orgs:
@@ -604,20 +565,18 @@ def extract_companies(text):
         if org_lower not in seen:
             seen.add(org_lower)
             unique_orgs.append(org)
-    
-    # Limit to top 5 companies extracted
+
     return unique_orgs[:5]
 
-
 def extract_acquisition_details(title, text):
-    """Manually extract acquisition details from text"""
+    """Manually extract acquisition details from text."""
     combined = title + " " + text
     patterns = [
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:completes?|closes?|announces?)\s+(?:the\s+)?(?:acquisition of|purchase of)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+(?:acquires?|buys?|acquired|purchased)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s+(?:for|from|$))',
         r'([A-Z][A-Za-z0-9\s&\.]+?)\s+acquisition\s+(?:of|by|from)\s+([A-Z][A-Za-z0-9\s&\.]+?)(?:\s|$)',
     ]
-    
+
     for pattern in patterns:
         match = re.search(pattern, combined, re.I)
         if match:
@@ -627,11 +586,14 @@ def extract_acquisition_details(title, text):
             target = re.sub(r'\s+(from|for|acquisition).*', '', target, flags=re.I)
             if acquirer and target and len(acquirer) > 2 and len(target) > 2:
                 return [acquirer, target]
-    
+
     return []
 
-# MODIFIED: Ensure "news" is returned only if ZERO deal keywords are present
+# -----------------------------------------------------
+# 📚 OTHER HELPER FUNCTIONS
+# -----------------------------------------------------
 def classify_event(text):
+    """Classify the event type based on keywords."""
     tl = text.lower()
     scores = {}
     total_hits = 0
@@ -639,587 +601,297 @@ def classify_event(text):
         hits = sum(1 for k in kws if k in tl)
         scores[ev] = hits
         total_hits += hits
-        
+
     if total_hits == 0:
         return "news"
-        
+
     best = max(scores.items(), key=lambda x: x[1])
-    
     return best[0]
 
 def detect_indications(text):
+    """Detect therapeutic indications from text."""
     tl = text.lower()
-    hits = [kw for kw in INDICATION_KEYWORDS if kw in tl]
-    return sorted(set(hits))
+    hits = []
 
-def summarize_short(text, max_sent=2):
-    sents = re.split(r'(?<=[.!?])\s+', text)
-    return " ".join(sents[:max_sent]).strip()
+    for kw in INDICATION_KEYWORDS:
+        if kw in tl:
+            hits.append(kw)
 
-def normalize_title_for_dedup(title):
-    """Lightweight title normalization for URL/date-title dedup."""
-    title = re.split(r'\s*[-–—]\s*', title)[0]
-    for word in ['announces', 'completes', 'closes', 'closing', 'announces closing']:
-        title = re.sub(r'\b' + word + r'\b', '', title, flags=re.I)
-    title = re.sub(r'[^\w\s]', '', title.lower()).strip()
-    title = re.sub(r'\s+', ' ', title)
-    return title
+    # Simple normalization/grouping
+    unique_hits = sorted(set(hits))
+    return ", ".join(unique_hits) if unique_hits else ""
 
-# MODIFIED: The core relevance filter logic
-def is_exosome_relevant(text, title, log_check=False):
-    """
-    Refined relevance filter to prioritize Exosomes/Neuro 
-    and block generic Oncology 'hallucinations'.
-    Includes log_check argument to stay compatible with the main loop.
-    """
-    combined = (title + " " + text).lower()
-    
-    # 1. CORE EXOSOME/EV TERMS
-    EXOSOME_TERMS = [
-        "exosome", "extracellular vesicle", "evs", "vesicle-based",
-        "secretome", "nanovesicle", "exosomal", "nurexone", "evox", "capricor"
-    ]
-    
-    # 2. NEURO INTEREST
-    NEURO_TERMS = [
-        "neuro", "cns", "alzheimer", "parkinson", "spinal cord", 
-        "brain", "neuron", "multiple sclerosis", "stroke"
-    ]
+def is_spam_article(text):
+    """Filter out irrelevant or obviously promotional content."""
+    tl = text.lower()
+    for term in SPAM_TERMS:
+        if term in tl:
+            return True
+    return False
 
-    # 3. SPAM/FALSE POSITIVE FILTERS
-    ONCO_SPAM = ["kras", "solid tumor", "pan-kras", "allosteric", "oncology pipeline"]
-    
-    # LOGIC CHECK
-    has_ev_context = any(term in combined for term in EXOSOME_TERMS)
-    has_neuro_context = any(term in combined for term in NEURO_TERMS)
-    
-    # Special check: Did it hit 'ALS' only as part of 'allosteric'?
-    is_allosteric_not_neuro = "allosteric" in combined and not any(n in combined for n in ["spinal", "brain", "neuron", "alzheimer"])
+def contains_exosome_terms(text):
+    """Check if text contains exosome-related terms."""
+    tl = text.lower()
+    return any(term in tl for term in EXOSOME_TERMS)
 
-    # FINAL DECISION TREE
-    if is_allosteric_not_neuro:
-        return False 
+def contains_core_interest_terms(text):
+    """Check for core neuro/regen/therapeutic interest terms."""
+    tl = text.lower()
+    return any(term in tl for term in CORE_INTEREST_TERMS)
 
-    # We want it if it's (Exosome + Neuro) OR (Exosome + Not purely cancer drug)
-    primary_relevance = False
-    if has_ev_context and has_neuro_context:
-        primary_relevance = True 
-    elif has_ev_context and not any(term in combined for term in ONCO_SPAM):
-        primary_relevance = True
+def is_exosome_relevant(full_text, title):
+    """Relaxed relevance filter: exosome terms OR companies OR strong neuro/regen context."""
+    combined = f"{title} {full_text}".lower()
 
-    return primary_relevance
-# -----------------------------------------------------
-# 📧 Email function
-# -----------------------------------------------------
-def send_email_with_attachment(subject, body, attachment_path):
-    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
-    SMTP_USER = os.getenv("SMTP_USER", "")
-    SMTP_PASS = os.getenv("SMTP_PASS", "")
-    EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
-    EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
+    if is_spam_article(combined):
+        return False
 
-    if not SMTP_USER or not SMTP_PASS or not EMAIL_TO or EMAIL_TO == [""]:
-        print("SMTP credentials or recipients not set. Skipping email.")
+    if contains_exosome_terms(combined):
+        return True
+
+    # Company name heuristic
+    for cname in EXOSOME_COMPANIES:
+        if cname.lower() in combined:
+            return True
+
+    # Core therapeutic interest without exosome terms: keep but lower priority later
+    if contains_core_interest_terms(combined):
+        return True
+
+    return False
+
+def compute_relevance_score(title, full_text):
+    """Semantic/scoring model for ranking."""
+    base_score = 0.0
+    tl = (title + " " + full_text).lower()
+
+    if contains_exosome_terms(tl):
+        base_score += 0.6
+    if contains_core_interest_terms(tl):
+        base_score += 0.2
+    for cname in EXOSOME_COMPANIES:
+        if cname.lower() in tl:
+            base_score += 0.2
+            break
+
+    # Clip
+    base_score = min(1.0, base_score)
+
+    return base_score
+
+def parse_pubdate(entry):
+    """Parse publication date from RSS entry."""
+    pub = entry.get("published") or entry.get("updated") or entry.get("pubDate")
+    if not pub:
+        return None
+    try:
+        return dateparser.parse(pub)
+    except Exception:
+        return None
+
+def within_days(dt_obj, days=SINCE_DAYS):
+    if not dt_obj:
+        return False
+    cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
+    return dt_obj > cutoff
+
+def load_existing_cumulative(path):
+    if os.path.exists(path):
+        try:
+            return pd.read_excel(path)
+        except Exception as e:
+            print(f"Failed to load existing cumulative file: {e}")
+    return pd.DataFrame()
+
+def save_cumulative(df, path):
+    try:
+        df.to_excel(path, index=False)
+        print(f"✅ Saved cumulative DB to: {path}")
+    except Exception as e:
+        print(f"Failed to save cumulative DB: {e}")
+
+def send_email_with_top_deals(df, top_n=TOP_N_TO_EMAIL):
+    """Send summary email of top N deals."""
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    to_email = os.getenv("TO_EMAIL")
+
+    if not (smtp_host and smtp_user and smtp_pass and to_email):
+        print("⚠️ Email not sent: SMTP or TO_EMAIL env vars missing.")
         return
 
+    df_sorted = df.sort_values("RelevanceScore", ascending=False).head(top_n)
+    lines = []
+    for _, row in df_sorted.iterrows():
+        line = (
+            f"- {row.get('Date','')} | {row.get('EventType','')} | "
+            f"{row.get('Title','')} | {row.get('Companies','')} | "
+            f"{row.get('Amounts','')} | {row.get('URL','')}"
+        )
+        lines.append(line)
+
+    body = "Top Exosome/EV Deals & Events\n\n" + "\n".join(lines)
+
     msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = EMAIL_FROM
-    msg['To'] = ", ".join(EMAIL_TO)
+    msg["Subject"] = "Exosome/EV Deals & Funding Digest"
+    msg["From"] = smtp_user
+    msg["To"] = to_email
     msg.set_content(body)
 
-    if attachment_path and os.path.isfile(attachment_path):
-        with open(attachment_path, 'rb') as f:
-            file_data = f.read()
-            file_name = os.path.basename(attachment_path)
-        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
-
     try:
-        # Use SMTP_SSL for port 465
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
-            server.login(SMTP_USER, SMTP_PASS)
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
             server.send_message(msg)
-        print("Email sent to", EMAIL_TO)
+        print("📧 Email summary sent.")
     except Exception as e:
-        print("Failed to send email:", e)
+        print(f"Failed to send email: {e}")
 
 # -----------------------------------------------------
-# 💾 Function to handle cumulative database export
+# 🚀 MAIN PIPELINE
 # -----------------------------------------------------
-def export_to_cumulative_database(df_new_deals, filename):
-    """
-    Exports new deals to the cumulative Excel file, handling appending
-    and deduplication against existing data.
-    Returns the final, sorted DataFrame of ALL deals.
-    """
-    if df_new_deals.empty:
-        print("No new deals to add to the database.")
-        return pd.DataFrame()
-
-    cumulative_filepath = os.path.join(OUTPUT_DIR, filename)
-    df_new = df_new_deals.copy()
-    
-    # 1. Prepare new data: Convert lists to clean strings for Excel
-    list_columns = ["companies", "amounts", "amounts_numeric", "indications"]
-    for col in list_columns:
-        df_new[col] = df_new[col].apply(lambda x: "; ".join(map(str, x)) if isinstance(x, (list, tuple)) else x)
-
-    # 2. Prepare other columns (including new deal_structure column)
-    df_new["short_summary"] = df_new["short_summary"].apply(lambda x: str(x) if x else "")
-    df_new["deal_structure"] = df_new["deal_structure"].apply(lambda x: str(x) if x else "")
-    df_new["full_text"] = df_new["full_text"].apply(lambda x: x[:1000] if x else "")
-    # Ensure published_dt is clean (no timezone info)
-    df_new["published_dt"] = pd.to_datetime(df_new["published_dt"]).dt.tz_localize(None)
-
-    # 3. Load existing data
-    df_existing = pd.DataFrame()
-    if os.path.exists(cumulative_filepath):
-        try:
-            # ADDED DTYPE MAP FOR ROBUSTNESS
-            dtype_map = {
-                'title': str, 'url': str, 'event_type': str, 
-                'short_summary': str, 'full_text': str, 'deal_structure': str
-            }
-            df_existing = pd.read_excel(cumulative_filepath, dtype=dtype_map)
-            print(f"Loaded {len(df_existing)} previous deals from {filename}")
-        except Exception as e:
-            print(f"Warning: Could not read existing file {filename}. Error: {e}")
-            df_existing = pd.DataFrame()
-    else:
-        print(f"Creating new cumulative database: {filename}")
-
-    # 4. Combine new and existing data
-    # Standardize columns to avoid concatenation errors
-    all_cols = list(set(df_new.columns) | set(df_existing.columns))
-    for col in all_cols:
-        if col not in df_new.columns:
-            df_new[col] = pd.NA
-        if col not in df_existing.columns:
-            df_existing[col] = pd.NA
-
-    # Safe concatenation to avoid FutureWarning (pandas≥2.1)
-    frames = [df for df in [df_existing, df_new] if not df.empty]
-    if frames:
-        combined_df = pd.concat(frames, ignore_index=True)
-    else:
-        combined_df = pd.DataFrame()
-            
-    # 5. Deduplication
-    # Deduplicate based on a unique key (URL is the best, but 'title' is a good backup)
-    combined_df.drop_duplicates(subset=['url', 'title'], keep='first', inplace=True)
-    combined_df = combined_df.sort_values(["published_dt", "score"], ascending=[False, False])
-
-    print(f"Total unique deals in database: {len(combined_df)}")
-
-    # 6. Save the combined, deduplicated DataFrame
-    try:
-        # Select the columns you want in the final Excel (adjusted to include deal_structure)
-        FINAL_COLS = [
-            'published_dt', 'score', 'event_type', 'title', 'companies', 'amounts', 
-            'amounts_numeric', 'deal_structure', 'indications', 'short_summary', 'url', 'full_text'
-        ]
-        
-        # Ensure only common and necessary columns are saved
-        df_save = combined_df[[col for col in FINAL_COLS if col in combined_df.columns]].copy()
-        
-        df_save.to_excel(cumulative_filepath, index=False)
-        print(f"Successfully updated and saved cumulative database to {cumulative_filepath}")
-        return df_save
-        
-    except Exception as e:
-        print(f"CRITICAL ERROR: Failed to save Excel file. Error: {e}")
-        return pd.DataFrame()
-
-
-# -----------------------------------------------------
-# 🆕 Deal-entity–based deduplication (companies + amounts_numeric)
-# -----------------------------------------------------
-def dedupe_by_entities(processed, amount_bin_size=1_000_000):
-    """
-    Additional deduplication layer using:
-      - Sorted company names (lowercased)
-      - Binned primary deal amount (from amounts_numeric)
-    
-    This runs AFTER embedding-based dedupe and before DataFrame creation.
-    """
-    if not processed:
-        return processed
-
-    seen = {}
-    kept = []
-
-    for item in processed:
-        comps = item.get("companies") or []
-        nums = item.get("amounts_numeric") or []
-
-        # If no companies AND no numeric amount -> skip entity-based dedupe for this
-        if not comps and not nums:
-            kept.append(item)
-            continue
-
-        # Canonical company key
-        comps_key = tuple(sorted([c.lower().strip() for c in comps if c and isinstance(c, str)]))
-
-        # Use smallest amount as representative and bin it (in millions)
-        if nums:
-            try:
-                primary_amount = min(nums)
-                bin_val = int(primary_amount // amount_bin_size)
-            except Exception:
-                primary_amount = None
-                bin_val = None
-        else:
-            primary_amount = None
-            bin_val = None
-
-        key = (comps_key, bin_val)
-
-        if key not in seen:
-            seen[key] = item
-            kept.append(item)
-        else:
-            # Keep the higher-score deal for this (companies,amount) key
-            existing = seen[key]
-            if item.get("score", 0) > existing.get("score", 0):
-                # Replace in seen and in kept
-                seen[key] = item
-                # Update kept list: remove old, add new
-                kept = [k for k in kept if k is not existing]
-                kept.append(item)
-
-    print(f"After entity-based deduplication: {len(kept)} items")
-    return kept
-
-
-# ---------------------------------------
-# 🧭 Main pipeline
-# ---------------------------------------
-def run_agent():
+def main():
     ensure_outdir()
-    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SINCE_DAYS)
-    collected = []
 
-    # 1) RSS - early filter by deal keywords
-    DEAL_KEYWORDS_LOWER = [
-        "acquire","acquisition","acquired","merger","merge","buyout","takeover",
-        "partner","partnership","collaborate","alliance","strategic relationship",
-        "license","licensing","funding","raised","series a","series b","seed","investment","venture",
-        "deal","agreement","term sheet","commercialization"
-    ]
+    all_entries = []
 
-    for rss in RSS_FEEDS:
-        print(f"Fetching: {rss[:60]}...")
-        entries = fetch_rss_entries(rss)
-        
-        # Add a short delay between feeds
-        time.sleep(0.5)
-
+    # 1) Collect RSS entries
+    for url in RSS_FEEDS:
+        print(f"🔎 Fetching RSS: {url}")
+        entries = fetch_rss_entries(url)
         for e in entries:
-            title = e.get("title","") or ""
-            raw_summary = e.get("summary","") or e.get("description","") or ""
-            clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text(strip=True)
-            
-            # Early filter: skip if no deal-related keywords
-            combined_text = (title + " " + clean_summary).lower()
-            if not any(k in combined_text for k in DEAL_KEYWORDS_LOWER):
+            pub_dt = parse_pubdate(e)
+            if not within_days(pub_dt, SINCE_DAYS):
                 continue
+            all_entries.append(e)
 
-            pub = e.get("published") or e.get("updated") or e.get("pubDate")
-            try:
-                pub_dt = dateparser.parse(pub) if pub else None
-            except Exception:
-                pub_dt = None
-            if pub_dt:
-                if pub_dt.tzinfo is None:
-                    pub_dt = pub_dt.replace(tzinfo=dt.timezone.utc)
-                if pub_dt < since:
-                    continue
-                
-            collected.append({
-                "title": title,
-                "link": e.get("link",""),
-                "published": pub_dt.isoformat() if pub_dt else None,
-                "summary": clean_summary
-            })
+    print(f"Collected {len(all_entries)} recent entries.")
 
-    print(f"Initial collection: {len(collected)} items")
+    # 2) Normalize collected items
+    collected = []
+    seen_urls = set()
 
-    # Dedupe by URL
-    uniq = {}
-    for c in collected:
-        key = (c.get("link") or c.get("title")).strip()
-        if key and key not in uniq:
-            uniq[key] = c
-    collected = list(uniq.values())
-    print(f"After URL deduplication: {len(collected)} items")
+    for e in all_entries:
+        title = e.get("title", "")
+        link = e.get("link") or e.get("id") or ""
+        summary = e.get("summary", "") or ""
+        pub = parse_pubdate(e)
 
-    # Dedupe by normalized title + date
-    date_title_map = {}
-    for item in collected:
-        norm_title = normalize_title_for_dedup(item.get("title", ""))
-        pub_date = item.get("published", "")[:10] if item.get("published") else "unknown"
-        key = f"{norm_title}_{pub_date}"
-        if key not in date_title_map and norm_title and len(norm_title) > 10:
-            date_title_map[key] = item
-    collected = list(date_title_map.values())
-    print(f"After date+title deduplication: {len(collected)} items")
+        if link and link in seen_urls:
+            continue
+        seen_urls.add(link)
+
+        collected.append({
+            "title": title,
+            "link": link,
+            "summary": BeautifulSoup(summary, "html.parser").get_text(" ", strip=True),
+            "published": pub
+        })
+
+    print(f"Normalized to {len(collected)} unique items.")
 
     # -----------------
     # 3) Process
     # -----------------
     processed = []
     for item in collected:
-        title = item.get("title","")
-        url = item.get("link","")
+        title = item.get("title", "")
+        url = item.get("link", "")
         pub = item.get("published")
-        summary = item.get("summary","") or ""
-        
-        # Try to fetch article text
-        text = fetch_article_text(url) if url else ""
-        
-        # Use the most comprehensive available text for filtering and processing (Fallback is crucial)
+        summary = item.get("summary", "") or ""
+
+        # 🆕 Resolve Google News URLs before fetching
+        if url:
+            if 'news.google.com' in url:
+                resolved_url = resolve_google_news_url(url)
+                print(f"🔗 Resolved Google News URL: {resolved_url[:60]}...")
+                url = resolved_url
+
+            text = fetch_article_text(url)
+        else:
+            text = ""
+
+        # Use the most comprehensive available text for filtering and processing
         if not text or len(text) < 200:
             full_text = summary if len(summary) > 50 else title
         else:
             full_text = text
 
-        # CRITICAL FILTER: is_exosome_relevant (now relaxed)
+        # CRITICAL FILTER: is_exosome_relevant
         if not is_exosome_relevant(full_text, title):
-            # ⭐ ADDED DEBUG LOGGING HERE (if the item fails the relevance check)
-            reasons = []
-            combined_log = (title + " " + full_text).lower()
-            
-            # Check for core relevance failure (uses log_check=True to separate spam)
-            if not is_exosome_relevant(full_text, title, log_check=True): 
-                company_match = any(comp.lower() in combined_log for comp in EXOSOME_COMPANIES)
-                exosome_hits = sum(term in combined_log for term in EXOSOME_TERMS)
-                core_interest_hit = any(term in combined_log for term in CORE_INTEREST_TERMS)
-                text_len = len(combined_log)
-                
-                reasons.append("Core Relevance Failed")
-                reasons.append(f"(EV/Comp: {exosome_hits}/{company_match}, Neuro: {core_interest_hit}, TextLen: {text_len})")
-
-            # Check for spam failure
-            # Check for spam failure (requires TITLE to contain spam, not just body)
-            spam_in_title = any(term in title.lower() for term in SPAM_TERMS)
-            spam_count_in_text = sum(1 for term in SPAM_TERMS if term in combined_log)
-
-            # Only flag as spam if: spam term in title OR multiple (2+) spam terms in full text
-            if spam_in_title or spam_count_in_text >= 2:
-
-                # Check for spam failure (requires TITLE to contain spam, not just body)
-                spam_in_title = any(term in title.lower() for term in SPAM_TERMS)
-                spam_count_in_text = sum(1 for term in SPAM_TERMS if term in combined_log)
-
-                # Only flag as spam if: spam term in title OR multiple (2+) spam terms in full text
-                if spam_in_title or spam_count_in_text >= 2:
-                    reasons.append("SPAM Term Hit")
-               
-            # Print the articles that are failing the relevance filter
-            print(f"DEBUG: Skipping '{title[:50]}...' Reasons: {'; '.join(reasons) or 'Generic Filter Fail'}") 
+            # Optional: add debug here if desired
             continue
 
-        short = summarize_short(full_text, max_sent=2)
-        event = classify_event(full_text + " " + title)
+        event_type = classify_event(full_text)
+        indications = detect_indications(full_text)
 
-        # --- COMPANY EXTRACTION LOGIC ---
-        if event == "acquisition":
-            companies = extract_acquisition_details(title, full_text)
-            
-            if len(companies) >= 2:
-                companies = [re.sub(r'SA|SA\s*\(NASDAQ:[^\)]+\)|LLC|Inc\.?|Corp\.?|Corporation|Limited', '', c).strip() 
-                             for c in companies]
-            else: 
-                companies_from_text = extract_companies(full_text)
-                companies_from_title = extract_companies(title + " " + summary)
-                companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
-        else:
-            companies_from_text = extract_companies(full_text)
-            companies_from_title = extract_companies(title + " " + summary)
-            companies = list(dict.fromkeys(companies_from_text + companies_from_title))[:5]
+        # Company extraction
+        companies = extract_companies_from_title(title)
+        if len(companies) < 1:
+            more_companies = extract_companies(full_text)
+            for c in more_companies:
+                if c not in companies:
+                    companies.append(c)
+        companies_str = ", ".join(companies) if companies else ""
 
-        # 💰 ENHANCED MONEY EXTRACTION WITH DEAL STRUCTURE 💰
-        validated_money, deal_structure = extract_amounts_with_validation(title, full_text, summary, event)
-        money = [vm['amount'] for vm in validated_money[:3]]
+        # Deal amounts and structure
+        validated_amounts, deal_structure = extract_amounts_with_validation(
+            title, full_text, summary, event_type
+        )
+        amounts_list = [va['amount'] for va in validated_amounts]
+        amounts_str = "; ".join(amounts_list) if amounts_list else ""
 
-        amounts_numeric = []
-        for m in money:
-            n = normalize_amount(m)
-            if n is not None:
-                amounts_numeric.append(n)
-        amounts_numeric = list(dict.fromkeys(amounts_numeric))
+        # Fallback amount search for key event types
+        if not amounts_list and event_type in ["acquisition", "funding"]:
+            fallback_amounts = search_for_deal_amount(title, companies, event_type)
+            if fallback_amounts:
+                amounts_str = "; ".join(fallback_amounts)
 
-        # 🔍 Fallback: Secondary web search scraper 
-        if not money and event in ["acquisition", "funding"]:
-            print(f"🔍 Searching web for amount: {title[:50]}...")
-            search_amounts = search_for_deal_amount(title, companies, event)
-            if search_amounts:
-                money = search_amounts
-                for m in search_amounts:
-                    n = normalize_amount(m)
-                    if n is not None:
-                        amounts_numeric.append(n)
-                # Try to extract structure from search results too
-                if not deal_structure:
-                    deal_structure = extract_deal_structure(full_text, search_amounts)
-        
-        # END MONEY EXTRACTION 
-        
-        indications = detect_indications(full_text + " " + title + " " + summary)
-
-        # Scoring
-        score = (1.5 if event in ["acquisition","partnership","licensing","funding"] else 0.2)
-        score += 0.5 * len(indications)
-        score += 0.8 if money else 0.0
-        score += 0.3 * len(companies)
-        exosome_count = full_text.lower().count("exosome") + full_text.lower().count("extracellular vesicle")
-        score += min(exosome_count * 0.3, 2.0)
-        # Penalize generic funding events with no exosome mention
-        if event == "funding" and not any(t in full_text.lower() for t in EXOSOME_TERMS):
-            score -= 0.7
-
-        dealish_signals = 0
-        if money:
-            dealish_signals += 1
-        if any(k in full_text.lower() for k in ["acquisition of", "acquires", "acquired", "deal worth", "transaction value"]):
-            dealish_signals += 1
-        if len(companies) >= 2:
-            dealish_signals += 1
-
-        if event in ["acquisition", "funding"] and dealish_signals < 2:
-            print(f"DEBUG: Skipping low-signal {event} '{title[:60]}...' (signals={dealish_signals})")
-            continue  # Skip this deal, do not append
+        relevance_score = compute_relevance_score(title, full_text)
 
         processed.append({
-            "title": title,
-            "url": url,
-            "published": pub,
-            "date": pub,
-            "companies": companies,
-            "event_type": event,
-            "amounts": money,
-            "amounts_numeric": amounts_numeric,
-            "deal_structure": deal_structure,  # 🆕 NEW FIELD
-            "indications": indications,
-            "short_summary": short,
-            "full_text": full_text,
-            "score": score
+            "Date": pub.date().isoformat() if isinstance(pub, dt.datetime) else "",
+            "Title": title,
+            "URL": url,
+            "Summary": summary,
+            "EventType": event_type,
+            "Indications": indications,
+            "Companies": companies_str,
+            "Amounts": amounts_str,
+            "DealStructure": deal_structure,
+            "RelevanceScore": relevance_score,
+            "RawText": full_text[:5000]
         })
 
-    print(f"After relevance filtering: {len(processed)} items")
-    if not processed:
-        print("No processed items found.")
-        return None
+    df_new = pd.DataFrame(processed)
+    print(f"Processed and kept {len(df_new)} items after relevance filtering.")
 
-    # -----------------
-    # 4) Dedupe via embeddings
-    # -----------------
-    texts = [p["title"] + " " + p["short_summary"] for p in processed]
-    emb = embedder.encode(texts)
-    sim = cosine_similarity(emb)
-    n = len(processed)
-    drop = set()
-    for i in range(n):
-        for j in range(i+1, n):
-            if sim[i,j] > 0.75:
-                if processed[i]["score"] >= processed[j]["score"]:
-                    drop.add(j)
-                else:
-                    drop.add(i)
-    filtered = [p for idx,p in enumerate(processed) if idx not in drop]
-    print(f"Filtered {len(processed)-len(filtered)} embedding duplicates; {len(filtered)} items remain")
+    # 4) Merge with cumulative DB
+    cumulative_path = os.path.join(OUTPUT_DIR, CUMULATIVE_FILENAME)
+    df_existing = load_existing_cumulative(cumulative_path)
 
-    # -----------------
-    # 4b) 🆕 Entity-based deduplication layer
-    # -----------------
-    filtered = dedupe_by_entities(filtered)
+    if not df_existing.empty:
+        df_merged = pd.concat([df_existing, df_new], ignore_index=True)
+        df_merged.drop_duplicates(subset=["Title", "URL"], keep="last", inplace=True)
+    else:
+        df_merged = df_new
 
-    # -----------------
-    # 5) Prepare DataFrame for export (return only the new deals)
-    # -----------------
-    df_new_deals = pd.DataFrame(filtered)
-    def parse_dt(x):
-        if not x: return pd.NaT
-        try:
-            return pd.to_datetime(x)
-        except Exception:
-            try:
-                return pd.to_datetime(dateparser.parse(x))
-            except Exception:
-                return pd.NaT
-    df_new_deals["published_dt"] = df_new_deals["published"].apply(parse_dt)
-    df_new_deals = df_new_deals.sort_values(["published_dt","score"], ascending=[False,False])
-    
-    return df_new_deals
+    save_cumulative(df_merged, cumulative_path)
 
-# -----------------
-# Run the agent
-# -----------------
+    # 5) Also save a dated snapshot of this run
+    today_str = dt.datetime.utcnow().strftime("%Y%m%d")
+    snapshot_path = os.path.join(OUTPUT_DIR, f"exosome_deals_run_{today_str}.xlsx")
+    try:
+        df_new.to_excel(snapshot_path, index=False)
+        print(f"📁 Saved run snapshot to: {snapshot_path}")
+    except Exception as e:
+        print(f"Failed to save run snapshot: {e}")
+
+    # 6) Optional: send email with top deals
+    if not df_new.empty:
+        send_email_with_top_deals(df_new, TOP_N_TO_EMAIL)
+
 if __name__ == "__main__":
-    print("----- Starting monthly run for NeuroCell Intelligence (Enhanced Money Extraction) -----")
-    
-    # 1. Run the core agent to get NEW, filtered deals
-    df_new_deals = run_agent()
-    
-    if df_new_deals is None or df_new_deals.empty:
-        print("No deals found — skipping email.")
-        print("----- Run completed -----")
-        exit()
-
-    # 2. Export new deals to the cumulative database file
-    df_database = export_to_cumulative_database(df_new_deals, CUMULATIVE_FILENAME)
-    cumulative_filepath = os.path.join(OUTPUT_DIR, CUMULATIVE_FILENAME)
-
-    # 3. Generate and send email using the NEW deals for the summary and the database file as attachment
-    if not df_database.empty:
-        # The email summary should highlight the new deals, sorting by score
-        df_email = df_new_deals.sort_values("score", ascending=False).head(TOP_N_TO_EMAIL)
-
-        subject = f"Exosome Deals — Summary ({len(df_new_deals)} NEW Deals)"
-        
-        # Format the body of the email with enhanced deal structure info
-        body_lines = [
-            f"A total of {len(df_new_deals)} new deals/relevant news items were found and added to the cumulative database (attached).",
-            f"The database now contains {len(df_database)} unique records.",
-            "\n--- Top Deals Summary ---\n"
-        ]
-        
-        # ⭐ Helper function to format list data for display, checking for empty/NA
-        def format_list(data):
-            # Check if data is a list/tuple and not empty, otherwise return empty string
-            if isinstance(data, (list, tuple)) and data: 
-                # Check for empty strings/NA within the list and filter them out
-                clean_data = [str(item) for item in data if str(item).strip()]
-                return ", ".join(clean_data[:2])
-            return "" 
-            
-        for index, row in df_email.iterrows():
-            summary = f"[{row['event_type'].upper()}] {row['title']} (Score: {row['score']:.1f})"
-            
-            # Check if formatted list is NOT empty before adding it to the summary line
-            amount_str = format_list(row['amounts'])
-            if amount_str:
-                summary += f" - Amount: {amount_str}"
-            
-            # 🆕 Add deal structure description if available
-            if row.get('deal_structure') and str(row['deal_structure']).strip():
-                summary += f"\n   💰 Deal Structure: {row['deal_structure']}"
-            
-            company_str = format_list(row['companies'])
-            if company_str:
-                summary += f" - Companies: {company_str}"
-                
-            indication_str = format_list(row['indications'])
-            if indication_str:
-                summary += f" - Focus: {indication_str}"
-            
-            body_lines.append(summary)
-            body_lines.append(f"   Summary: {row['short_summary']}")
-            body_lines.append(f"   Link: {row['url']}\n")
-            
-        body = "\n".join(body_lines)
-        
-        send_email_with_attachment(subject, body, cumulative_filepath)
-
-    print("----- Run completed -----")
+    main()
