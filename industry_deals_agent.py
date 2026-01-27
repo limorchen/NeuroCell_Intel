@@ -38,6 +38,11 @@ RSS_FEEDS = [
     "https://www.biocentury.com/rss",
     "https://www.bioworld.com/rss",
     "https://www.evaluate.com/vantage/rss",
+     # 🆕 ADD THESE MORE SPECIFIC SEARCHES:
+    "https://news.google.com/rss/search?q=%22exosome+therapy%22+OR+%22exosome+therapeutics%22&hl=en-US",
+    "https://news.google.com/rss/search?q=Evox+OR+Capricor+OR+Codiak+OR+%22Direct+Biologics%22&hl=en-US",
+    "https://news.google.com/rss/search?q=%22extracellular+vesicle%22+clinical+trial&hl=en-US",
+]
     
     # Stable Public Wire Feeds
     "https://www.prnewswire.com/rss/health-care-latest-news/health-care-latest-news-list.rss",
