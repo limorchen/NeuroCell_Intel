@@ -712,41 +712,63 @@ def save_cumulative(df, path):
         print(f"Failed to save cumulative DB: {e}")
 
 def send_email_with_top_deals(df, top_n=TOP_N_TO_EMAIL):
-    """Send summary email of top N deals."""
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASS")
-    to_email = os.getenv("TO_EMAIL")
-
-    if not (smtp_host and smtp_user and smtp_pass and to_email):
-        print("⚠️ Email not sent: SMTP or TO_EMAIL env vars missing.")
+    """Send summary email of top N deals with Excel attachment."""
+    # Use your GitHub Secrets (_465 vars)
+    smtp_host = os.getenv("SMTP_HOST_465")
+    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    smtp_user = os.getenv("SMTP_USER_465")
+    smtp_pass = os.getenv("SMTP_PASS_465")
+    to_email_str = os.getenv("EMAIL_TO_465")
+    
+    if not (smtp_host and smtp_user and smtp_pass and to_email_str):
+        print("⚠️ Email not sent: SMTP or EMAIL_TO_465 env vars missing.")
         return
 
+    to_email = to_email_str.split(",")
+    
+    # Generate body
     df_sorted = df.sort_values("RelevanceScore", ascending=False).head(top_n)
     lines = []
     for _, row in df_sorted.iterrows():
+        indications = row.get('Indications', '')
+        focus = f" - Focus: {indications}" if indications else ""
         line = (
-            f"- {row.get('Date','')} | {row.get('EventType','')} | "
-            f"{row.get('Title','')} | {row.get('Companies','')} | "
-            f"{row.get('Amounts','')} | {row.get('URL','')}"
+            f"- {row.get('Date','')} | [{row.get('EventType','')} | "
+            f"{row.get('Title','')} ({row.get('Companies','')}) "
+            f"| {row.get('Amounts','')} | Score: {row.get('RelevanceScore',''):.1f}{focus}"
         )
         lines.append(line)
 
-    body = "Top Exosome/EV Deals & Events\n\n" + "\n".join(lines)
+    body = f"""A total of {len(df)} new deals/relevant news items were found and added to the cumulative database (attached).
+The database now contains {len(pd.read_excel(os.path.join(OUTPUT_DIR, CUMULATIVE_FILENAME)))} unique records.
 
+--- Top Deals Summary ---
+
+{chr(10).join(lines)}"""
+
+    # Cumulative Excel path
+    attachment_path = os.path.join(OUTPUT_DIR, CUMULATIVE_FILENAME)
+    
     msg = EmailMessage()
     msg["Subject"] = "Exosome/EV Deals & Funding Digest"
     msg["From"] = smtp_user
-    msg["To"] = to_email
+    msg["To"] = ", ".join(to_email)
     msg.set_content(body)
-
+    
+    # Attach Excel
+    if os.path.exists(attachment_path):
+        with open(attachment_path, 'rb') as f:
+            file_data = f.read()
+            filename = os.path.basename(attachment_path)
+        msg.add_attachment(file_data, maintype='application', subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename=filename)
+        print(f"📎 Attached: {filename}")
+    
     try:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
+        # Port 465 = SSL (your workflow)
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
-        print("📧 Email summary sent.")
+        print("📧 Email summary sent with attachment.")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
