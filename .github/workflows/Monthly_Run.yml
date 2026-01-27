@@ -1,10 +1,8 @@
 name: Monthly Intelligence Agent (SMTP 465)
-
 on:
   schedule:
     - cron: '0 10 14 * *'  # Runs at 10:00 UTC on the 14th of every month
   workflow_dispatch:      # Enables manual run
-
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
@@ -21,36 +19,45 @@ jobs:
       SMTP_PASS: ${{ secrets.SMTP_PASS_465 }}
       EMAIL_FROM: ${{ secrets.EMAIL_FROM_465 }}
       EMAIL_TO: ${{ secrets.EMAIL_TO_465 }}
-
       # Other secrets for the agent
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
-
     steps:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetches full history for a successful push
-
+          fetch-depth: 0  # Fetches full history
+          ref: main       # Explicitly check out main branch
+          
+      - name: 🔍 Check for existing database
+        run: |
+          echo "Checking for existing database file..."
+          if [ -f "industry_deals/exosome_deals_DATABASE.xlsx" ]; then
+            echo "✅ Found existing database:"
+            ls -lh industry_deals/exosome_deals_DATABASE.xlsx
+          else
+            echo "⚠️ No existing database found - will create new one"
+          fi
+          
       - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
+          
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install lxml[html_clean] newspaper3k trafilatura
+          pip install lxml[html_clean] newspaper3k trafilatura openpyxl
           python -m spacy download en_core_web_sm
-
+          
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
           echo "----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----"
           python industry_deals_agent.py
           echo "----- Run completed -----"
-
+          
       - name: 💾 Commit and Push updated database
         if: always()
         run: |
@@ -62,27 +69,53 @@ jobs:
           FILE_PATH="industry_deals/exosome_deals_DATABASE.xlsx"
           
           if [ -f "$FILE_PATH" ]; then
-            echo "Database file found. Staging for commit..."
-            git add "$FILE_PATH"
+            echo "✅ Database file found at: $FILE_PATH"
+            ls -lh "$FILE_PATH"
             
-            # 3. CHANGE CHECK: Only commit if there are actual new changes
-            if git diff --staged --quiet; then
-              echo "No new changes detected in the database. Skipping commit."
+            # 3. Pull latest changes first (in case of concurrent runs)
+            git pull --rebase origin main || echo "Pull failed or nothing to pull"
+            
+            # 4. Stage the file (force add to handle binary files)
+            git add -f "$FILE_PATH"
+            
+            # 5. Check if there are staged changes
+            if git diff --cached --quiet; then
+              echo "⚠️ No changes detected by Git diff."
+              echo "This can happen with binary files. Checking file modification time..."
+              
+              # Force commit if file was modified in last 5 minutes
+              if [ $(find "$FILE_PATH" -mmin -5 | wc -l) -gt 0 ]; then
+                echo "File was recently modified. Forcing commit..."
+                git commit --allow-empty -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
+              else
+                echo "File appears unchanged. Skipping commit."
+                exit 0
+              fi
             else
-              git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d')]"
-              git push
+              echo "✅ Changes detected. Committing..."
+              git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
             fi
+            
+            # 6. Push changes
+            git push origin main || {
+              echo "Push failed. Attempting to pull and retry..."
+              git pull --rebase origin main
+              git push origin main
+            }
+            
+            echo "✅ Database successfully committed and pushed!"
+            
           else
             echo "⚠️ No database file generated in this run. This is normal if 0 deals were found."
           fi
-
+          
       - name: 📜 Upload log file (Artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: monthly-run-logs
           path: neurocell_agent.log
-
+          
       - name: 📦 Upload Excel output (Artifact)
         if: always()
         uses: actions/upload-artifact@v4
