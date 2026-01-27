@@ -121,7 +121,7 @@ EXOSOME_COMPANIES = [
     "corestemchemon", "cellgenic", "abio materials", "resilielle cosmetics", "skinseqnc", "zeo sceinetifix",
     "bpartnership", "clinic utoquai", "swiss derma clinic", "laclinique", "exogems", "ags therapeutics", "phoenestra gmbh", 
     "exosla therapeutics", "tiny cargo company", "rion inc.", "exosomica", "exogenus therapeutics", "direct biologics", "ev therapeutics", 
-    "nano24",
+    "nano24", "pandorum", "nucelion", "nippon shinyaku",
 ]
 
 
@@ -190,6 +190,19 @@ def fetch_article_text(url, timeout=15):
     except Exception as e:
         print(f"Article fetch failed for {url[:50]}...: {str(e)[:50]}")
         return ""
+
+def resolve_google_news_url(google_url):
+    """Extract the actual article URL from Google News redirect."""
+    try:
+        if 'news.google.com' in google_url and '/articles/' in google_url:
+            # Try to extract the actual URL from Google's redirect
+            response = requests.get(google_url, allow_redirects=True, timeout=10, 
+                                   headers={"User-Agent": "Mozilla/5.0"})
+            return response.url
+        return google_url
+    except Exception as e:
+        print(f"Failed to resolve Google News URL: {str(e)[:50]}")
+        return google_url
 
 
 # -----------------------------------------------------
