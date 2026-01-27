@@ -692,7 +692,8 @@ def parse_pubdate(entry):
 def within_days(dt_obj, days=SINCE_DAYS):
     if not dt_obj:
         return False
-    cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
+    # Fix: Make cutoff timezone-aware (UTC)
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
     return dt_obj > cutoff
 
 def load_existing_cumulative(path):
