@@ -1,9 +1,9 @@
-name: AI-Enhanced_Patent_Search.yml
+name: AI-Enhanced Patent Search
 
 on:
-  workflow_dispatch:  # manual trigger
+  workflow_dispatch:  # מאפשר הרצה ידנית בלחיצת כפתור
   schedule:
-    # Runs at 00:00 UTC on the 1st day of every 2nd month (Feb, Apr, Jun, Aug, Oct, Dec)
+    # מריץ ב-00:00 ב-1 לכל חודש שני (פברואר, אפריל, יוני וכו')
     - cron: '0 0 1 */2 *'
 
 jobs:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     
     permissions:
-      contents: write
+      contents: write  # נחוץ כדי שהבוט יוכל לעדכן את קובץ ה-CSV בריפו
     
     steps:
       - name: Checkout repository
@@ -22,6 +22,7 @@ jobs:
         with:
           python-version: '3.11'
       
+      # שמירת ספריות הפייתון בזיכרון מטמון לחיסכון בזמן
       - name: Cache Python dependencies
         uses: actions/cache@v3
         with:
@@ -30,6 +31,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
       
+      # שמירת מודל ה-AI בזיכרון מטמון (חוסך הורדה של 90MB בכל ריצה)
       - name: Cache sentence-transformers model
         uses: actions/cache@v3
         with:
@@ -41,24 +43,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      # 🚨 NEW DEBUGGING STEP 🚨
-      - name: Show contents of Patents-Bimonthly.py for debugging
-        run: cat Patents-Bimonthly.py
-
       - name: Run AI-enhanced patent search
         env:
+          # משיכת המפתחות שהגדרת ב-GitHub Secrets
           EPO_OPS_KEY: ${{ secrets.EPO_OPS_KEY }}
           EPO_OPS_SECRET: ${{ secrets.EPO_OPS_SECRET }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-        # 🚨 CRITICAL CHANGE: RUNNING Patents_AI_Enhanced.py 🚨
+        # הרצת הקובץ החדש והמשופר
         run: python Patents_AI_Enhanced.py
       
       - name: Commit and push CSV changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
+          # הוספת קובץ הנתונים המעודכן
           git add data/patents_cumulative.csv
           
           if git diff --staged --quiet; then
