@@ -59,7 +59,8 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         
-        run: python Patents_Multi_Source_Enhanced.py
+        
+        run: python Patents_Multi_Source.py
       
       - name: Commit and push CSV changes
         run: |
