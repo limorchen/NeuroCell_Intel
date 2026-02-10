@@ -4,6 +4,8 @@ print("--- MULTI-SOURCE PATENT SEARCH v2.0: EPO + USPTO + WIPO ---")
 
 import os
 import sys
+import epo_ops
+from epo_ops import Client, middlewares
 import time
 import smtplib
 import requests

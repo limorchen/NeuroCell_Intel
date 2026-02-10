@@ -35,3 +35,13 @@ dogpile.cache>=1.1.0
 
 # AI Enhancement (Claude API)
 anthropic>=0.39.0
+
+pandas>=1.0
+numpy>=1.19
+lxml>=4.0
+requests>=2.25
+beautifulsoup4>=4.9
+python-epo-ops-client>=0.2
+sentence-transformers>=2.0
+scikit-learn>=0.24
+torch>=1.9.0
