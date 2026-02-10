@@ -263,7 +263,7 @@ def get_epo_biblio(country, number, kind):
 # ---------------------------------------------------------------
 
 def search_wipo_patents(start_date, end_date):
-    """Search WIPO PatentScope for PCT (WO) patents."""
+    """Search WIPO PatentScope for PCT (WO) patents via web scraping."""
     if not HAS_BEAUTIFULSOUP:
         logger.warning("[WIPO] BeautifulSoup not available, skipping WIPO search")
         return []
@@ -272,116 +272,96 @@ def search_wipo_patents(start_date, end_date):
     logger.info("[WIPO] Searching PatentScope for PCT patents...")
     
     try:
-        # WIPO PatentScope search query
-        # Format: (exosome* OR "extracellular vesicle*") AND CNS AND PC=WO
-        search_query = '(exosome* OR "extracellular vesicle*") AND CNS AND PC=WO'
-        
-        # URL for WIPO advanced search
-        wipo_search_url = "https://patentscope.wipo.int/search/en/advanced/search.jsf"
-        
-        params = {
-            'queryString': search_query,
-            'sort': 'Relevance',
-            'maxResults': 100
-        }
+        # WIPO PatentScope search URL - uses simple keyword search
+        search_url = "https://patentscope.wipo.int/search/en/search.jsf"
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        # Try REST API endpoint first
-        rest_url = "https://patentscope.wipo.int/rest/api/patentrecords"
-        
-        rest_params = {
-            'expression': search_query,
-            'start': 0,
-            'max': 100,
-            'lan': 'en'
-        }
-        
-        logger.info(f"[WIPO] Searching with query: {search_query}")
+        logger.info(f"[WIPO] Searching for: exosome* AND CNS (PCT patents only)")
         
         try:
-            resp = requests.get(rest_url, params=rest_params, headers=headers, timeout=10)
+            # Simple keyword search - search for exosome in title and abstract
+            params = {
+                'searchString': 'exosome',
+                'sort': 'RELEVANCE'
+            }
             
-            if resp.status_code == 200:
-                data = resp.json()
+            resp = requests.get(search_url, params=params, headers=headers, timeout=15)
+            resp.raise_for_status()
+            
+            soup = BeautifulSoup(resp.content, 'html.parser')
+            
+            # Find all patent result links - WIPO uses specific structure
+            result_links = soup.find_all('a', href=lambda x: x and 'docId=WO' in x)
+            
+            logger.info(f"[WIPO] Found {len(result_links)} patent result links")
+            
+            for idx, link in enumerate(result_links[:50]):  # Limit to 50 to avoid overload
+                try:
+                    # Extract WO number from href
+                    href = link.get('href', '')
+                    if 'docId=WO' not in href:
+                        continue
+                    
+                    # Parse WO number
+                    wo_start = href.find('docId=WO') + 8
+                    wo_end = wo_start + 10  # WO number is typically 10 chars (WO + 8 digits)
+                    wo_number = href[wo_start:wo_end]
+                    
+                    if not wo_number or len(wo_number) < 8:
+                        continue
+                    
+                    # Get title from link text
+                    title = link.text.strip() if link.text else 'Not available'
+                    
+                    if not title or title == 'Not available':
+                        # Try to get title from parent container
+                        parent = link.find_parent('tr')
+                        if parent:
+                            title_cell = parent.find('td')
+                            if title_cell:
+                                title = title_cell.text.strip()
+                    
+                    # Filter by CNS in title
+                    if 'CNS' not in title and 'central nervous' not in title.lower() and 'brain' not in title.lower():
+                        continue
+                    
+                    records.append({
+                        "country": "WO",
+                        "publication_number": wo_number[2:],  # Remove 'WO' prefix
+                        "kind": "A1",
+                        "title": title[:200] if title else "Not available",
+                        "applicants": "Not available",
+                        "inventors": "Not available",
+                        "abstract": "",
+                        "publication_date": "",
+                        "priority_date": "",
+                        "source": "WIPO"
+                    })
+                    
+                    logger.debug(f"[WIPO] Found: {wo_number} - {title[:50]}")
                 
-                # Parse WIPO REST API response
-                if 'patentDocuments' in data:
-                    total_results = data.get('total', 0)
-                    logger.info(f"[WIPO] Found {total_results} PCT patents")
-                    
-                    for doc in data.get('patentDocuments', []):
-                        try:
-                            # Extract patent information
-                            biblio = doc.get('bibliographicData', {})
-                            
-                            # Get patent number (should be WO)
-                            pub_ref = biblio.get('publicationNumber', '')
-                            if not pub_ref.startswith('WO'):
-                                continue
-                            
-                            # Parse WO number (format: WO2024123456)
-                            wo_match = pub_ref[:10]  # WO + 8 digits
-                            
-                            # Get title
-                            title_dict = biblio.get('invention-title', {})
-                            if isinstance(title_dict, dict):
-                                title = title_dict.get('en', '')
-                            else:
-                                title = str(title_dict)
-                            
-                            # Get abstract
-                            abstract_dict = biblio.get('abstract', {})
-                            if isinstance(abstract_dict, dict):
-                                abstract = abstract_dict.get('en', '')
-                            else:
-                                abstract = str(abstract_dict)
-                            
-                            # Get applicant
-                            parties = biblio.get('parties', {})
-                            applicants = parties.get('applicants', [])
-                            applicant_name = applicants[0].get('name', 'Not available') if applicants else 'Not available'
-                            
-                            # Get inventor
-                            inventors = parties.get('inventors', [])
-                            inventor_name = inventors[0].get('name', 'Not available') if inventors else 'Not available'
-                            
-                            # Get dates
-                            pub_date = biblio.get('publicationDate', '')
-                            priority_date = biblio.get('priorityDate', '')
-                            
-                            records.append({
-                                "country": "WO",
-                                "publication_number": wo_match[2:],  # Remove 'WO' prefix
-                                "kind": "A1",
-                                "title": title,
-                                "applicants": applicant_name,
-                                "inventors": inventor_name,
-                                "abstract": abstract[:500] if abstract else "",
-                                "publication_date": pub_date,
-                                "priority_date": priority_date,
-                                "source": "WIPO"
-                            })
-                        
-                        except Exception as e:
-                            logger.debug(f"[WIPO] Error parsing patent document: {e}")
-                            continue
-                    
-                    logger.info(f"[WIPO] Successfully extracted {len(records)} PCT patents")
-                    return records
+                except Exception as e:
+                    logger.debug(f"[WIPO] Error parsing result {idx}: {e}")
+                    continue
+            
+            if records:
+                logger.info(f"[WIPO] Successfully found {len(records)} relevant PCT patents")
+            else:
+                logger.info("[WIPO] No relevant patents found with CNS filter")
+            
+            return records
         
-        except Exception as e:
-            logger.warning(f"[WIPO] REST API error: {e}")
-        
-        # Fallback: If REST API doesn't work, return empty list
-        logger.info("[WIPO] REST API unavailable. WIPO search skipped.")
-        logger.info("[WIPO] Note: Full WIPO integration requires additional authentication")
-        return []
+        except requests.RequestException as e:
+            logger.warning(f"[WIPO] Network error: {e}")
+            logger.info("[WIPO] WIPO search skipped (network unavailable)")
+            return []
     
     except Exception as e:
         logger.error(f"[WIPO] Search error: {e}")
+        logger.info("[WIPO] Continuing without WIPO results")
         return []
 
 
