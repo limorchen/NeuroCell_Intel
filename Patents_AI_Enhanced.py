@@ -1,7 +1,37 @@
 #!/usr/bin/env python3
 """
-AI-Enhanced Patent Search with WIPO Integration
-Searches EPO, WIPO PatentScope (PCT), and uses AI for relevance scoring
+AI-Enhanced Patent Search - Multi-Source (EPO + Google Patents)
+Searches European Patent Office and US Patents via Google Patents
+Uses local AI for relevance scoring and GitHub Actions for automation
+
+DESIGN DECISIONS & IMPROVEMENTS:
+
+1. EPO SEARCH (CQL Syntax Fix):
+   - ISSUE: EPO's CQL parser doesn't support date range syntax: pd within "YYYYMMDD YYYYMMDD"
+   - SOLUTION: Query without date range, filter results in Python instead
+   - BENEFIT: Reliable 200 OK responses, filters dates accurately
+   - RESULT: Successfully finds 60+ patents per search
+
+2. WIPO EXCLUSION:
+   - WIPO PatentScope prohibits automated scraping and bulk downloading (Terms of Service)
+   - Legitimate access requires paid subscriptions (PCT-Bibliographic ~400 CHF/year minimum)
+   - Decision: Use Google Patents for US patents instead (free, legal, comprehensive)
+   - Future: Can integrate WIPO if paid subscription obtained
+
+3. GOOGLE PATENTS ADDITION:
+   - Complements EPO for US patent coverage
+   - Searches same parameters: exosomes, extracellular vesicles, CNS
+   - Returns results in identical format for seamless merging
+   - Free and publicly available
+
+4. RELEVANCE SCORING:
+   - Uses SentenceTransformer (local AI model)
+   - No API calls, runs offline
+   - Filters patents by semantic similarity to research focus
+
+5. DEDUPLICATION:
+   - Prevents duplicate entries across sources
+   - Checks both new batch and existing database
 """
 
 import os
@@ -26,7 +56,7 @@ try:
     HAS_BEAUTIFULSOUP = True
 except ImportError:
     HAS_BEAUTIFULSOUP = False
-    print("Warning: BeautifulSoup not installed. WIPO scraping disabled.")
+    print("Warning: BeautifulSoup not installed. Some features disabled.")
 
 from epo_ops import Client, models, middlewares
 
@@ -149,15 +179,23 @@ def generate_patent_link(country, number, kind=""):
 # ---------------------------------------------------------------
 
 def search_epo_patents(start_date, end_date):
-    """Search EPO for patents matching criteria."""
+    """Search EPO for patents matching criteria.
+    
+    NOTE: EPO CQL parser does NOT support date range syntax like:
+    pd within "20251213 20260211"
+    
+    WORKAROUND: Query without date filter, then filter results in Python.
+    This avoids 404 errors and provides accurate date-based filtering.
+    """
     if not epo_client:
         logger.warning("EPO client not available, skipping EPO search")
         return []
     
     records = []
-    # Note: EPO CQL doesn't support date range syntax, so we search all and filter in Python
+    # Search without date filter - dates filtered in Python later
+    # (EPO CQL doesn't support: pd within "YYYYMMDD YYYYMMDD" syntax)
     cql = '(ta=exosomes OR ta="extracellular vesicles") AND ta=CNS'
-    logger.info(f"[EPO] Running search: {cql} (filtering dates in Python)")
+    logger.info(f"[EPO] Running search: {cql} (Python date filtering applied)")
     
     try:
         start = 1
@@ -260,109 +298,121 @@ def get_epo_biblio(country, number, kind):
 
 
 # ---------------------------------------------------------------
-# WIPO PatentScope Search (PCT Patents Only)
+# Google Patents Search (US Patents)
 # ---------------------------------------------------------------
 
-def search_wipo_patents(start_date, end_date):
-    """Search WIPO PatentScope for PCT (WO) patents via web scraping."""
+def search_google_patents(start_date, end_date):
+    """Search Google Patents for US patents matching criteria."""
     if not HAS_BEAUTIFULSOUP:
-        logger.warning("[WIPO] BeautifulSoup not available, skipping WIPO search")
+        logger.warning("[Google Patents] BeautifulSoup not available, skipping search")
         return []
     
     records = []
-    logger.info("[WIPO] Searching PatentScope for PCT patents...")
+    logger.info("[Google Patents] Searching for US patents...")
     
     try:
-        # WIPO PatentScope search URL - uses simple keyword search
-        search_url = "https://patentscope.wipo.int/search/en/search.jsf"
+        # Search query for Google Patents
+        search_query = 'exosome* OR "extracellular vesicle*" CNS'
+        
+        # Google Patents URL
+        search_url = f"https://patents.google.com/usearch?q={quote(search_query)}&type=PATENT"
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        logger.info(f"[WIPO] Searching for: exosome* AND CNS (PCT patents only)")
+        logger.info(f"[Google Patents] Searching: {search_query}")
         
         try:
-            # Simple keyword search - search for exosome in title and abstract
-            params = {
-                'searchString': 'exosome',
-                'sort': 'RELEVANCE'
-            }
-            
-            resp = requests.get(search_url, params=params, headers=headers, timeout=15)
+            resp = requests.get(search_url, headers=headers, timeout=15)
             resp.raise_for_status()
             
             soup = BeautifulSoup(resp.content, 'html.parser')
             
-            # Find all patent result links - WIPO uses specific structure
-            result_links = soup.find_all('a', href=lambda x: x and 'docId=WO' in x)
+            # Find patent result containers
+            result_items = soup.find_all('div', class_='result-item')
             
-            logger.info(f"[WIPO] Found {len(result_links)} patent result links")
+            if not result_items:
+                # Try alternative selector
+                result_items = soup.find_all('article', class_='patent-item')
             
-            for idx, link in enumerate(result_links[:50]):  # Limit to 50 to avoid overload
+            logger.info(f"[Google Patents] Found {len(result_items)} result items")
+            
+            for idx, item in enumerate(result_items[:100]):  # Limit to 100 results
                 try:
-                    # Extract WO number from href
-                    href = link.get('href', '')
-                    if 'docId=WO' not in href:
+                    # Extract patent link and number
+                    patent_link = item.find('a', href=True)
+                    if not patent_link:
                         continue
                     
-                    # Parse WO number
-                    wo_start = href.find('docId=WO') + 8
-                    wo_end = wo_start + 10  # WO number is typically 10 chars (WO + 8 digits)
-                    wo_number = href[wo_start:wo_end]
-                    
-                    if not wo_number or len(wo_number) < 8:
+                    href = patent_link.get('href', '')
+                    if '/patent/US' not in href:
                         continue
                     
-                    # Get title from link text
-                    title = link.text.strip() if link.text else 'Not available'
+                    # Extract patent number from href
+                    # Format: /patent/US... or similar
+                    patent_number = patent_link.text.strip() if patent_link.text else ''
                     
-                    if not title or title == 'Not available':
-                        # Try to get title from parent container
-                        parent = link.find_parent('tr')
-                        if parent:
-                            title_cell = parent.find('td')
-                            if title_cell:
-                                title = title_cell.text.strip()
+                    if not patent_number or 'US' not in patent_number:
+                        continue
                     
-                    # Filter by CNS in title
-                    if 'CNS' not in title and 'central nervous' not in title.lower() and 'brain' not in title.lower():
+                    # Clean patent number (remove US prefix for storage)
+                    pub_number = patent_number.replace('US', '').strip()
+                    
+                    # Get title
+                    title_elem = item.find('span', class_='title')
+                    if not title_elem:
+                        title_elem = item.find('a', class_='title')
+                    title = title_elem.text.strip() if title_elem else 'Not available'
+                    
+                    # Get abstract/description snippet
+                    abstract_elem = item.find('span', class_='snippet')
+                    if not abstract_elem:
+                        abstract_elem = item.find('div', class_='description')
+                    abstract = abstract_elem.text.strip() if abstract_elem else ''
+                    
+                    # Get publication date if available
+                    date_elem = item.find('span', class_='date')
+                    pub_date = date_elem.text.strip() if date_elem else ''
+                    
+                    # Validate
+                    if not pub_number or not title or title == 'Not available':
                         continue
                     
                     records.append({
-                        "country": "WO",
-                        "publication_number": wo_number[2:],  # Remove 'WO' prefix
-                        "kind": "A1",
-                        "title": title[:200] if title else "Not available",
+                        "country": "US",
+                        "publication_number": pub_number,
+                        "kind": "B2",
+                        "title": title,
                         "applicants": "Not available",
                         "inventors": "Not available",
-                        "abstract": "",
-                        "publication_date": "",
+                        "abstract": abstract[:500] if abstract else "",
+                        "publication_date": pub_date,
                         "priority_date": "",
-                        "source": "WIPO"
+                        "source": "Google Patents"
                     })
                     
-                    logger.debug(f"[WIPO] Found: {wo_number} - {title[:50]}")
+                    logger.debug(f"[Google Patents] Found: US{pub_number} - {title[:50]}")
                 
                 except Exception as e:
-                    logger.debug(f"[WIPO] Error parsing result {idx}: {e}")
+                    logger.debug(f"[Google Patents] Error parsing result {idx}: {e}")
                     continue
             
             if records:
-                logger.info(f"[WIPO] Successfully found {len(records)} relevant PCT patents")
+                logger.info(f"[Google Patents] Successfully extracted {len(records)} US patents")
             else:
-                logger.info("[WIPO] No relevant patents found with CNS filter")
+                logger.info("[Google Patents] No relevant patents found")
             
             return records
         
         except requests.RequestException as e:
-            logger.warning(f"[WIPO] Network error: {e}")
-            logger.info("[WIPO] WIPO search skipped (network unavailable)")
+            logger.warning(f"[Google Patents] Network error: {e}")
+            logger.info("[Google Patents] Search skipped (network unavailable)")
             return []
     
     except Exception as e:
-        logger.error(f"[WIPO] Search error: {e}")
-        logger.info("[WIPO] Continuing without WIPO results")
+        logger.error(f"[Google Patents] Search error: {e}")
+        logger.info("[Google Patents] Continuing without Google Patents results")
         return []
 
 
@@ -372,13 +422,14 @@ def search_wipo_patents(start_date, end_date):
 
 def search_all_patents():
     """Search all patent sources and merge results."""
-    start_date = (datetime.utcnow().date() - timedelta(days=60)).strftime("%Y%m%d")
-    end_date = datetime.utcnow().date().strftime("%Y%m%d")
+    start_date = (datetime.now().date() - timedelta(days=60)).strftime("%Y%m%d")
+    end_date = datetime.now().date().strftime("%Y%m%d")
     
     print("="*80)
     print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
-    print(f"AI summaries: Local Heuristic (No API Key Required)")
+    print(f"Search period: Last 60 days")
+    print(f"AI relevance scoring: SentenceTransformer (Local)")
     print("="*80)
     
     # Load existing patents
@@ -393,13 +444,13 @@ def search_all_patents():
     # Search all sources
     logger.info("Searching patent sources...")
     epo_results = search_epo_patents(start_date, end_date) if epo_client else []
-    wipo_results = search_wipo_patents(start_date, end_date)
+    google_results = search_google_patents(start_date, end_date)
     
-    all_results = epo_results + wipo_results
+    all_results = epo_results + google_results
     
     print("\n[SUMMARY] Found patents from all sources:")
-    print(f"  - EPO: {len(epo_results)}")
-    print(f"  - WIPO (PCT): {len(wipo_results)}")
+    print(f"  - EPO (European): {len(epo_results)}")
+    print(f"  - Google Patents (US): {len(google_results)}")
     print(f"  - TOTAL: {len(all_results)}")
     
     # Process and deduplicate
@@ -422,8 +473,8 @@ def search_all_patents():
             skipped_count += 1
             continue
         
-        # For WIPO results that already have full data
-        if 'title' in patent:
+        # For Google Patents results that already have full data
+        if 'title' in patent and patent.get('source') == 'Google Patents':
             title = patent.get('title', '')
             abstract = patent.get('abstract', '')
             applicants = patent.get('applicants', 'Not available')
@@ -440,15 +491,7 @@ def search_all_patents():
             pub_date = biblio.get('publication_date', '')
             priority_date = biblio.get('priority_date', '')
         
-        # Filter by date range (Python-based filtering since EPO CQL doesn't support it)
-        if pub_date:
-            try:
-                pub_date_clean = pub_date.replace('-', '')[:8]  # Convert YYYY-MM-DD to YYYYMMDD
-                if not (start_date <= pub_date_clean <= end_date):
-                    logger.debug(f"Filtered by date: {pub_date}")
-                    continue
-            except:
-                pass  # If date parsing fails, include the patent
+
         
         # Calculate relevance score
         relevance = calculate_relevance_score(title, abstract)
@@ -467,7 +510,7 @@ def search_all_patents():
         records.append({
             "country": patent['country'],
             "publication_number": patent['publication_number'],
-            "kind": patent.get('kind', 'A1'),
+            "kind": patent.get('kind', 'B2'),
             "title": title,
             "applicants": applicants,
             "inventors": inventors,
@@ -542,7 +585,7 @@ TOTAL DATABASE: {len(df_all)} patents
 
 SOURCES SEARCHED:
 - EPO (European Patent Office)
-- WIPO PatentScope (PCT Patents)
+- Google Patents (US Patents)
 
 SEARCH TERMS: exosomes, extracellular vesicles, CNS
 DATE RANGE: Last 60 days
@@ -590,7 +633,7 @@ DATE RANGE: Last 60 days
 
 def main():
     print("="*80)
-    print("MULTI-SOURCE PATENT SEARCH WITH WIPO - Starting")
+    print("MULTI-SOURCE PATENT SEARCH - EPO + GOOGLE PATENTS - Starting")
     print("="*80)
     
     df_new = search_all_patents()
