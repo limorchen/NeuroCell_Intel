@@ -155,8 +155,9 @@ def search_epo_patents(start_date, end_date):
         return []
     
     records = []
-    cql = f'(ta=exosomes or ta="extracellular vesicles") and ta=CNS and pd within "{start_date} {end_date}"'
-    logger.info(f"[EPO] Running search: {cql}")
+    # Note: EPO CQL doesn't support date range syntax, so we search all and filter in Python
+    cql = '(ta=exosomes OR ta="extracellular vesicles") AND ta=CNS'
+    logger.info(f"[EPO] Running search: {cql} (filtering dates in Python)")
     
     try:
         start = 1
@@ -438,6 +439,16 @@ def search_all_patents():
             inventors = biblio.get('inventors', 'Not available')
             pub_date = biblio.get('publication_date', '')
             priority_date = biblio.get('priority_date', '')
+        
+        # Filter by date range (Python-based filtering since EPO CQL doesn't support it)
+        if pub_date:
+            try:
+                pub_date_clean = pub_date.replace('-', '')[:8]  # Convert YYYY-MM-DD to YYYYMMDD
+                if not (start_date <= pub_date_clean <= end_date):
+                    logger.debug(f"Filtered by date: {pub_date}")
+                    continue
+            except:
+                pass  # If date parsing fails, include the patent
         
         # Calculate relevance score
         relevance = calculate_relevance_score(title, abstract)
