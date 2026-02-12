@@ -20,6 +20,10 @@ import time
 # ---------------------------------------
 load_dotenv()
 
+# 🆕 Set HuggingFace token if available (prevents rate limiting)
+if not os.getenv("HF_TOKEN"):
+    print("⚠️  HF_TOKEN not set. Consider adding it to .env for faster model downloads.")
+
 # ---------------------------------------
 # 📁 Configuration
 # ---------------------------------------
@@ -28,13 +32,18 @@ SINCE_DAYS = 35
 TOP_N_TO_EMAIL = 10
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx"
 
+# 🆕 FILTERING THRESHOLDS (tunable)
+MIN_RELEVANCE_SCORE = 0.45  # Lowered from 0.6 to catch more valid deals
+MIN_EXOSOME_TERM_MATCH = True  # Require explicit exosome mention OR strong company match
+MIN_EVENT_TYPE_CONFIDENCE = 0.3  # Allow weaker event classification
+
 RSS_FEEDS = [
     # Core Biotech/Pharma Feeds
     "https://www.fiercebiotech.com/rss.xml",
     "https://endpts.com/feed/",
     "https://www.labiotech.eu/feed/",
     "https://www.biocentury.com/rss",
-    "https://www.bioworld.com/rss",
+    # "https://www.bioworld.com/rss",  # 🆕 COMMENTED: Consistently times out
     "https://www.evaluate.com/vantage/rss",
 
     # Stable Public Wire Feeds
@@ -55,23 +64,21 @@ RSS_FEEDS = [
 ]
 PR_PAGES = []
 
-# Refined SPAM Terms - More targeted
+# 🆕 REFINED SPAM TERMS (only truly irrelevant content)
 SPAM_TERMS = [
-    # Events/Webinars
-    "register for this webinar", "join this webinar", "register here",
-    "join this session", "save the date", "rsvp",
-
-    # Promotional content
-    "sign up to read", "subscribe to unlock", "premium content access",
-    "/premium/webinar", "fiercebiotech premium",
-
-    # Reports/Analysis
-    "download our report", "get the report", "annual report",
-    "market forecast", "industry forecast",
-
-    # Listicles/Roundups
-    "top 5", "top 10", "biggest deals of", "year in review",
-    "monthly recap", "weekly roundup", "what to expect in 20",
+    "register for this webinar",
+    "join this webinar",
+    "register here now",  # Allow just "register"
+    "save the date",
+    "rsvp to attend",
+    "subscribe to unlock",
+    "download our report",
+    "get the report",
+    "market forecast",
+    "top 5",
+    "top 10",
+    "year in review",
+    "what to expect in 20",
 ]
 
 EXOSOME_TERMS = [
@@ -640,44 +647,79 @@ def contains_core_interest_terms(text):
     return any(term in tl for term in CORE_INTEREST_TERMS)
 
 def is_exosome_relevant(full_text, title):
-    """Relaxed relevance filter: exosome terms OR companies OR strong neuro/regen context."""
+    """
+    🆕 IMPROVED FILTER: More permissive but still focused.
+    
+    Criteria:
+    1. Must NOT be spam
+    2. EITHER:
+       - Contains exosome/EV terms, OR
+       - Mentions known exosome company, OR
+       - Has neuro/regen context + deal language
+    """
     combined = f"{title} {full_text}".lower()
 
+    # Hard reject on spam
     if is_spam_article(combined):
         return False
 
+    # Strong signal: exosome/EV terminology
     if contains_exosome_terms(combined):
         return True
 
-    # Company name heuristic
+    # Strong signal: known company
     for cname in EXOSOME_COMPANIES:
         if cname.lower() in combined:
             return True
 
-    # Core therapeutic interest without exosome terms: keep but lower priority later
-    if contains_core_interest_terms(combined):
+    # Soft signal: neuro/regen + deal activity
+    has_neuro_regen = contains_core_interest_terms(combined)
+    has_deal = any(kw in combined for kws in EVENT_KEYWORDS.values() for kw in kws)
+    
+    if has_neuro_regen and has_deal:
         return True
 
     return False
 
 def compute_relevance_score(title, full_text):
-    """Semantic/scoring model for ranking."""
+    """
+    🆕 IMPROVED SCORING: Multi-factor relevance.
+    
+    Factors:
+    - Exosome/EV terminology (60% boost)
+    - Core interest terms (20% boost)
+    - Company matches (20% boost each)
+    - Event type (10% boost if deal/funding)
+    """
     base_score = 0.0
     tl = (title + " " + full_text).lower()
 
+    # Exosome/EV terminology (highest signal)
     if contains_exosome_terms(tl):
         base_score += 0.6
+    
+    # Core interest terms (neuro, regen, etc)
     if contains_core_interest_terms(tl):
         base_score += 0.2
+    
+    # Company mentions (incrementally)
+    company_count = 0
     for cname in EXOSOME_COMPANIES:
         if cname.lower() in tl:
-            base_score += 0.2
-            break
-
-    # Clip
-    base_score = min(1.0, base_score)
-
-    return base_score
+            company_count += 1
+            if company_count >= 2:  # Don't overdose on company mentions
+                break
+    
+    if company_count > 0:
+        base_score += 0.1 * min(company_count, 2)
+    
+    # Event type boost
+    event_type = classify_event(tl)
+    if event_type in ['acquisition', 'funding', 'partnership', 'licensing']:
+        base_score += 0.1
+    
+    # Clip to [0, 1]
+    return min(1.0, base_score)
 
 def parse_pubdate(entry):
     """Parse publication date from RSS entry."""
@@ -692,7 +734,6 @@ def parse_pubdate(entry):
 def within_days(dt_obj, days=SINCE_DAYS):
     if not dt_obj:
         return False
-    # Fix: Make cutoff timezone-aware (UTC)
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
     return dt_obj > cutoff
 
@@ -713,7 +754,6 @@ def save_cumulative(df, path):
 
 def send_email_with_top_deals(df, top_n=TOP_N_TO_EMAIL):
     """Send summary email of top N deals with Excel attachment."""
-    # Use your GitHub Secrets (_465 vars)
     smtp_host = os.getenv("SMTP_HOST_465")
     smtp_port = int(os.getenv("SMTP_PORT", "465"))
     smtp_user = os.getenv("SMTP_USER_465")
@@ -764,7 +804,6 @@ The database now contains {len(pd.read_excel(os.path.join(OUTPUT_DIR, CUMULATIVE
         print(f"📎 Attached: {filename}")
     
     try:
-        # Port 465 = SSL (your workflow)
         with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
@@ -825,7 +864,7 @@ def main():
         pub = item.get("published")
         summary = item.get("summary", "") or ""
 
-        # 🆕 Resolve Google News URLs before fetching
+        # Resolve Google News URLs before fetching
         if url:
             if 'news.google.com' in url:
                 resolved_url = resolve_google_news_url(url)
@@ -836,34 +875,24 @@ def main():
         else:
             text = ""
 
-        # Use the most comprehensive available text for filtering and processing
+        # Use the most comprehensive available text
         if not text or len(text) < 200:
             full_text = summary if len(summary) > 50 else title
         else:
             full_text = text
 
-        # CRITICAL FILTER: is_exosome_relevant
+        # 🆕 SINGLE, IMPROVED RELEVANCE FILTER
         if not is_exosome_relevant(full_text, title):
-            # Optional: add debug here if desired
             continue
 
-         # ===== YOUR FIXES START HERE =====
-        # 1. BLOCK SPAM
-        SPAM_BLOCKLIST = ["webinar", "podcast", "whitepaper", "register", "save the date"]
-        if any(term in title.lower() for term in SPAM_BLOCKLIST):
-            continue
-
-        # 2. REQUIRE EXOSOME + NEURO/DEAL
-        hasev = any(term in full_text.lower() for term in EXOSOME_TERMS)
-        hasneuro = any(term in full_text.lower() for term in CORE_INTEREST_TERMS)
-        hasdeal = any(kw in full_text.lower() for kws in EVENT_KEYWORDS.values() for kw in kws)
-        if not (hasev and (hasneuro or hasdeal)):
-            continue
-
-        # 3. MOVE relevance_score CALC HERE (BEFORE processed.append)
+        # Calculate relevance score (BEFORE adding to processed)
         relevance_score = compute_relevance_score(title, full_text)
-        if relevance_score < 0.6:
+        
+        # Filter by configurable threshold
+        if relevance_score < MIN_RELEVANCE_SCORE:
             continue
+
+        # ============== From here, item IS RELEVANT ==============
 
         event_type = classify_event(full_text)
         indications = detect_indications(full_text)
@@ -889,8 +918,6 @@ def main():
             fallback_amounts = search_for_deal_amount(title, companies, event_type)
             if fallback_amounts:
                 amounts_str = "; ".join(fallback_amounts)
-
-        relevance_score = compute_relevance_score(title, full_text)
 
         processed.append({
             "Date": pub.date().isoformat() if isinstance(pub, dt.datetime) else "",
@@ -921,7 +948,7 @@ def main():
 
     save_cumulative(df_merged, cumulative_path)
 
-    # 5) Also save a dated snapshot of this run
+    # 5) Save dated snapshot
     today_str = dt.datetime.utcnow().strftime("%Y%m%d")
     snapshot_path = os.path.join(OUTPUT_DIR, f"exosome_deals_run_{today_str}.xlsx")
     try:
