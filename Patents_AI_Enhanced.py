@@ -1,43 +1,22 @@
 #!/usr/bin/env python3
 """
-AI-Enhanced Patent Search - Multi-Source (EPO + Google Patents)
-Searches European Patent Office and US Patents via Google Patents
-Uses local AI for relevance scoring and GitHub Actions for automation
+AI-Enhanced Patent Search - European Patent Office (EPO) Only
+Searches EPO for exosome and extracellular vesicle patents targeting CNS disorders
+Uses local AI (SentenceTransformer) for relevance scoring
+Automated bimonthly execution via GitHub Actions
 
-DESIGN DECISIONS & IMPROVEMENTS:
-
-1. EPO SEARCH (CQL Syntax Fix):
-   - ISSUE: EPO's CQL parser doesn't support date range syntax: pd within "YYYYMMDD YYYYMMDD"
-   - SOLUTION: Query without date range, filter results in Python instead
-   - BENEFIT: Reliable 200 OK responses, filters dates accurately
-   - RESULT: Successfully finds 60+ patents per search
-
-2. WIPO EXCLUSION:
-   - WIPO PatentScope prohibits automated scraping and bulk downloading (Terms of Service)
-   - Legitimate access requires paid subscriptions (PCT-Bibliographic ~400 CHF/year minimum)
-   - Decision: Use Google Patents for US patents instead (free, legal, comprehensive)
-   - Future: Can integrate WIPO if paid subscription obtained
-
-3. GOOGLE PATENTS ADDITION:
-   - Complements EPO for US patent coverage
-   - Searches same parameters: exosomes, extracellular vesicles, CNS
-   - Returns results in identical format for seamless merging
-   - Free and publicly available
-
-4. RELEVANCE SCORING:
-   - Uses SentenceTransformer (local AI model)
-   - No API calls, runs offline
-   - Filters patents by semantic similarity to research focus
-
-5. DEDUPLICATION:
-   - Prevents duplicate entries across sources
-   - Checks both new batch and existing database
+FEATURES:
+✓ EPO API search with fixed CQL syntax (no date range - filtered in Python)
+✓ Local AI semantic relevance scoring (SentenceTransformer all-MiniLM-L6-v2)
+✓ Automatic deduplication across runs
+✓ Email notifications with top patents
+✓ CSV database management (cumulative storage)
+✓ GitHub Actions automation (bimonthly schedule + manual trigger)
+✓ Full error handling and logging
 """
 
 import os
-import sys
 import time
-import json
 import smtplib
 import requests
 from datetime import datetime, timedelta
@@ -45,18 +24,10 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from urllib.parse import quote
 import logging
 
 import pandas as pd
 from lxml import etree
-
-try:
-    from bs4 import BeautifulSoup
-    HAS_BEAUTIFULSOUP = True
-except ImportError:
-    HAS_BEAUTIFULSOUP = False
-    print("Warning: BeautifulSoup not installed. Some features disabled.")
 
 from epo_ops import Client, models, middlewares
 
@@ -66,7 +37,7 @@ try:
     HAS_SEMANTIC = True
 except ImportError:
     HAS_SEMANTIC = False
-    print("Warning: SentenceTransformer not available. AI scoring disabled.")
+    print("Warning: SentenceTransformer not available. Using default relevance scores.")
 
 # ---------------------------------------------------------------
 # Configuration
@@ -136,7 +107,7 @@ if HAS_SEMANTIC:
 
 
 def calculate_relevance_score(title, abstract):
-    """Calculate semantic similarity to research focus."""
+    """Calculate semantic similarity to research focus using SentenceTransformer."""
     if not HAS_SEMANTIC or not semantic_model:
         return 0.5
     
@@ -253,7 +224,7 @@ def search_epo_patents(start_date, end_date):
 
 
 def get_epo_biblio(country, number, kind):
-    """Fetch EPO bibliographic data."""
+    """Fetch EPO bibliographic data for a patent."""
     if not epo_client:
         return {}
     
@@ -298,130 +269,11 @@ def get_epo_biblio(country, number, kind):
 
 
 # ---------------------------------------------------------------
-# Google Patents Search (US Patents)
-# ---------------------------------------------------------------
-
-def search_google_patents(start_date, end_date):
-    """Search Google Patents for US patents matching criteria."""
-    if not HAS_BEAUTIFULSOUP:
-        logger.warning("[Google Patents] BeautifulSoup not available, skipping search")
-        return []
-    
-    records = []
-    logger.info("[Google Patents] Searching for US patents...")
-    
-    try:
-        # Search query for Google Patents
-        search_query = 'exosome* OR "extracellular vesicle*" CNS'
-        
-        # Google Patents URL
-        search_url = f"https://patents.google.com/usearch?q={quote(search_query)}&type=PATENT"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        logger.info(f"[Google Patents] Searching: {search_query}")
-        
-        try:
-            resp = requests.get(search_url, headers=headers, timeout=15)
-            resp.raise_for_status()
-            
-            soup = BeautifulSoup(resp.content, 'html.parser')
-            
-            # Find patent result containers
-            result_items = soup.find_all('div', class_='result-item')
-            
-            if not result_items:
-                # Try alternative selector
-                result_items = soup.find_all('article', class_='patent-item')
-            
-            logger.info(f"[Google Patents] Found {len(result_items)} result items")
-            
-            for idx, item in enumerate(result_items[:100]):  # Limit to 100 results
-                try:
-                    # Extract patent link and number
-                    patent_link = item.find('a', href=True)
-                    if not patent_link:
-                        continue
-                    
-                    href = patent_link.get('href', '')
-                    if '/patent/US' not in href:
-                        continue
-                    
-                    # Extract patent number from href
-                    # Format: /patent/US... or similar
-                    patent_number = patent_link.text.strip() if patent_link.text else ''
-                    
-                    if not patent_number or 'US' not in patent_number:
-                        continue
-                    
-                    # Clean patent number (remove US prefix for storage)
-                    pub_number = patent_number.replace('US', '').strip()
-                    
-                    # Get title
-                    title_elem = item.find('span', class_='title')
-                    if not title_elem:
-                        title_elem = item.find('a', class_='title')
-                    title = title_elem.text.strip() if title_elem else 'Not available'
-                    
-                    # Get abstract/description snippet
-                    abstract_elem = item.find('span', class_='snippet')
-                    if not abstract_elem:
-                        abstract_elem = item.find('div', class_='description')
-                    abstract = abstract_elem.text.strip() if abstract_elem else ''
-                    
-                    # Get publication date if available
-                    date_elem = item.find('span', class_='date')
-                    pub_date = date_elem.text.strip() if date_elem else ''
-                    
-                    # Validate
-                    if not pub_number or not title or title == 'Not available':
-                        continue
-                    
-                    records.append({
-                        "country": "US",
-                        "publication_number": pub_number,
-                        "kind": "B2",
-                        "title": title,
-                        "applicants": "Not available",
-                        "inventors": "Not available",
-                        "abstract": abstract[:500] if abstract else "",
-                        "publication_date": pub_date,
-                        "priority_date": "",
-                        "source": "Google Patents"
-                    })
-                    
-                    logger.debug(f"[Google Patents] Found: US{pub_number} - {title[:50]}")
-                
-                except Exception as e:
-                    logger.debug(f"[Google Patents] Error parsing result {idx}: {e}")
-                    continue
-            
-            if records:
-                logger.info(f"[Google Patents] Successfully extracted {len(records)} US patents")
-            else:
-                logger.info("[Google Patents] No relevant patents found")
-            
-            return records
-        
-        except requests.RequestException as e:
-            logger.warning(f"[Google Patents] Network error: {e}")
-            logger.info("[Google Patents] Search skipped (network unavailable)")
-            return []
-    
-    except Exception as e:
-        logger.error(f"[Google Patents] Search error: {e}")
-        logger.info("[Google Patents] Continuing without Google Patents results")
-        return []
-
-
-# ---------------------------------------------------------------
 # Combined Search & Processing
 # ---------------------------------------------------------------
 
 def search_all_patents():
-    """Search all patent sources and merge results."""
+    """Search EPO patents and process results."""
     start_date = (datetime.now().date() - timedelta(days=60)).strftime("%Y%m%d")
     end_date = datetime.now().date().strftime("%Y%m%d")
     
@@ -441,17 +293,12 @@ def search_all_patents():
         )
         logger.info(f"Loaded {len(existing_ids)} existing patents from database")
     
-    # Search all sources
+    # Search EPO
     logger.info("Searching patent sources...")
     epo_results = search_epo_patents(start_date, end_date) if epo_client else []
-    google_results = search_google_patents(start_date, end_date)
     
-    all_results = epo_results + google_results
-    
-    print("\n[SUMMARY] Found patents from all sources:")
+    print("\n[SUMMARY] Found patents from EPO:")
     print(f"  - EPO (European): {len(epo_results)}")
-    print(f"  - Google Patents (US): {len(google_results)}")
-    print(f"  - TOTAL: {len(all_results)}")
     
     # Process and deduplicate
     records = []
@@ -460,7 +307,7 @@ def search_all_patents():
     new_count = 0
     skipped_count = 0
     
-    for patent in all_results:
+    for patent in epo_results:
         patent_id = f"{patent['country']}{patent['publication_number']}{patent.get('kind', '')}"
         
         # Skip duplicates within this batch
@@ -473,25 +320,24 @@ def search_all_patents():
             skipped_count += 1
             continue
         
-        # For Google Patents results that already have full data
-        if 'title' in patent and patent.get('source') == 'Google Patents':
-            title = patent.get('title', '')
-            abstract = patent.get('abstract', '')
-            applicants = patent.get('applicants', 'Not available')
-            inventors = patent.get('inventors', 'Not available')
-            pub_date = patent.get('publication_date', '')
-            priority_date = patent.get('priority_date', '')
-        else:
-            # Fetch full data for EPO results
-            biblio = get_epo_biblio(patent['country'], patent['publication_number'], patent.get('kind', ''))
-            title = biblio.get('title', '')
-            abstract = biblio.get('abstract', '')
-            applicants = biblio.get('applicants', 'Not available')
-            inventors = biblio.get('inventors', 'Not available')
-            pub_date = biblio.get('publication_date', '')
-            priority_date = biblio.get('priority_date', '')
+        # Fetch full bibliographic data
+        biblio = get_epo_biblio(patent['country'], patent['publication_number'], patent.get('kind', ''))
+        title = biblio.get('title', '')
+        abstract = biblio.get('abstract', '')
+        applicants = biblio.get('applicants', 'Not available')
+        inventors = biblio.get('inventors', 'Not available')
+        pub_date = biblio.get('publication_date', '')
+        priority_date = biblio.get('priority_date', '')
         
-
+        # Filter by date range (Python-based filtering)
+        if pub_date:
+            try:
+                pub_date_clean = pub_date.replace('-', '')[:8]  # Convert YYYY-MM-DD to YYYYMMDD
+                if not (start_date <= pub_date_clean <= end_date):
+                    logger.debug(f"Filtered by date: {pub_date}")
+                    continue
+            except:
+                pass  # If date parsing fails, include the patent
         
         # Calculate relevance score
         relevance = calculate_relevance_score(title, abstract)
@@ -510,7 +356,7 @@ def search_all_patents():
         records.append({
             "country": patent['country'],
             "publication_number": patent['publication_number'],
-            "kind": patent.get('kind', 'B2'),
+            "kind": patent.get('kind', 'A1'),
             "title": title,
             "applicants": applicants,
             "inventors": inventors,
@@ -518,14 +364,14 @@ def search_all_patents():
             "publication_date": pub_date,
             "priority_date": priority_date,
             "relevance_score": round(relevance, 2),
-            "source": patent.get('source', 'Unknown'),
+            "source": "EPO",
             "link": link,
             "date_added": current_run_date,
             "is_new": "YES"
         })
         
         new_count += 1
-        logger.info(f"  ✓ {patent['country']}{patent['publication_number']} - {patent.get('source')} - Score: {relevance:.2f}")
+        logger.info(f"  ✓ {patent['country']}{patent['publication_number']} - Score: {relevance:.2f}")
         time.sleep(0.1)
     
     print(f"\n[RESULTS]")
@@ -549,8 +395,6 @@ def update_cumulative_csv(df_new):
         
         if 'relevance_score' not in df_old.columns:
             df_old['relevance_score'] = 0.5
-        if 'source' not in df_old.columns:
-            df_old['source'] = 'EPO'
         
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
             subset=["country", "publication_number", "kind"],
@@ -562,9 +406,24 @@ def update_cumulative_csv(df_new):
         logger.info(f"Created new database with {len(df_all)} patents")
     
     df_all = df_all.reindex(columns=FINAL_COLUMNS, fill_value='')
-    df_all = df_all.sort_values(['relevance_score', 'date_added'], ascending=[False, False])
+    
+    # Sort: existing patents first (by relevance), new patents LAST (highlighted by being at bottom)
+    # Within each group, highest relevance scores appear first
+    df_all = df_all.sort_values(
+        ['is_new', 'relevance_score'], 
+        ascending=[True, False]  # is_new: 'NO' first, 'YES' last; relevance: highest first
+    )
+    
+    # Visual marker: add "🔥 NEW" prefix to new patent titles for easy spotting
+    df_all['title'] = df_all.apply(
+        lambda row: f"🔥 NEW - {row['title']}" if row['is_new'] == 'YES' else row['title'],
+        axis=1
+    )
+    
     df_all.to_csv(CUMULATIVE_CSV, index=False)
     logger.info(f"Saved cumulative CSV with {len(df_all)} total records")
+    logger.info(f"  → Existing patents: sorted by relevance (highest first)")
+    logger.info(f"  → New patents: marked with 🔥 NEW and appear at bottom")
     return df_all
 
 
@@ -577,18 +436,16 @@ def send_email_with_csv(df_all):
     new_patents = df_all[df_all['is_new'] == 'YES']
     
     email_body = f"""
-Multi-Source Patent Search Update - {datetime.now().strftime('%Y-%m-%d')}
+Patent Search Update - {datetime.now().strftime('%Y-%m-%d')}
 {'='*80}
 
 NEW PATENTS: {len(new_patents)}
 TOTAL DATABASE: {len(df_all)} patents
 
-SOURCES SEARCHED:
-- EPO (European Patent Office)
-- Google Patents (US Patents)
-
+SOURCE: European Patent Office (EPO)
 SEARCH TERMS: exosomes, extracellular vesicles, CNS
 DATE RANGE: Last 60 days
+AI SCORING: SentenceTransformer (local relevance scoring)
 
 {'='*80}
 """
@@ -598,7 +455,7 @@ DATE RANGE: Last 60 days
         top_patents = new_patents.nlargest(5, 'relevance_score')
         for idx, patent in enumerate(top_patents.itertuples(), 1):
             email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
-            email_body += f"   {patent.country}{patent.publication_number} | Source: {patent.source}\n"
+            email_body += f"   {patent.country}{patent.publication_number} | {patent.source}\n"
             email_body += f"   Applicant: {patent.applicants[:60]}\n\n"
     else:
         email_body += "\n✓ No new patents found, but database is updated.\n"
@@ -633,7 +490,7 @@ DATE RANGE: Last 60 days
 
 def main():
     print("="*80)
-    print("MULTI-SOURCE PATENT SEARCH - EPO + GOOGLE PATENTS - Starting")
+    print("PATENT SEARCH WITH AI RELEVANCE SCORING - EPO - Starting")
     print("="*80)
     
     df_new = search_all_patents()
