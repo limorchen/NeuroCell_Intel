@@ -14,7 +14,7 @@ jobs:
       contents: write
       
     env:
-      # 🆕 HuggingFace Token (prevents rate limiting on model downloads)
+      # HuggingFace Token (prevents rate limiting on model downloads)
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       
       # SMTP 465 credentials for email
@@ -135,10 +135,27 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-      - name: 🔄 Git Pull with Rebase (Handle Concurrent Pushes)
+      - name: 🔄 Git Pull with Rebase (Handle Concurrent Pushes) - OPTION 1: Stash Approach
         run: |
+          echo "════════════════════════════════════════"
+          echo "🔄 Handling uncommitted changes..."
+          echo "════════════════════════════════════════"
+          
+          # First, stash any uncommitted changes from the script
+          echo "Stashing uncommitted changes (if any)..."
+          git stash || true
+          
+          # Then pull with rebase
           echo "Pulling latest changes from remote..."
-          git pull --rebase origin main || echo "ℹ️ Rebase had conflicts or nothing to pull"
+          git pull --rebase origin main || echo "ℹ️ Nothing to pull from remote"
+          
+          # Restore stashed changes
+          echo "Restoring stashed changes..."
+          git stash pop || echo "ℹ️ No stashed changes to restore"
+          
+          echo "════════════════════════════════════════"
+          echo "✅ Git pull complete"
+          echo "════════════════════════════════════════"
           
       - name: 💾 Commit and Push Updated Database
         if: always()
