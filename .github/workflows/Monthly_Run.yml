@@ -1,8 +1,10 @@
 name: Monthly Intelligence Agent (SMTP 465)
+
 on:
   schedule:
     - cron: '0 10 14 * *'  # Runs at 10:00 UTC on the 14th of every month
-  workflow_dispatch:      # Enables manual run
+  workflow_dispatch:       # Enables manual run
+
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
@@ -12,17 +14,21 @@ jobs:
       contents: write
       
     env:
-      # SMTP 465 credentials
-      SMTP_HOST: ${{ secrets.SMTP_HOST_465 }}
+      # 🆕 HuggingFace Token (prevents rate limiting on model downloads)
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      
+      # SMTP 465 credentials for email
+      SMTP_HOST_465: ${{ secrets.SMTP_HOST_465 }}
       SMTP_PORT: 465
-      SMTP_USER: ${{ secrets.SMTP_USER_465 }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS_465 }}
-      EMAIL_FROM: ${{ secrets.EMAIL_FROM_465 }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO_465 }}
-      # Other secrets for the agent
+      SMTP_USER_465: ${{ secrets.SMTP_USER_465 }}
+      SMTP_PASS_465: ${{ secrets.SMTP_PASS_465 }}
+      EMAIL_TO_465: ${{ secrets.EMAIL_TO_465 }}
+      
+      # Optional: Other secrets for the agent
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
+      
     steps:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
@@ -61,8 +67,62 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install lxml[html_clean] newspaper3k trafilatura openpyxl
+          pip install lxml[html_clean] newspaper3k trafilatura openpyxl python-dotenv
           python -m spacy download en_core_web_sm
+          
+      - name: 🔐 Verify All Required Secrets
+        run: |
+          echo "════════════════════════════════════════"
+          echo "🔍 Checking environment variables..."
+          echo "════════════════════════════════════════"
+          
+          # Check SMTP credentials
+          if [ -z "$SMTP_HOST_465" ]; then
+            echo "❌ SMTP_HOST_465 is MISSING"
+          else
+            echo "✅ SMTP_HOST_465 is set"
+          fi
+          
+          if [ -z "$SMTP_USER_465" ]; then
+            echo "❌ SMTP_USER_465 is MISSING"
+          else
+            echo "✅ SMTP_USER_465 is set"
+          fi
+          
+          if [ -z "$SMTP_PASS_465" ]; then
+            echo "❌ SMTP_PASS_465 is MISSING"
+          else
+            echo "✅ SMTP_PASS_465 is set"
+          fi
+          
+          if [ -z "$EMAIL_TO_465" ]; then
+            echo "❌ EMAIL_TO_465 is MISSING"
+          else
+            echo "✅ EMAIL_TO_465 is set"
+          fi
+          
+          # Check HuggingFace token
+          if [ -z "$HF_TOKEN" ]; then
+            echo "⚠️  HF_TOKEN is NOT SET (optional but recommended for faster downloads)"
+          else
+            echo "✅ HF_TOKEN is set"
+          fi
+          
+          echo "════════════════════════════════════════"
+          echo ""
+          
+          # Fail if critical secrets are missing
+          if [ -z "$SMTP_HOST_465" ] || [ -z "$SMTP_USER_465" ] || [ -z "$SMTP_PASS_465" ] || [ -z "$EMAIL_TO_465" ]; then
+            echo "❌ CRITICAL: Missing SMTP secrets. Email will not be sent."
+            echo ""
+            echo "📋 Required secrets in GitHub:"
+            echo "   - SMTP_HOST_465 (e.g., smtp.gmail.com)"
+            echo "   - SMTP_USER_465 (your email)"
+            echo "   - SMTP_PASS_465 (app password, not regular password)"
+            echo "   - EMAIL_TO_465 (recipient email)"
+            echo "   - HF_TOKEN (from huggingface.co/settings/tokens, optional)"
+            exit 1
+          fi
           
       - name: 🚀 Run Monthly Intelligence Agent
         run: |
@@ -70,51 +130,58 @@ jobs:
           python industry_deals_agent.py
           echo "----- Run completed -----"
           
-      - name: 💾 Commit and Push updated database
-        if: always()
+      - name: 🔧 Configure Git Identity
         run: |
-          # 1. Configure Git Bot identity
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # 2. FILE CHECK: Only proceed if the database file exists
+      - name: 🔄 Git Pull with Rebase (Handle Concurrent Pushes)
+        run: |
+          echo "Pulling latest changes from remote..."
+          git pull --rebase origin main || echo "ℹ️ Rebase had conflicts or nothing to pull"
+          
+      - name: 💾 Commit and Push Updated Database
+        if: always()
+        run: |
           FILE_PATH="industry_deals/exosome_deals_DATABASE.xlsx"
           
           if [ -f "$FILE_PATH" ]; then
             echo "✅ Database file found at: $FILE_PATH"
             ls -lh "$FILE_PATH"
             
-            # 3. Stage both the database and .gitattributes
-            git add .gitattributes 2>/dev/null || echo "No .gitattributes changes"
+            # Stage files
+            git add .gitattributes 2>/dev/null || echo "ℹ️ No .gitattributes changes"
             git add "$FILE_PATH"
             
-            # 4. Check if there are changes to commit
+            # Check if there are changes to commit
             if git diff --cached --quiet; then
-              echo "No changes to commit."
+              echo "ℹ️ No new changes to commit."
             else
               echo "✅ Committing changes..."
               git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
               
-              # 5. Push with LFS
+              # Push to main
+              echo "📤 Pushing to remote..."
               git push origin main
               
               echo "✅ Database successfully committed and pushed via Git LFS!"
             fi
-            
           else
             echo "⚠️ No database file generated in this run."
           fi
           
-      - name: 📜 Upload log file (Artifact)
+      - name: 📜 Upload Log Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: monthly-run-logs
           path: neurocell_agent.log
+          retention-days: 30
           
-      - name: 📦 Upload Excel output (Artifact)
+      - name: 📊 Upload Excel Output Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: monthly-excel-output
           path: industry_deals/exosome_deals_*.xlsx
+          retention-days: 90
