@@ -30,92 +30,92 @@ jobs:
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
       
     steps:
-      - name: 🧩 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetches full history
           lfs: true       # Enable Git LFS
           ref: main
           
-      - name: 📦 Setup Git LFS
+      - name: Setup Git LFS
         run: |
           git lfs install
           # Track Excel files if not already tracked
           if ! grep -q "*.xlsx" .gitattributes 2>/dev/null; then
             echo "*.xlsx filter=lfs diff=lfs merge=lfs -text" >> .gitattributes
-            echo "✅ Added .xlsx to Git LFS tracking"
+            echo "Added .xlsx to Git LFS tracking"
           else
-            echo "✅ Excel files already tracked by Git LFS"
+            echo "Excel files already tracked by Git LFS"
           fi
           
-      - name: 🔍 Check for existing database
+      - name: Check for existing database
         run: |
           echo "Checking for existing database file..."
           if [ -f "industry_deals/exosome_deals_DATABASE.xlsx" ]; then
-            echo "✅ Found existing database:"
+            echo "Found existing database:"
             ls -lh industry_deals/exosome_deals_DATABASE.xlsx
           else
-            echo "⚠️ No existing database found - will create new one"
+            echo "No existing database found - will create new one"
           fi
           
-      - name: 🐍 Set up Python 3.10
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
-      - name: 📦 Install dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install lxml[html_clean] newspaper3k trafilatura openpyxl python-dotenv
           python -m spacy download en_core_web_sm
           
-      - name: 🔐 Verify All Required Secrets
+      - name: Verify All Required Secrets
         run: |
-          echo "════════════════════════════════════════"
-          echo "🔍 Checking environment variables..."
-          echo "════════════════════════════════════════"
+          echo "----------------------------------------"
+          echo "Checking environment variables..."
+          echo "----------------------------------------"
           
           # Check SMTP credentials
           if [ -z "$SMTP_HOST_465" ]; then
-            echo "❌ SMTP_HOST_465 is MISSING"
+            echo "FAIL: SMTP_HOST_465 is MISSING"
           else
-            echo "✅ SMTP_HOST_465 is set"
+            echo "PASS: SMTP_HOST_465 is set"
           fi
           
           if [ -z "$SMTP_USER_465" ]; then
-            echo "❌ SMTP_USER_465 is MISSING"
+            echo "FAIL: SMTP_USER_465 is MISSING"
           else
-            echo "✅ SMTP_USER_465 is set"
+            echo "PASS: SMTP_USER_465 is set"
           fi
           
           if [ -z "$SMTP_PASS_465" ]; then
-            echo "❌ SMTP_PASS_465 is MISSING"
+            echo "FAIL: SMTP_PASS_465 is MISSING"
           else
-            echo "✅ SMTP_PASS_465 is set"
+            echo "PASS: SMTP_PASS_465 is set"
           fi
           
           if [ -z "$EMAIL_TO_465" ]; then
-            echo "❌ EMAIL_TO_465 is MISSING"
+            echo "FAIL: EMAIL_TO_465 is MISSING"
           else
-            echo "✅ EMAIL_TO_465 is set"
+            echo "PASS: EMAIL_TO_465 is set"
           fi
           
           # Check HuggingFace token
           if [ -z "$HF_TOKEN" ]; then
-            echo "⚠️  HF_TOKEN is NOT SET (optional but recommended for faster downloads)"
+            echo "WARNING: HF_TOKEN is NOT SET (optional but recommended for faster downloads)"
           else
-            echo "✅ HF_TOKEN is set"
+            echo "PASS: HF_TOKEN is set"
           fi
           
-          echo "════════════════════════════════════════"
+          echo "----------------------------------------"
           echo ""
           
           # Fail if critical secrets are missing
           if [ -z "$SMTP_HOST_465" ] || [ -z "$SMTP_USER_465" ] || [ -z "$SMTP_PASS_465" ] || [ -z "$EMAIL_TO_465" ]; then
-            echo "❌ CRITICAL: Missing SMTP secrets. Email will not be sent."
+            echo "ERROR: Missing critical SMTP secrets"
             echo ""
-            echo "📋 Required secrets in GitHub:"
+            echo "Required secrets in GitHub:"
             echo "   - SMTP_HOST_465 (e.g., smtp.gmail.com)"
             echo "   - SMTP_USER_465 (your email)"
             echo "   - SMTP_PASS_465 (app password, not regular password)"
@@ -124,70 +124,62 @@ jobs:
             exit 1
           fi
           
-      - name: 🚀 Run Monthly Intelligence Agent
+      - name: Run Monthly Intelligence Agent
         run: |
-          echo "----- Starting monthly run for NeuroCell Intelligence (SMTP 465) -----"
+          echo "Starting monthly run for NeuroCell Intelligence"
           python industry_deals_agent.py
-          echo "----- Run completed -----"
+          echo "Run completed"
           
-      - name: 🔧 Configure Git Identity
+      - name: Configure Git Identity
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-      - name: 🔄 Git Pull with Rebase (Handle Concurrent Pushes) - OPTION 1: Stash Approach
+      - name: Git Pull with Rebase - Handle Concurrent Pushes
         run: |
-          echo "════════════════════════════════════════"
-          echo "🔄 Handling uncommitted changes..."
-          echo "════════════════════════════════════════"
-          
-          # First, stash any uncommitted changes from the script
+          echo "Handling uncommitted changes..."
           echo "Stashing uncommitted changes (if any)..."
           git stash || true
           
-          # Then pull with rebase
           echo "Pulling latest changes from remote..."
-          git pull --rebase origin main || echo "ℹ️ Nothing to pull from remote"
+          git pull --rebase origin main || echo "Nothing to pull from remote"
           
-          # Restore stashed changes
           echo "Restoring stashed changes..."
-          git stash pop || echo "ℹ️ No stashed changes to restore"
+          git stash pop || echo "No stashed changes to restore"
           
-          echo "════════════════════════════════════════"
-          echo "✅ Git pull complete"
-          echo "════════════════════════════════════════"
+          echo "Git pull complete"
           
-      - name: 💾 Commit and Push Updated Database
+      - name: Commit and Push Updated Database
         if: always()
         run: |
           FILE_PATH="industry_deals/exosome_deals_DATABASE.xlsx"
           
           if [ -f "$FILE_PATH" ]; then
-            echo "✅ Database file found at: $FILE_PATH"
+            echo "Database file found at: $FILE_PATH"
             ls -lh "$FILE_PATH"
             
             # Stage files
-            git add .gitattributes 2>/dev/null || echo "ℹ️ No .gitattributes changes"
+            git add .gitattributes 2>/dev/null || echo "No .gitattributes changes"
             git add "$FILE_PATH"
             
             # Check if there are changes to commit
             if git diff --cached --quiet; then
-              echo "ℹ️ No new changes to commit."
+              echo "No new changes to commit"
             else
-              echo "✅ Committing changes..."
+              echo "Committing changes..."
               git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
               
               # Push to main
-              echo "📤 Pushing to remote..."
+              echo "Pushing to remote..."
               git push origin main
               
-              echo "✅ Database successfully committed and pushed via Git LFS!"
+              echo "Database successfully committed and pushed via Git LFS"
             fi
           else
-            echo "⚠️ No database file generated in this run."
+            echo "No database file generated in this run"
           fi
           
-      - name: 📜 Upload Log Artifact
+      - name: Upload Log Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -195,7 +187,7 @@ jobs:
           path: neurocell_agent.log
           retention-days: 30
           
-      - name: 📊 Upload Excel Output Artifact
+      - name: Upload Excel Output Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
