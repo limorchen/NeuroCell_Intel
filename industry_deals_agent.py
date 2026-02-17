@@ -647,4 +647,4 @@ def main():
         send_email_with_top_deals(df_new, df_merged, 10)
 
 if __name__ == "__main__":
-    main()main()
+    main()
