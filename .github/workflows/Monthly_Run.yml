@@ -2,29 +2,23 @@ name: Monthly Intelligence Agent (SMTP 465)
 
 on:
   schedule:
-    - cron: '0 10 14 * *'  # Runs at 10:00 UTC on the 14th of every month
-  workflow_dispatch:       # Enables manual run
+    - cron: '0 10 14 * *'
+  workflow_dispatch:
 
 jobs:
   run-monthly-agent:
     runs-on: ubuntu-latest
     
-    # REQUIRED: Grant permission to push changes back to the repo
     permissions:
       contents: write
       
     env:
-      # HuggingFace Token (prevents rate limiting on model downloads)
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      
-      # SMTP 465 credentials for email
       SMTP_HOST_465: ${{ secrets.SMTP_HOST_465 }}
       SMTP_PORT: 465
       SMTP_USER_465: ${{ secrets.SMTP_USER_465 }}
       SMTP_PASS_465: ${{ secrets.SMTP_PASS_465 }}
       EMAIL_TO_465: ${{ secrets.EMAIL_TO_465 }}
-      
-      # Optional: Other secrets for the agent
       PUBMED_TERM: ${{ secrets.PUBMED_TERM }}
       CLINICALTRIALS_CONDITION: ${{ secrets.CLINICALTRIALS_CONDITION }}
       SEMANTIC_SEARCH_TERMS: ${{ secrets.SEMANTIC_SEARCH_TERMS }}
@@ -33,14 +27,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetches full history
-          lfs: true       # Enable Git LFS
+          fetch-depth: 0
+          lfs: true
           ref: main
           
       - name: Setup Git LFS
         run: |
           git lfs install
-          # Track Excel files if not already tracked
           if ! grep -q "*.xlsx" .gitattributes 2>/dev/null; then
             echo "*.xlsx filter=lfs diff=lfs merge=lfs -text" >> .gitattributes
             echo "Added .xlsx to Git LFS tracking"
@@ -72,11 +65,9 @@ jobs:
           
       - name: Verify All Required Secrets
         run: |
-          echo "----------------------------------------"
           echo "Checking environment variables..."
-          echo "----------------------------------------"
+          echo "------------------------------------"
           
-          # Check SMTP credentials
           if [ -z "$SMTP_HOST_465" ]; then
             echo "FAIL: SMTP_HOST_465 is MISSING"
           else
@@ -101,26 +92,16 @@ jobs:
             echo "PASS: EMAIL_TO_465 is set"
           fi
           
-          # Check HuggingFace token
           if [ -z "$HF_TOKEN" ]; then
-            echo "WARNING: HF_TOKEN is NOT SET (optional but recommended for faster downloads)"
+            echo "WARNING: HF_TOKEN is NOT SET (optional)"
           else
             echo "PASS: HF_TOKEN is set"
           fi
           
-          echo "----------------------------------------"
-          echo ""
+          echo "------------------------------------"
           
-          # Fail if critical secrets are missing
           if [ -z "$SMTP_HOST_465" ] || [ -z "$SMTP_USER_465" ] || [ -z "$SMTP_PASS_465" ] || [ -z "$EMAIL_TO_465" ]; then
             echo "ERROR: Missing critical SMTP secrets"
-            echo ""
-            echo "Required secrets in GitHub:"
-            echo "   - SMTP_HOST_465 (e.g., smtp.gmail.com)"
-            echo "   - SMTP_USER_465 (your email)"
-            echo "   - SMTP_PASS_465 (app password, not regular password)"
-            echo "   - EMAIL_TO_465 (recipient email)"
-            echo "   - HF_TOKEN (from huggingface.co/settings/tokens, optional)"
             exit 1
           fi
           
@@ -135,7 +116,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-      - name: Git Pull with Rebase - Handle Concurrent Pushes
+      - name: Git Pull with Rebase
         run: |
           echo "Handling uncommitted changes..."
           echo "Stashing uncommitted changes (if any)..."
@@ -158,18 +139,15 @@ jobs:
             echo "Database file found at: $FILE_PATH"
             ls -lh "$FILE_PATH"
             
-            # Stage files
             git add .gitattributes 2>/dev/null || echo "No .gitattributes changes"
             git add "$FILE_PATH"
             
-            # Check if there are changes to commit
             if git diff --cached --quiet; then
               echo "No new changes to commit"
             else
               echo "Committing changes..."
               git commit -m "Auto-update: Exosome Deals Database [$(date +'%Y-%m-%d %H:%M UTC')]"
               
-              # Push to main
               echo "Pushing to remote..."
               git push origin main
               
