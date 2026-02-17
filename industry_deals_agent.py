@@ -255,14 +255,145 @@ def is_exosome_relevant(text):
     return any(term in text_lower for term in EXOSOME_TERMS)
 
 def load_existing_cumulative(path):
-    """Load existing cumulative database"""
+    """Load existing cumulative database and remove duplicates"""
     if os.path.exists(path):
         try:
             df = pd.read_excel(path)
+            
+            print(f"Loaded existing DB: {len(df)} records")
+            
+            # STEP 1: Remove rows with null Title or URL
+            df = df.dropna(subset=['Title', 'URL'], how='any')
+            print(f"After removing nulls: {len(df)} records")
+            
+            # STEP 2: Remove duplicate URLs (keep highest RelevanceScore)
+            if 'RelevanceScore' in df.columns:
+                df = df.sort_values('RelevanceScore', ascending=False)
+                df = df.drop_duplicates(subset=['URL'], keep='first')
+                print(f"After removing URL duplicates: {len(df)} records")
+            
+            # STEP 3: Remove duplicate Titles (keep highest RelevanceScore)
+            if 'RelevanceScore' in df.columns:
+                df = df.sort_values('RelevanceScore', ascending=False)
+                df = df.drop_duplicates(subset=['Title'], keep='first')
+                print(f"After removing Title duplicates: {len(df)} records")
+            
+            df = df.reset_index(drop=True)
             return df
-        except:
+        except Exception as e:
+            print(f"Error loading DB: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
+
+def generate_month_narrative(df):
+    """Generate a narrative summary of the month's deals"""
+    if df.empty:
+        return ""
+    
+    # Convert date for grouping
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    
+    # Get last month
+    last_month = (dt.datetime.now() - dt.timedelta(days=30)).strftime("%B %Y")
+    
+    narrative = []
+    narrative.append(f"LAST MONTH'S ACTIVITY SUMMARY ({last_month.upper()})")
+    narrative.append("=" * 80)
+    narrative.append("")
+    
+    # Get top deals by score
+    top_deals = df.nlargest(5, 'RelevanceScore')
+    
+    # Generate narrative for each top deal
+    if len(top_deals) > 0:
+        narrative.append("MAJOR DEVELOPMENTS:")
+        narrative.append("")
+        
+        for idx, (_, row) in enumerate(top_deals.iterrows(), 1):
+            title = row['Title']
+            event_type = row['EventType']
+            score = row['RelevanceScore']
+            companies = row['Companies'] if pd.notna(row['Companies']) else ""
+            amount = row['Amounts'] if pd.notna(row['Amounts']) and str(row['Amounts']) != "" else ""
+            indications = row['Indications'] if pd.notna(row['Indications']) else ""
+            
+            # Build narrative line
+            narrative_line = f"* "
+            
+            # Add title
+            narrative_line += title[:70]
+            if len(str(row['Title'])) > 70:
+                narrative_line += "..."
+            
+            # Add event type and score indicator
+            if score >= 0.8:
+                narrative_line += f" [CRITICAL]"
+            elif score >= 0.7:
+                narrative_line += f" [KEY]"
+            
+            narrative.append(narrative_line)
+            
+            # Add details on next line
+            details = []
+            if event_type:
+                details.append(f"{event_type.title()}")
+            if amount:
+                details.append(f"Amount: {amount}")
+            if indications:
+                indications_short = "; ".join(indications.split(";")[:2])
+                details.append(f"Focus: {indications_short}")
+            
+            if details:
+                narrative.append("  " + " | ".join(details))
+            
+            narrative.append("")
+    
+    # Summary by event type
+    event_counts = df['EventType'].value_counts()
+    if len(event_counts) > 0:
+        narrative.append("ACTIVITY SNAPSHOT:")
+        narrative.append("")
+        
+        summary_parts = []
+        if 'funding' in event_counts.index:
+            summary_parts.append(f"{event_counts['funding']} funding rounds")
+        if 'acquisition' in event_counts.index:
+            summary_parts.append(f"{event_counts['acquisition']} acquisitions")
+        if 'partnership' in event_counts.index:
+            summary_parts.append(f"{event_counts['partnership']} partnerships")
+        if 'licensing' in event_counts.index:
+            summary_parts.append(f"{event_counts['licensing']} licensing deals")
+        
+        if summary_parts:
+            narrative.append("* " + " | ".join(summary_parts))
+            narrative.append("")
+        
+        # Therapeutic focus
+        all_indications = " ".join(df['Indications'].dropna().astype(str))
+        if all_indications.strip():
+            unique_indications = list(set([i.strip() for i in all_indications.split(";") if i.strip()]))
+            unique_indications = unique_indications[:6]  # Top 6
+            narrative.append(f"* Therapeutic focus: {', '.join(unique_indications)}")
+            narrative.append("")
+    
+    # Funding highlights
+    with_amounts = df[df['Amounts'].notna() & (df['Amounts'] != "")]
+    if len(with_amounts) > 0:
+        narrative.append("FUNDING HIGHLIGHTS:")
+        narrative.append("")
+        
+        # Extract and sum amounts
+        top_funding = with_amounts.nlargest(3, 'RelevanceScore')
+        for _, row in top_funding.iterrows():
+            companies_str = row['Companies'][:40] if pd.notna(row['Companies']) else "Undisclosed"
+            narrative.append(f"* {companies_str} - {row['Amounts']}")
+        
+        narrative.append("")
+    
+    narrative.append("=" * 80)
+    narrative.append("")
+    
+    return "\n".join(narrative)
 
 def save_cumulative(df, path):
     """Save cumulative database with formatting and new record marking"""
@@ -283,17 +414,17 @@ def save_cumulative(df, path):
             worksheet = writer.sheets['Deals']
             
             # Set column widths
-            worksheet.column_dimensions['A'].width = 12  # Date
-            worksheet.column_dimensions['B'].width = 50  # Title
-            worksheet.column_dimensions['C'].width = 12  # EventType
-            worksheet.column_dimensions['D'].width = 30  # Companies
-            worksheet.column_dimensions['E'].width = 15  # Amounts
-            worksheet.column_dimensions['F'].width = 20  # Indications
-            worksheet.column_dimensions['G'].width = 8   # RelevanceScore
-            worksheet.column_dimensions['H'].width = 8   # IsExosome
-            worksheet.column_dimensions['I'].width = 8   # Quality
-            worksheet.column_dimensions['J'].width = 12  # DateAddedToDB
-            worksheet.column_dimensions['K'].width = 12  # IsNewThisMonth
+            worksheet.column_dimensions['A'].width = 12
+            worksheet.column_dimensions['B'].width = 50
+            worksheet.column_dimensions['C'].width = 12
+            worksheet.column_dimensions['D'].width = 30
+            worksheet.column_dimensions['E'].width = 15
+            worksheet.column_dimensions['F'].width = 20
+            worksheet.column_dimensions['G'].width = 8
+            worksheet.column_dimensions['H'].width = 8
+            worksheet.column_dimensions['I'].width = 8
+            worksheet.column_dimensions['J'].width = 12
+            worksheet.column_dimensions['K'].width = 12
             
             # Freeze header row
             worksheet.freeze_panes = 'A2'
@@ -302,8 +433,8 @@ def save_cumulative(df, path):
     except Exception as e:
         print(f"Error saving DB: {e}")
 
-def send_email_with_top_deals(df, top_n=10):
-    """Send email with top deals"""
+def send_email_with_top_deals(df, df_all, top_n=10):
+    """Send email with narrative summary and top deals"""
     if df.empty:
         print("No deals to email")
         return
@@ -311,20 +442,46 @@ def send_email_with_top_deals(df, top_n=10):
     # Sort by relevance score, get top N
     df_top = df.nlargest(top_n, 'RelevanceScore')
     
-    # Prepare email body
-    body = "Monthly Exosome Intelligence Report\n"
-    body += "=" * 60 + "\n\n"
-    body += f"Total New Items This Run: {len(df)}\n"
-    body += f"Top Items (By Relevance): {len(df_top)}\n\n"
+    # Generate narrative summary from all database
+    month_narrative = generate_month_narrative(df_all)
     
-    for idx, row in df_top.iterrows():
-        body += f"\n{idx+1}. {row['Title']}\n"
-        body += f"   Event: {row['EventType']}\n"
-        body += f"   Companies: {row['Companies']}\n"
-        body += f"   Amount: {row['Amounts']}\n"
-        body += f"   Indications: {row['Indications']}\n"
-        body += f"   Score: {row['RelevanceScore']:.2f}\n"
-        body += f"   URL: {row['URL']}\n"
+    # Prepare email body
+    body = []
+    body.append("MONTHLY EXOSOME INTELLIGENCE REPORT")
+    body.append("=" * 80)
+    body.append(f"Report Date: {dt.datetime.now().strftime('%B %d, %Y')}")
+    body.append(f"New Items This Run: {len(df)}")
+    body.append("")
+    body.append("")
+    
+    # Add narrative summary
+    body.append(month_narrative)
+    
+    # Add today's top deals
+    body.append("TODAY'S TOP DISCOVERIES")
+    body.append("=" * 80)
+    body.append(f"Showing top {len(df_top)} of {len(df)} new items")
+    body.append("")
+    
+    for idx, (_, row) in enumerate(df_top.iterrows(), 1):
+        body.append(f"{idx}. {row['Title']}")
+        body.append(f"   Type: {row['EventType']} | Relevance: {row['RelevanceScore']:.2f}")
+        
+        companies = row['Companies'] if pd.notna(row['Companies']) else "Not specified"
+        body.append(f"   Companies: {companies[:60]}")
+        
+        amount = row['Amounts'] if pd.notna(row['Amounts']) and str(row['Amounts']) != "" else "Undisclosed"
+        body.append(f"   Amount: {amount}")
+        
+        indications = row['Indications'] if pd.notna(row['Indications']) else "Various"
+        body.append(f"   Focus: {indications[:60]}")
+        
+        body.append(f"   Source: {row['URL'][:70]}...")
+        body.append("")
+    
+    body.append("=" * 80)
+    body.append("Attached: Complete Exosome Deals Database (Excel)")
+    body.append("")
     
     # Send email
     try:
@@ -338,10 +495,10 @@ def send_email_with_top_deals(df, top_n=10):
             return
         
         msg = EmailMessage()
-        msg['Subject'] = f"Exosome Intelligence Report - {dt.datetime.now().strftime('%Y-%m-%d')}"
+        msg['Subject'] = f"Exosome Intelligence Report - {dt.datetime.now().strftime('%B %d, %Y')}"
         msg['From'] = user
         msg['To'] = to_addr
-        msg.set_content(body)
+        msg.set_content("\n".join(body))
         
         # Attach Excel file
         excel_path = os.path.join(OUTPUT_DIR, CUMULATIVE_FILENAME)
@@ -447,8 +604,8 @@ def main():
                 "RelevanceScore": round(relevance_score, 2),
                 "IsExosome": is_exosome,
                 "Quality": quality,
-                "DateAddedToDB": today,  # Today's date for new records
-                "IsNewThisMonth": is_new,  # TRUE for new, FALSE for existing
+                "DateAddedToDB": today,
+                "IsNewThisMonth": is_new,
                 "Summary": summary,
                 "URL": url,
                 "RawText": full_text[:2000]
@@ -465,29 +622,13 @@ def main():
     
     # 6) Merge with cumulative
     if not df_existing.empty:
-        # For existing records, preserve their original DateAddedToDB
         df_merged = pd.concat([df_existing, df_new], ignore_index=True)
-        df_merged = df_merged.drop_duplicates(subset=["Title", "URL"], keep="last")
-        
-        # Make sure IsNewThisMonth is set correctly
-        # NEW records have IsNewThisMonth = True
-        # EXISTING records might have been marked True before, keep that
-        # OR reset all to False except today's new ones
-        for idx in df_merged.index:
-            # If this is from today's processing and marked as new, keep True
-            if df_merged.loc[idx, 'DateAddedToDB'] == today and df_merged.loc[idx, 'IsNewThisMonth']:
-                df_merged.loc[idx, 'IsNewThisMonth'] = True
-            # For records from previous runs, set to False (or keep if within same month)
-            else:
-                # Keep if added this month, otherwise False
-                date_added = pd.to_datetime(df_merged.loc[idx, 'DateAddedToDB'])
-                if date_added.month == dt.datetime.now().month and date_added.year == dt.datetime.now().year:
-                    df_merged.loc[idx, 'IsNewThisMonth'] = True
-                else:
-                    df_merged.loc[idx, 'IsNewThisMonth'] = False
+        # Remove duplicates by URL (keep last/highest)
+        df_merged = df_merged.drop_duplicates(subset=['URL'], keep='last')
+        # Remove duplicates by Title (keep last/highest)
+        df_merged = df_merged.drop_duplicates(subset=['Title'], keep='last')
     else:
         df_merged = df_new.copy()
-        # All records are new if no existing DB
         df_merged['IsNewThisMonth'] = True
     
     save_cumulative(df_merged, cumulative_path)
@@ -501,9 +642,9 @@ def main():
     except Exception as e:
         print(f"Failed to save run snapshot: {e}")
     
-    # 8) Send email with NEW deals from this run
+    # 8) Send email with narrative summary AND top deals from this run
     if not df_new.empty:
-        send_email_with_top_deals(df_new, 10)
+        send_email_with_top_deals(df_new, df_merged, 10)
 
 if __name__ == "__main__":
-    main()
+    main()main()
