@@ -406,6 +406,12 @@ def save_cumulative(df, path):
     
     df = df[[col for col in columns if col in df.columns]]
     
+    # SORT: Old records first, new records last (by DateAddedToDB ascending)
+    # This ensures new entries from today's search appear at the bottom
+    if 'DateAddedToDB' in df.columns:
+        df = df.sort_values('DateAddedToDB', ascending=True, na_position='last')
+        df = df.reset_index(drop=True)
+    
     try:
         with pd.ExcelWriter(path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Deals')
@@ -645,6 +651,7 @@ def main():
     # 8) Send email with narrative summary AND top deals from this run
     if not df_new.empty:
         send_email_with_top_deals(df_new, df_merged, 10)
+
 
 if __name__ == "__main__":
     main()
