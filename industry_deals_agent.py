@@ -286,23 +286,37 @@ def load_existing_cumulative(path):
     return pd.DataFrame()
 
 def generate_month_narrative(df):
-    """Generate a narrative summary of the month's deals"""
+    """Generate a narrative summary of deals from the past month"""
     if df.empty:
         return ""
     
     # Convert date for grouping
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
-    # Get last month
-    last_month = (dt.datetime.now() - dt.timedelta(days=30)).strftime("%B %Y")
+    # Calculate date range: past 30 days
+    today = dt.datetime.now()
+    month_ago = today - dt.timedelta(days=30)
+    
+    # FILTER: Only get deals from the past month
+    df_month = df[(df['Date'] >= month_ago) & (df['Date'] <= today)]
+    
+    # Get the month name for display
+    last_month_str = month_ago.strftime("%B %Y")
     
     narrative = []
-    narrative.append(f"LAST MONTH'S ACTIVITY SUMMARY ({last_month.upper()})")
+    narrative.append(f"ACTIVITY FROM THE PAST MONTH ({last_month_str} to {today.strftime('%B %Y')})")
     narrative.append("=" * 80)
     narrative.append("")
     
-    # Get top deals by score
-    top_deals = df.nlargest(5, 'RelevanceScore')
+    # If no records from past month, show from all records instead
+    if df_month.empty:
+        narrative.append("No deals found from the past 30 days.")
+        narrative.append("Showing most recent activity:")
+        narrative.append("")
+        top_deals = df.nlargest(5, 'RelevanceScore')
+    else:
+        # Get top deals from THIS MONTH by score
+        top_deals = df_month.nlargest(5, 'RelevanceScore')
     
     # Generate narrative for each top deal
     if len(top_deals) > 0:
@@ -348,8 +362,12 @@ def generate_month_narrative(df):
             
             narrative.append("")
     
-    # Summary by event type
-    event_counts = df['EventType'].value_counts()
+    # Summary by event type (from past month only)
+    if not df_month.empty:
+        event_counts = df_month['EventType'].value_counts()
+    else:
+        event_counts = df['EventType'].value_counts()
+    
     if len(event_counts) > 0:
         narrative.append("ACTIVITY SNAPSHOT:")
         narrative.append("")
@@ -368,16 +386,24 @@ def generate_month_narrative(df):
             narrative.append("* " + " | ".join(summary_parts))
             narrative.append("")
         
-        # Therapeutic focus
-        all_indications = " ".join(df['Indications'].dropna().astype(str))
+        # Therapeutic focus (from past month)
+        if not df_month.empty:
+            all_indications = " ".join(df_month['Indications'].dropna().astype(str))
+        else:
+            all_indications = " ".join(df['Indications'].dropna().astype(str))
+        
         if all_indications.strip():
             unique_indications = list(set([i.strip() for i in all_indications.split(";") if i.strip()]))
             unique_indications = unique_indications[:6]  # Top 6
             narrative.append(f"* Therapeutic focus: {', '.join(unique_indications)}")
             narrative.append("")
     
-    # Funding highlights
-    with_amounts = df[df['Amounts'].notna() & (df['Amounts'] != "")]
+    # Funding highlights (from past month)
+    if not df_month.empty:
+        with_amounts = df_month[df_month['Amounts'].notna() & (df_month['Amounts'] != "")]
+    else:
+        with_amounts = df[df['Amounts'].notna() & (df['Amounts'] != "")]
+    
     if len(with_amounts) > 0:
         narrative.append("FUNDING HIGHLIGHTS:")
         narrative.append("")
@@ -655,3 +681,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
