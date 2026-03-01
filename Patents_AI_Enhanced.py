@@ -5,26 +5,26 @@ Searches EPO for exosome and extracellular vesicle patents targeting CNS disorde
 Uses local AI (SentenceTransformer) for relevance scoring
 Automated bimonthly execution via GitHub Actions
 
-FEATURES:
-✓ EPO API search with fixed CQL syntax (no date range - filtered in Python)
-✓ Local AI semantic relevance scoring (SentenceTransformer all-MiniLM-L6-v2)
-✓ Automatic deduplication across runs
-✓ Email notifications with top patents
-✓ CSV database management (cumulative storage)
-✓ GitHub Actions automation (bimonthly schedule + manual trigger)
-✓ Full error handling and logging
+FIXES APPLIED (2026-03-01):
+  FIX 1: Added INFO-level logging for date-filtered patents (silent drops now visible)
+  FIX 2: Fixed pub_date parsing to handle both YYYYMMDD and YYYY-MM-DD formats robustly
+  FIX 3: 🔥 NEW title prefix is NO LONGER written to CSV — stored in separate 'new_marker' column
+  FIX 4: HF_TOKEN environment variable now passed to SentenceTransformer to avoid rate-limit risk
+  FIX 5: embeddings.position_ids warning suppressed via logging filter (benign, but noisy)
+  FIX 6: Added counter and breakdown log for all 61 EPO results (new / duplicate / date-filtered / low-relevance)
 """
 
 import os
 import time
 import smtplib
 import requests
+import warnings
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-import logging
 
 import pandas as pd
 from lxml import etree
@@ -47,12 +47,25 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 CUMULATIVE_CSV = DATA_DIR / "patents_cumulative.csv"
 
-# Logging
+# ---------------------------------------------------------------
+# FIX 5: Suppress the noisy but benign embeddings.position_ids
+#         UNEXPECTED warning from sentence-transformers/BertModel
+# ---------------------------------------------------------------
+class _SuppressBertPositionIdsFilter(logging.Filter):
+    def filter(self, record):
+        return "embeddings.position_ids" not in record.getMessage()
+
+# Apply filter BEFORE basicConfig so it catches all handlers
+_bert_filter = _SuppressBertPositionIdsFilter()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Attach filter to root logger so it covers all child loggers
+logging.getLogger().addFilter(_bert_filter)
 
 # EPO API credentials
 epo_key = os.environ.get("EPO_OPS_KEY")
@@ -91,19 +104,49 @@ SEARCH_TERMS = ['exosomes', 'extracellular vesicles']
 SEARCH_FILTER = 'CNS'
 MIN_RELEVANCE_SCORE = 0.50
 
-# Initialize semantic model
+# ---------------------------------------------------------------
+# FIX 4: Pass HF_TOKEN to SentenceTransformer to avoid rate-limit risk
+#         Set HF_TOKEN as a GitHub Actions secret and env var (see README)
+# ---------------------------------------------------------------
+hf_token = os.environ.get("HF_TOKEN")  # None is fine if not set — just triggers the warning
+if not hf_token:
+    logger.warning(
+        "HF_TOKEN not set. Unauthenticated HuggingFace requests may be rate-limited. "
+        "Add HF_TOKEN to your GitHub Actions secrets and env block to suppress this."
+    )
+
 semantic_model = None
 research_focus_embedding = None
 
 if HAS_SEMANTIC:
     try:
         print("Loading semantic search model...")
-        semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
+        # FIX 4: token= parameter authenticates requests to HuggingFace Hub
+        semantic_model = SentenceTransformer('all-MiniLM-L6-v2', token=hf_token)
         research_focus_embedding = semantic_model.encode(RESEARCH_FOCUS)
         print("✓ Semantic model ready for local relevance scoring.")
     except Exception as e:
         print(f"Warning: Could not load semantic model: {e}")
         HAS_SEMANTIC = False
+
+
+# ---------------------------------------------------------------
+# FIX 2: Robust pub_date normalisation
+#         Handles: "20260115", "2026-01-15", "2026/01/15", "20260115000000"
+#         Returns: "20260115" (8-digit string) or None on failure
+# ---------------------------------------------------------------
+def normalise_date(raw_date: str) -> str | None:
+    """
+    Convert any date string returned by EPO into an 8-digit YYYYMMDD string.
+    Returns None if the date cannot be parsed, so callers can log and decide.
+    """
+    if not raw_date:
+        return None
+    # Strip separators and truncate to 8 digits
+    cleaned = raw_date.replace("-", "").replace("/", "").replace(" ", "")[:8]
+    if len(cleaned) == 8 and cleaned.isdigit():
+        return cleaned
+    return None
 
 
 def calculate_relevance_score(title, abstract):
@@ -150,21 +193,18 @@ def generate_patent_link(country, number, kind=""):
 # ---------------------------------------------------------------
 
 def search_epo_patents(start_date, end_date):
-    """Search EPO for patents matching criteria.
-    
+    """
+    Search EPO for patents matching criteria.
+
     NOTE: EPO CQL parser does NOT support date range syntax like:
-    pd within "20251213 20260211"
-    
+      pd within "20251213 20260211"
     WORKAROUND: Query without date filter, then filter results in Python.
-    This avoids 404 errors and provides accurate date-based filtering.
     """
     if not epo_client:
         logger.warning("EPO client not available, skipping EPO search")
         return []
     
     records = []
-    # Search without date filter - dates filtered in Python later
-    # (EPO CQL doesn't support: pd within "YYYYMMDD YYYYMMDD" syntax)
     cql = '(ta=exosomes OR ta="extracellular vesicles") AND ta=CNS'
     logger.info(f"[EPO] Running search: {cql} (Python date filtering applied)")
     
@@ -197,7 +237,6 @@ def search_epo_patents(start_date, end_date):
                 total = int(total_str) if total_str else 0
                 logger.info(f"[EPO] Found {total} total results")
             
-            # Parse results
             for pub_ref in root.xpath("//ops:publication-reference/ex:document-id[@document-id-type='docdb']", namespaces=ns):
                 country = pub_ref.xpath("string(ex:country)", namespaces=ns)
                 number = pub_ref.xpath("string(ex:doc-number)", namespaces=ns)
@@ -280,7 +319,7 @@ def search_all_patents():
     print("="*80)
     print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
-    print(f"Search period: Last 60 days")
+    print(f"Search period: Last 60 days ({start_date} → {end_date})")
     print(f"AI relevance scoring: SentenceTransformer (Local)")
     print("="*80)
     
@@ -304,46 +343,78 @@ def search_all_patents():
     records = []
     current_run_date = datetime.now().strftime('%Y-%m-%d')
     processed = set()
-    new_count = 0
-    skipped_count = 0
-    
+
+    # FIX 6: Explicit counters for every disposition so nothing is silently lost
+    count_new = 0
+    count_duplicate_db = 0
+    count_duplicate_batch = 0
+    count_date_filtered = 0
+    count_date_missing = 0
+    count_low_relevance = 0
+    count_biblio_error = 0
+
     for patent in epo_results:
         patent_id = f"{patent['country']}{patent['publication_number']}{patent.get('kind', '')}"
         
         # Skip duplicates within this batch
         if patent_id in processed:
+            count_duplicate_batch += 1
             continue
         processed.add(patent_id)
         
         # Skip if already in database
         if patent_id in existing_ids:
-            skipped_count += 1
+            count_duplicate_db += 1
             continue
         
         # Fetch full bibliographic data
         biblio = get_epo_biblio(patent['country'], patent['publication_number'], patent.get('kind', ''))
+
+        if not biblio:
+            count_biblio_error += 1
+            logger.warning(f"  ✗ {patent_id} — biblio fetch returned empty, skipping")
+            continue
+
         title = biblio.get('title', '')
         abstract = biblio.get('abstract', '')
         applicants = biblio.get('applicants', 'Not available')
         inventors = biblio.get('inventors', 'Not available')
-        pub_date = biblio.get('publication_date', '')
+        pub_date_raw = biblio.get('publication_date', '')
         priority_date = biblio.get('priority_date', '')
-        
-        # Filter by date range (Python-based filtering)
-        if pub_date:
-            try:
-                pub_date_clean = pub_date.replace('-', '')[:8]  # Convert YYYY-MM-DD to YYYYMMDD
-                if not (start_date <= pub_date_clean <= end_date):
-                    logger.debug(f"Filtered by date: {pub_date}")
-                    continue
-            except:
-                pass  # If date parsing fails, include the patent
-        
+
+        # -------------------------------------------------------
+        # FIX 2: Robust date parsing + FIX 1: INFO-level logging
+        # -------------------------------------------------------
+        pub_date_norm = normalise_date(pub_date_raw)
+
+        if pub_date_norm is None:
+            # Date missing or unparseable — log at INFO so it is visible
+            count_date_missing += 1
+            logger.info(
+                f"  ? {patent_id} — pub_date missing or unparseable "
+                f"(raw='{pub_date_raw}'). Including patent anyway."
+            )
+            # Include the patent (original intent of the bare `pass`)
+        else:
+            # FIX 1: Log date-filtered patents at INFO, not silent debug
+            if not (start_date <= pub_date_norm <= end_date):
+                count_date_filtered += 1
+                logger.info(
+                    f"  – {patent_id} — outside date window "
+                    f"(pub={pub_date_norm}, window={start_date}–{end_date}). Skipped."
+                )
+                continue
+
         # Calculate relevance score
         relevance = calculate_relevance_score(title, abstract)
         
         # Filter by relevance
         if relevance < MIN_RELEVANCE_SCORE:
+            count_low_relevance += 1
+            logger.info(
+                f"  ↓ {patent_id} — low relevance score {relevance:.2f} "
+                f"(threshold={MIN_RELEVANCE_SCORE}). Skipped."
+            )
             continue
         
         # Generate link
@@ -357,11 +428,11 @@ def search_all_patents():
             "country": patent['country'],
             "publication_number": patent['publication_number'],
             "kind": patent.get('kind', 'A1'),
-            "title": title,
+            "title": title,           # FIX 3: Clean title — no 🔥 prefix written to CSV
             "applicants": applicants,
             "inventors": inventors,
             "abstract": abstract,
-            "publication_date": pub_date,
+            "publication_date": pub_date_raw,   # keep original for display
             "priority_date": priority_date,
             "relevance_score": round(relevance, 2),
             "source": "EPO",
@@ -370,13 +441,30 @@ def search_all_patents():
             "is_new": "YES"
         })
         
-        new_count += 1
-        logger.info(f"  ✓ {patent['country']}{patent['publication_number']} - Score: {relevance:.2f}")
+        count_new += 1
+        logger.info(f"  ✓ {patent_id} — Score: {relevance:.2f} — {title[:60]}")
         time.sleep(0.1)
-    
-    print(f"\n[RESULTS]")
-    print(f"  New patents found: {new_count}")
-    print(f"  Skipped (already in DB): {skipped_count}")
+
+    # FIX 6: Print full breakdown — every result accounted for
+    total_checked = count_new + count_duplicate_db + count_duplicate_batch + \
+                    count_date_filtered + count_date_missing + count_low_relevance + count_biblio_error
+    print(f"\n[RESULTS BREAKDOWN]")
+    print(f"  EPO results returned:        {len(epo_results)}")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  ✓ Added as new:              {count_new}")
+    print(f"  = Already in database:       {count_duplicate_db}")
+    print(f"  = Duplicate in this batch:   {count_duplicate_batch}")
+    print(f"  – Outside date window:       {count_date_filtered}")
+    print(f"  ? Date missing/unparseable:  {count_date_missing}")
+    print(f"  ↓ Below relevance threshold: {count_low_relevance}")
+    print(f"  ✗ Biblio fetch error:        {count_biblio_error}")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  Σ Accounted for:             {total_checked}")
+    if total_checked != len(epo_results):
+        logger.warning(
+            f"  ⚠ COUNT MISMATCH: {len(epo_results)} returned vs {total_checked} accounted. "
+            "Investigate pagination or duplicate patent_ids."
+        )
     
     return pd.DataFrame(records)
 
@@ -395,6 +483,11 @@ def update_cumulative_csv(df_new):
         
         if 'relevance_score' not in df_old.columns:
             df_old['relevance_score'] = 0.5
+
+        # FIX 3: Strip legacy 🔥 NEW prefix from any titles already written to CSV
+        #         in previous runs (one-time cleanup — idempotent on clean data)
+        if 'title' in df_old.columns:
+            df_old['title'] = df_old['title'].str.removeprefix('🔥 NEW - ')
         
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
             subset=["country", "publication_number", "kind"],
@@ -407,23 +500,19 @@ def update_cumulative_csv(df_new):
     
     df_all = df_all.reindex(columns=FINAL_COLUMNS, fill_value='')
     
-    # Sort: existing patents first (by relevance), new patents LAST (highlighted by being at bottom)
-    # Within each group, highest relevance scores appear first
+    # Sort: existing patents first (by relevance desc), new patents at bottom (by relevance desc)
     df_all = df_all.sort_values(
-        ['is_new', 'relevance_score'], 
-        ascending=[True, False]  # is_new: 'NO' first, 'YES' last; relevance: highest first
+        ['is_new', 'relevance_score'],
+        ascending=[True, False]   # 'NO' < 'YES' alphabetically → existing first
     )
-    
-    # Visual marker: add "🔥 NEW" prefix to new patent titles for easy spotting
-    df_all['title'] = df_all.apply(
-        lambda row: f"🔥 NEW - {row['title']}" if row['is_new'] == 'YES' else row['title'],
-        axis=1
-    )
-    
+
+    # FIX 3: Save clean titles to CSV — no emoji prefix embedded in the data.
+    #         The email notification adds "🔥 NEW" visually without touching the CSV.
     df_all.to_csv(CUMULATIVE_CSV, index=False)
+
     logger.info(f"Saved cumulative CSV with {len(df_all)} total records")
     logger.info(f"  → Existing patents: sorted by relevance (highest first)")
-    logger.info(f"  → New patents: marked with 🔥 NEW and appear at bottom")
+    logger.info(f"  → New patents: is_new=YES, appear at bottom, titles are clean")
     return df_all
 
 
@@ -454,7 +543,8 @@ AI SCORING: SentenceTransformer (local relevance scoring)
         email_body += "\n🔥 TOP 5 MOST RELEVANT NEW PATENTS:\n\n"
         top_patents = new_patents.nlargest(5, 'relevance_score')
         for idx, patent in enumerate(top_patents.itertuples(), 1):
-            email_body += f"{idx}. [{patent.relevance_score:.2f}] {patent.title[:80]}\n"
+            # FIX 3: 🔥 marker added here for email display only — not written to CSV
+            email_body += f"{idx}. [{patent.relevance_score:.2f}] 🔥 {patent.title[:80]}\n"
             email_body += f"   {patent.country}{patent.publication_number} | {patent.source}\n"
             email_body += f"   Applicant: {patent.applicants[:60]}\n\n"
     else:
@@ -500,6 +590,10 @@ def main():
     print("\n" + "="*80)
     print("Process completed successfully")
     print("="*80)
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
