@@ -51,6 +51,7 @@ jobs:
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }} 
         # הרצת הקובץ החדש והמשופר
         run: python Patents_AI_Enhanced.py
       
