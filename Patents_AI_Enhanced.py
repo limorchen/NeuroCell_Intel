@@ -205,7 +205,7 @@ def search_epo_patents(start_date, end_date):
         return []
     
     records = []
-    cql = '(ta=exosomes OR ta="extracellular vesicles") AND ta=CNS'
+    cql = '(ta=exosomes OR ta="extracellular vesicles") AND (ta=CNS OR ta="central nervous system" OR ta=neurological OR ta="blood-brain barrier" OR ta=neurodegenerative)'
     logger.info(f"[EPO] Running search: {cql} (Python date filtering applied)")
     
     try:
