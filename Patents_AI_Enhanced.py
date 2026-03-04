@@ -15,10 +15,15 @@ FIXES APPLIED (2026-03-01):
 
 CHANGES (2026-03-04):
   CHANGE 1: Abstract field removed from all data collection, storage, and email output
-  CHANGE 2: First claim extraction added via dedicated EPO OPS 'claims' endpoint
+  CHANGE 2: First claim extraction added via direct HTTP call to EPO OPS REST API
+             — epo_ops library does NOT correctly route the 'claims' endpoint (missing
+               document reference in URL, returns 404); replaced with direct requests call
+               using the OAuth token obtained from epo_client
              — fetches English claim first, falls back to any language if unavailable
              — stored in 'first_claim' column (truncated to 1000 chars in CSV)
              — included in relevance scoring alongside title
+  FIX 7:    backfill_first_claims() — pandas TypeError when assigning '' to float64 column
+             fixed by casting new 'first_claim' column to object dtype immediately on creation
 """
 
 import os
@@ -317,7 +322,17 @@ def get_epo_biblio(country, number, kind):
 
 def get_epo_first_claim(country, number, kind):
     """
-    Fetch the first claim of a patent from EPO OPS via the 'claims' endpoint.
+    Fetch the first claim of a patent directly from the EPO OPS REST API.
+
+    WHY DIRECT HTTP — NOT epo_client.published_data(endpoint='claims'):
+      The epo_ops library incorrectly omits the document reference from the URL
+      when routing the 'claims' endpoint, producing:
+        .../published-data/publication/docdb/claims          ← 404
+      instead of the correct:
+        .../published-data/publication/docdb/EP4132584.A1/claims
+      We therefore build and fire the request manually, reusing the OAuth token
+      that epo_client has already negotiated.
+
     Returns English claim text where available, falls back to any language.
     Returns empty string on failure or if claims are not yet indexed.
 
@@ -328,11 +343,35 @@ def get_epo_first_claim(country, number, kind):
         return ""
 
     try:
-        resp = epo_client.published_data(
-            reference_type="publication",
-            input=models.Docdb(number, country, kind),
-            endpoint="claims"
-        )
+        # Build the docdb document ID in the format EPO expects: {COUNTRY}{NUMBER}.{KIND}
+        doc_id = f"{country}{number}.{kind}"
+        url = f"https://ops.epo.org/3.2/rest-services/published-data/publication/docdb/{doc_id}/claims"
+
+        # Reuse the OAuth token already held by epo_client (avoids a second auth round-trip).
+        # The token location differs slightly across epo_ops versions — try both patterns.
+        token = None
+        try:
+            # epo_ops >= 3.x: token lives on the Throttler middleware
+            for mw in epo_client.middleware_chain.middlewares:
+                if hasattr(mw, 'access_token'):
+                    token = mw.access_token
+                    break
+        except Exception:
+            pass
+
+        if not token:
+            # Fallback: trigger a fresh token fetch via the client's own session
+            epo_client._make_request("GET", "https://ops.epo.org/3.2/auth/accesstoken",
+                                     data={"grant_type": "client_credentials"})
+            token = epo_client._access_token  # populated after auth
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/xml",
+        }
+
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
 
         root = etree.fromstring(resp.content)
         ns = {"ex": "http://www.epo.org/exchange"}
@@ -352,6 +391,13 @@ def get_epo_first_claim(country, number, kind):
 
         return first_claim.strip() if first_claim else ""
 
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        if status == 404:
+            logger.info(f"  – {country}{number}{kind}: claims not yet indexed (404)")
+        else:
+            logger.warning(f"EPO claims HTTP {status} for {country}{number}{kind}: {e}")
+        return ""
     except Exception as e:
         logger.warning(f"EPO claims fetch error for {country}{number}{kind}: {e}")
         return ""
@@ -551,7 +597,8 @@ def update_cumulative_csv(df_new):
 
         # Migrate: add first_claim column to old CSVs if missing
         if 'first_claim' not in df_old.columns:
-            df_old['first_claim'] = ''
+            # FIX 7: object dtype prevents pandas float64 TypeError on string assignment
+            df_old['first_claim'] = pd.array([''] * len(df_old), dtype=object)
             logger.info("Migrated existing CSV: added 'first_claim' column (empty for prior records)")
 
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
@@ -665,7 +712,9 @@ def backfill_first_claims():
     df = pd.read_csv(CUMULATIVE_CSV)
 
     if 'first_claim' not in df.columns:
-        df['first_claim'] = ''
+        # FIX 7: Explicitly cast to object dtype — without this, pandas infers float64
+        #         (all NaN) and then raises TypeError when we try to assign a string to it.
+        df['first_claim'] = pd.array([''] * len(df), dtype=object)
 
     # Only process rows where first_claim is genuinely empty
     mask = df['first_claim'].isna() | (df['first_claim'].astype(str).str.strip() == '')
