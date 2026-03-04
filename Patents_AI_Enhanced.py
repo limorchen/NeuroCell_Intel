@@ -154,14 +154,14 @@ def get_epo_access_token() -> str | None:
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
-Exosome-based drug delivery systems or unchanged naive exosomes 
+Exosome-based drug delivery systems carrying siRNA, or unchanged naive exosomes 
 for central nervous system diseases and conditions,
 including therapeutic applications for neurodegenerative conditions,
-stroke, spinal cord injury and genetic brain disorders.
+stroke, spinal cord injury, optic nerve injury, facial nerve injury, and genetic brain disorders.
 Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
 
-SEARCH_TERMS = ['exosomes', 'extracellular vesicles']
+SEARCH_TERMS = ['exosomes', 'extracellular vesicles', 'EVs']
 SEARCH_FILTER = 'CNS'
 MIN_RELEVANCE_SCORE = 0.50
 
@@ -560,7 +560,7 @@ def search_epo_patents(start_date, end_date):
 
     records = []
     cql = (
-        '(ta=exosomes OR ta="extracellular vesicles") AND '
+        '(ta=exosomes OR ta="extracellular vesicles" OR ta="EVs") AND '
         '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
         f'ta="blood-brain barrier" OR ta=neurodegenerative) AND pd>={start_date}'
     )
