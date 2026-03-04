@@ -16,6 +16,9 @@ FIXES APPLIED (2026-03-01):
   FIX 8: EPO fair use 403 — exponential backoff + 2s inter-request sleep
   FIX 9: Claim text no longer truncated at 1000 chars — full claim stored
   FIX 11: Google Patents response forced to UTF-8 — fixes mojibake on CN/JP patents
+  FIX 12: English translation extracted robustly — handles both numbered (1.) and
+           lettered (a)/(b) JP/CN claim structures; returns empty if no English found
+  FIX 13: Backfill now re-fetches garbled (mojibake) claims automatically
   FIX 12: English translation extracted from CN/JP claims when available
   FIX 10: EPO date filter now applied server-side via CQL pd>= operator —
            eliminates ~5 min wasted processing 275 out-of-window results
@@ -367,12 +370,37 @@ def _clean_claim_text(text: str) -> str:
     # Extract English translation when present.
     # Google Patents prefixes translated claims with e.g. "Translated from Chinese"
     # followed by the native-language text, then the English claim starting with "1."
-    trans_match = re.search(
-        r'Translated from (?:Chinese|Japanese|Korean|German|French|Spanish)\b.*?\b1[.\s]\s*',
-        text, flags=re.IGNORECASE | re.DOTALL
+    # Google Patents translated pages contain native-language text followed by English.
+    # Two common structures:
+    #   1. "Translated from Chinese ... 1. <english claim>"   (numbered)
+    #   2. "Translated from Japanese ... (a) <english step>"  (lettered steps)
+    # Strategy: find "Translated from <lang>" then skip forward to the first
+    # ASCII-dominant sentence, which is where the English begins.
+    lang_match = re.search(
+        r'Translated from (?:Chinese|Japanese|Korean|German|French|Spanish)\b',
+        text, flags=re.IGNORECASE
     )
-    if trans_match:
-        text = text[trans_match.end():]
+    if lang_match:
+        remainder = text[lang_match.end():]
+        # Walk through words and find where ASCII content dominates (English starts)
+        # Split on word boundaries and find first run of mostly-ASCII text
+        english_start = None
+        # Look for "1." or "(a)" or capital letter sentence starts after native block
+        eng_match = re.search(
+            r'(?:^|\s)(?:1[.\s]|\(a\)|[A-Z][a-z]{2,})',
+            remainder
+        )
+        if eng_match:
+            # Check the text from here is mostly ASCII (real English, not a stray char)
+            candidate = remainder[eng_match.start():].strip()
+            non_ascii = sum(1 for c in candidate[:200] if ord(c) > 127)
+            if non_ascii / max(len(candidate[:200]), 1) < 0.1:
+                english_start = eng_match.start()
+        if english_start is not None:
+            text = remainder[english_start:].strip()
+        else:
+            # No English translation found — return empty rather than native text
+            return ""
 
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'^(claim\s*)?1[\.\s]\s*', '', text, flags=re.IGNORECASE).strip()
@@ -978,7 +1006,16 @@ def backfill_first_claims():
     df['first_claim']  = df['first_claim'].fillna('')
     df['claim_source'] = df['claim_source'].fillna('')
 
-    mask = df['first_claim'].astype(str).str.strip() == ''
+    def _is_garbled(text) -> bool:
+        """Detect mojibake — non-ASCII ratio above 15% means encoding failure."""
+        if not text or str(text).strip() == '':
+            return False
+        text = str(text)
+        non_ascii = sum(1 for c in text if ord(c) > 127)
+        return (non_ascii / len(text)) > 0.15
+
+    # Re-fetch: empty claims OR previously garbled (mojibake) claims
+    mask = (df['first_claim'].astype(str).str.strip() == '') | df['first_claim'].apply(_is_garbled)
     to_backfill = df[mask]
 
     total = len(to_backfill)
