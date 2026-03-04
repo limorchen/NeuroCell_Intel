@@ -19,6 +19,9 @@ FIXES APPLIED (2026-03-01):
   FIX 12: English translation extracted robustly — handles both numbered (1.) and
            lettered (a)/(b) JP/CN claim structures; returns empty if no English found
   FIX 13: Backfill now re-fetches garbled (mojibake) claims automatically
+  FIX 14: All CSV saves use QUOTE_ALL — prevents phantom columns from long claim text
+  FIX 15: Backfill also re-fetches claims truncated at legacy 1000-char limit
+  FIX 16: Interleaved native-language text stripped from translated patent claims
   FIX 12: English translation extracted from CN/JP claims when available
   FIX 10: EPO date filter now applied server-side via CQL pd>= operator —
            eliminates ~5 min wasted processing 275 out-of-window results
@@ -154,14 +157,14 @@ def get_epo_access_token() -> str | None:
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
-Exosome-based drug delivery systems carrying siRNA, or unchanged naive exosomes 
+Exosome-based drug delivery systems or unchanged naive exosomes 
 for central nervous system diseases and conditions,
 including therapeutic applications for neurodegenerative conditions,
-stroke, spinal cord injury, optic nerve injury, facial nerve injury, and genetic brain disorders.
+stroke, spinal cord injury and genetic brain disorders.
 Focus on blood-brain barrier penetration and targeted CNS delivery.
 """
 
-SEARCH_TERMS = ['exosomes', 'extracellular vesicles', 'EVs']
+SEARCH_TERMS = ['exosomes', 'extracellular vesicles']
 SEARCH_FILTER = 'CNS'
 MIN_RELEVANCE_SCORE = 0.50
 
@@ -560,7 +563,7 @@ def search_epo_patents(start_date, end_date):
 
     records = []
     cql = (
-        '(ta=exosomes OR ta="extracellular vesicles" OR ta="EVs") AND '
+        '(ta=exosomes OR ta="extracellular vesicles") AND '
         '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
         f'ta="blood-brain barrier" OR ta=neurodegenerative) AND pd>={start_date}'
     )
@@ -900,7 +903,7 @@ def update_cumulative_csv(df_new):
     )
 
     # FIX 3: Clean titles in CSV — emoji prefix only appears in email, never in data
-    df_all.to_csv(CUMULATIVE_CSV, index=False)
+    df_all.to_csv(CUMULATIVE_CSV, index=False, quoting=1)
 
     logger.info(f"Saved cumulative CSV with {len(df_all)} total records")
     logger.info("  → Existing patents: sorted by relevance (highest first)")
@@ -1014,8 +1017,9 @@ def backfill_first_claims():
         non_ascii = sum(1 for c in text if ord(c) > 127)
         return (non_ascii / len(text)) > 0.15
 
-    # Re-fetch: empty claims OR previously garbled (mojibake) claims
-    mask = (df['first_claim'].astype(str).str.strip() == '') | df['first_claim'].apply(_is_garbled)
+    # Re-fetch: empty claims OR garbled (mojibake) OR truncated at legacy 1000-char limit
+    truncated_mask = df['first_claim'].fillna('').str.len() == 1000
+    mask = (df['first_claim'].astype(str).str.strip() == '') | df['first_claim'].apply(_is_garbled) | truncated_mask
     to_backfill = df[mask]
 
     total = len(to_backfill)
@@ -1040,6 +1044,11 @@ def backfill_first_claims():
         logger.info(f"  [{i}/{total}] {patent_id}...")
 
         claim, source = get_first_claim(country, number, kind)
+        # Strip residual non-ASCII (interleaved native language in translated patents)
+        if claim:
+            claim_clean = re.sub(r'[^\x00-\x7F]+', ' ', claim)
+            claim_clean = re.sub(r'\s{2,}', ' ', claim_clean).strip()
+            claim = claim_clean if len(claim_clean) > 50 else ''
 
         df.at[idx, 'first_claim']  = claim if claim else ''
         df.at[idx, 'claim_source'] = source
@@ -1050,7 +1059,7 @@ def backfill_first_claims():
             count_empty += 1
 
         # Save after every record so a crash loses nothing
-        df.to_csv(CUMULATIVE_CSV, index=False)
+        df.to_csv(CUMULATIVE_CSV, index=False, quoting=1)
 
         # 2s base sleep (get_first_claim adds its own 3s before Google Patents)
         time.sleep(2)
