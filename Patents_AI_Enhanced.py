@@ -644,6 +644,81 @@ AI SCORING: SentenceTransformer (title + first claim relevance scoring)
 
 
 # ---------------------------------------------------------------
+# Backfill first_claim for existing CSV records
+# ---------------------------------------------------------------
+
+def backfill_first_claims():
+    """
+    Fetch and populate first_claim for any existing CSV records where it is empty.
+    Safe to re-run — already-populated rows are skipped.
+    Saves progress to CSV after every successful fetch so a crash mid-run
+    doesn't lose work already done.
+    """
+    if not CUMULATIVE_CSV.exists():
+        logger.info("No existing CSV found — nothing to backfill.")
+        return
+
+    if not epo_client:
+        logger.warning("EPO client not available — cannot backfill first claims.")
+        return
+
+    df = pd.read_csv(CUMULATIVE_CSV)
+
+    if 'first_claim' not in df.columns:
+        df['first_claim'] = ''
+
+    # Only process rows where first_claim is genuinely empty
+    mask = df['first_claim'].isna() | (df['first_claim'].astype(str).str.strip() == '')
+    to_backfill = df[mask]
+
+    total = len(to_backfill)
+    if total == 0:
+        logger.info("Backfill: all existing records already have first_claim populated.")
+        return
+
+    print("="*80)
+    print(f"BACKFILL: Fetching first claims for {total} existing records...")
+    print("="*80)
+
+    success = 0
+    failed = 0
+    empty = 0
+
+    for i, (idx, row) in enumerate(to_backfill.iterrows(), 1):
+        country = str(row.get('country', ''))
+        number  = str(row.get('publication_number', ''))
+        kind    = str(row.get('kind', ''))
+        patent_id = f"{country}{number}{kind}"
+
+        logger.info(f"  [{i}/{total}] Fetching claim for {patent_id}...")
+
+        claim = get_epo_first_claim(country, number, kind)
+
+        if claim:
+            df.at[idx, 'first_claim'] = claim[:1000]
+            success += 1
+            logger.info(f"    ✓ Got claim ({len(claim)} chars)")
+        else:
+            # Leave as empty string — don't retry automatically
+            df.at[idx, 'first_claim'] = ''
+            empty += 1
+            logger.info(f"    – No claim returned (not yet indexed or unavailable)")
+
+        # Save progress after every record so a crash mid-run loses nothing
+        df.to_csv(CUMULATIVE_CSV, index=False)
+
+        # Polite pause to respect EPO OPS rate limits
+        time.sleep(0.5)
+
+    print(f"\n[BACKFILL COMPLETE]")
+    print(f"  ✓ Claims fetched:       {success}")
+    print(f"  – Not available:        {empty}")
+    print(f"  ✗ Errors:               {failed}")
+    print(f"  Σ Processed:            {total}")
+    print(f"  CSV saved: {CUMULATIVE_CSV}")
+
+
+# ---------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------
 
@@ -652,6 +727,10 @@ def main():
     print("PATENT SEARCH WITH AI RELEVANCE SCORING - EPO - Starting")
     print("="*80)
 
+    # Step 1: Backfill first_claim for any existing records that lack it
+    backfill_first_claims()
+
+    # Step 2: Run the regular search for new patents
     df_new = search_all_patents()
     df_all = update_cumulative_csv(df_new)
     send_email_with_csv(df_all)
@@ -663,5 +742,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
