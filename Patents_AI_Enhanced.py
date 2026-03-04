@@ -15,6 +15,8 @@ FIXES APPLIED (2026-03-01):
   FIX 7: backfill_first_claims() pandas TypeError fixed (object dtype)
   FIX 8: EPO fair use 403 — exponential backoff + 2s inter-request sleep
   FIX 9: Claim text no longer truncated at 1000 chars — full claim stored
+  FIX 11: Google Patents response forced to UTF-8 — fixes mojibake on CN/JP patents
+  FIX 12: English translation extracted from CN/JP claims when available
   FIX 10: EPO date filter now applied server-side via CQL pd>= operator —
            eliminates ~5 min wasted processing 275 out-of-window results
 
@@ -354,9 +356,24 @@ _GOOGLE_HEADERS = {
 
 
 def _clean_claim_text(text: str) -> str:
-    """Normalise whitespace and strip leading claim number artefacts (e.g. '1. ')."""
+    """
+    Normalise whitespace and strip leading claim number artefacts (e.g. '1. ').
+    When Google Patents shows both native-language text and an English translation
+    (common for CN and JP patents), extract only the English portion.
+    """
     if not text:
         return ""
+
+    # Extract English translation when present.
+    # Google Patents prefixes translated claims with e.g. "Translated from Chinese"
+    # followed by the native-language text, then the English claim starting with "1."
+    trans_match = re.search(
+        r'Translated from (?:Chinese|Japanese|Korean|German|French|Spanish)\b.*?\b1[.\s]\s*',
+        text, flags=re.IGNORECASE | re.DOTALL
+    )
+    if trans_match:
+        text = text[trans_match.end():]
+
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'^(claim\s*)?1[\.\s]\s*', '', text, flags=re.IGNORECASE).strip()
     return text
@@ -414,6 +431,7 @@ def get_google_patents_first_claim(country, number, kind) -> str:
             )
             return ""
 
+        resp.encoding = 'utf-8'  # Force UTF-8 — prevents mojibake on CN/JP patents
         soup = BeautifulSoup(resp.text, "lxml")
 
         # ── Selector 1: standard claims div (most common layout) ───────────────
