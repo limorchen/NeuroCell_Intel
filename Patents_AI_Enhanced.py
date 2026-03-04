@@ -14,6 +14,9 @@ FIXES APPLIED (2026-03-01):
   FIX 6: Added counter and breakdown log for all EPO results
   FIX 7: backfill_first_claims() pandas TypeError fixed (object dtype)
   FIX 8: EPO fair use 403 — exponential backoff + 2s inter-request sleep
+  FIX 9: Claim text no longer truncated at 1000 chars — full claim stored
+  FIX 10: EPO date filter now applied server-side via CQL pd>= operator —
+           eliminates ~5 min wasted processing 275 out-of-window results
 
 CHANGES (2026-03-04):
   CHANGE 1: Abstract field removed from all data collection, storage, and email output
@@ -501,9 +504,9 @@ def search_epo_patents(start_date, end_date):
     """
     Search EPO for patents matching criteria.
 
-    NOTE: EPO CQL parser does NOT support date range syntax like:
-      pd within "20251213 20260211"
-    WORKAROUND: Query without date filter, then filter results in Python.
+    Date filtering is done server-side via the CQL pd>= operator so EPO only
+    returns patents published within the 60-day window. Python date filtering
+    is kept as a safety net for any edge-case results that slip through.
     """
     if not epo_client:
         logger.warning("EPO client not available, skipping EPO search")
@@ -513,9 +516,9 @@ def search_epo_patents(start_date, end_date):
     cql = (
         '(ta=exosomes OR ta="extracellular vesicles") AND '
         '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
-        'ta="blood-brain barrier" OR ta=neurodegenerative)'
+        f'ta="blood-brain barrier" OR ta=neurodegenerative) AND pd>={start_date}'
     )
-    logger.info(f"[EPO] Running search: {cql} (Python date filtering applied)")
+    logger.info(f"[EPO] Running search: {cql}")
 
     try:
         start = 1
@@ -754,7 +757,7 @@ def search_all_patents():
             "title":              title,
             "applicants":         applicants,
             "inventors":          inventors,
-            "first_claim":        first_claim[:1000] if first_claim else "",
+            "first_claim":        first_claim if first_claim else "",
             "claim_source":       claim_source,
             "publication_date":   pub_date_raw,
             "priority_date":      priority_date,
@@ -983,7 +986,7 @@ def backfill_first_claims():
 
         claim, source = get_first_claim(country, number, kind)
 
-        df.at[idx, 'first_claim']  = claim[:1000] if claim else ''
+        df.at[idx, 'first_claim']  = claim if claim else ''
         df.at[idx, 'claim_source'] = source
 
         if claim:
