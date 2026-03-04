@@ -103,6 +103,39 @@ if epo_key and epo_secret:
         print(f"Error creating EPO client: {e}")
         epo_client = None
 
+# ---------------------------------------------------------------
+# EPO OAuth token — fetched once per run, cached at module level.
+# Using direct requests avoids all epo_ops middleware quirks.
+# ---------------------------------------------------------------
+_epo_token_cache: dict = {"token": None}
+
+def get_epo_access_token() -> str | None:
+    """
+    Obtain (or return the cached) EPO OPS OAuth2 access token.
+    Fetches directly via requests so we never touch epo_ops internals.
+    Returns None if credentials are missing or the request fails.
+    """
+    if _epo_token_cache["token"]:
+        return _epo_token_cache["token"]
+    if not epo_key or not epo_secret:
+        return None
+    try:
+        resp = requests.post(
+            "https://ops.epo.org/3.2/auth/accesstoken",
+            data={"grant_type": "client_credentials"},
+            auth=(epo_key, epo_secret),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+        _epo_token_cache["token"] = token
+        logger.info("✓ EPO OAuth token obtained")
+        return token
+    except Exception as e:
+        logger.error(f"Failed to obtain EPO OAuth token: {e}")
+        return None
+
+
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
 Exosome-based drug delivery systems or unchanged naive exosomes 
@@ -325,52 +358,47 @@ def get_epo_first_claim(country, number, kind):
     Fetch the first claim of a patent directly from the EPO OPS REST API.
 
     WHY DIRECT HTTP — NOT epo_client.published_data(endpoint='claims'):
-      The epo_ops library incorrectly omits the document reference from the URL
-      when routing the 'claims' endpoint, producing:
-        .../published-data/publication/docdb/claims          ← 404
-      instead of the correct:
-        .../published-data/publication/docdb/EP4132584.A1/claims
-      We therefore build and fire the request manually, reusing the OAuth token
-      that epo_client has already negotiated.
+      The epo_ops library omits the document reference from the URL when routing
+      the 'claims' endpoint, producing .../docdb/claims (404) instead of the
+      correct .../docdb/EP4132584.A1/claims. We fire the request manually using
+      a cached OAuth token obtained independently of the library.
 
     Returns English claim text where available, falls back to any language.
     Returns empty string on failure or if claims are not yet indexed.
-
-    NOTE: Each call counts as a separate OPS quota request. On the free tier
-    (~10,000 queries/week) this doubles per-patent API usage — monitor accordingly.
     """
-    if not epo_client:
+    token = get_epo_access_token()
+    if not token:
+        logger.warning("No EPO token available — cannot fetch claims")
         return ""
 
     try:
-        # Build the docdb document ID in the format EPO expects: {COUNTRY}{NUMBER}.{KIND}
+        # EPO docdb format: {COUNTRY}{NUMBER}.{KIND}
         doc_id = f"{country}{number}.{kind}"
         url = f"https://ops.epo.org/3.2/rest-services/published-data/publication/docdb/{doc_id}/claims"
 
-        # Reuse the OAuth token already held by epo_client (avoids a second auth round-trip).
-        # The token location differs slightly across epo_ops versions — try both patterns.
-        token = None
-        try:
-            # epo_ops >= 3.x: token lives on the Throttler middleware
-            for mw in epo_client.middleware_chain.middlewares:
-                if hasattr(mw, 'access_token'):
-                    token = mw.access_token
-                    break
-        except Exception:
-            pass
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"},
+            timeout=15,
+        )
 
-        if not token:
-            # Fallback: trigger a fresh token fetch via the client's own session
-            epo_client._make_request("GET", "https://ops.epo.org/3.2/auth/accesstoken",
-                                     data={"grant_type": "client_credentials"})
-            token = epo_client._access_token  # populated after auth
+        # Token may have expired mid-run — refresh once and retry
+        if resp.status_code == 401:
+            logger.info("EPO token expired mid-run, refreshing...")
+            _epo_token_cache["token"] = None
+            token = get_epo_access_token()
+            if not token:
+                return ""
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"},
+                timeout=15,
+            )
 
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/xml",
-        }
+        if resp.status_code == 404:
+            logger.info(f"  – {country}{number}{kind}: claims not yet indexed (404)")
+            return ""
 
-        resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
 
         root = etree.fromstring(resp.content)
@@ -381,7 +409,6 @@ def get_epo_first_claim(country, number, kind):
             "string(//ex:claims[@lang='en']/ex:claim[1]/ex:claim-text)",
             namespaces=ns
         )
-
         # Fallback: first claim in any available language
         if not first_claim:
             first_claim = root.xpath(
@@ -392,11 +419,7 @@ def get_epo_first_claim(country, number, kind):
         return first_claim.strip() if first_claim else ""
 
     except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else "?"
-        if status == 404:
-            logger.info(f"  – {country}{number}{kind}: claims not yet indexed (404)")
-        else:
-            logger.warning(f"EPO claims HTTP {status} for {country}{number}{kind}: {e}")
+        logger.warning(f"EPO claims HTTP error for {country}{number}{kind}: {e}")
         return ""
     except Exception as e:
         logger.warning(f"EPO claims fetch error for {country}{number}{kind}: {e}")
@@ -422,7 +445,7 @@ def search_all_patents():
     # Load existing patents
     existing_ids = set()
     if CUMULATIVE_CSV.exists():
-        df = pd.read_csv(CUMULATIVE_CSV)
+        df = pd.read_csv(CUMULATIVE_CSV, dtype={'first_claim': object})
         existing_ids = set(
             df.apply(lambda row: f"{row['country']}{row['publication_number']}{row['kind']}", axis=1)
         )
@@ -579,7 +602,7 @@ def update_cumulative_csv(df_new):
     ]
 
     if CUMULATIVE_CSV.exists():
-        df_old = pd.read_csv(CUMULATIVE_CSV)
+        df_old = pd.read_csv(CUMULATIVE_CSV, dtype={'first_claim': object})
         df_old['is_new'] = 'NO'
 
         if 'relevance_score' not in df_old.columns:
@@ -709,12 +732,14 @@ def backfill_first_claims():
         logger.warning("EPO client not available — cannot backfill first claims.")
         return
 
-    df = pd.read_csv(CUMULATIVE_CSV)
+    df = pd.read_csv(CUMULATIVE_CSV, dtype={'first_claim': object})
 
     if 'first_claim' not in df.columns:
-        # FIX 7: Explicitly cast to object dtype — without this, pandas infers float64
-        #         (all NaN) and then raises TypeError when we try to assign a string to it.
         df['first_claim'] = pd.array([''] * len(df), dtype=object)
+
+    # Unconditional: even if the column existed, NaN values from a previous
+    # failed run must be converted to empty strings before we can assign to cells.
+    df['first_claim'] = df['first_claim'].fillna('')
 
     # Only process rows where first_claim is genuinely empty
     mask = df['first_claim'].isna() | (df['first_claim'].astype(str).str.strip() == '')
@@ -791,6 +816,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
