@@ -8,29 +8,35 @@ Automated bimonthly execution via GitHub Actions
 FIXES APPLIED (2026-03-01):
   FIX 1: Added INFO-level logging for date-filtered patents (silent drops now visible)
   FIX 2: Fixed pub_date parsing to handle both YYYYMMDD and YYYY-MM-DD formats robustly
-  FIX 3: 🔥 NEW title prefix is NO LONGER written to CSV — stored in separate 'new_marker' column
-  FIX 4: HF_TOKEN environment variable now passed to SentenceTransformer to avoid rate-limit risk
-  FIX 5: embeddings.position_ids warning suppressed via logging filter (benign, but noisy)
-  FIX 6: Added counter and breakdown log for all 61 EPO results (new / duplicate / date-filtered / low-relevance)
+  FIX 3: NEW title prefix is NO LONGER written to CSV
+  FIX 4: HF_TOKEN environment variable now passed to SentenceTransformer
+  FIX 5: embeddings.position_ids warning suppressed via logging filter
+  FIX 6: Added counter and breakdown log for all EPO results
+  FIX 7: backfill_first_claims() pandas TypeError fixed (object dtype)
+  FIX 8: EPO fair use 403 — exponential backoff + 2s inter-request sleep
 
 CHANGES (2026-03-04):
   CHANGE 1: Abstract field removed from all data collection, storage, and email output
-  CHANGE 2: First claim extraction added via direct HTTP call to EPO OPS REST API
-             — epo_ops library does NOT correctly route the 'claims' endpoint (missing
-               document reference in URL, returns 404); replaced with direct requests call
-               using the OAuth token obtained from epo_client
-             — fetches English claim first, falls back to any language if unavailable
-             — stored in 'first_claim' column (truncated to 1000 chars in CSV)
-             — included in relevance scoring alongside title
-  FIX 7:    backfill_first_claims() — pandas TypeError when assigning '' to float64 column
-             fixed by casting new 'first_claim' column to object dtype immediately on creation
+  CHANGE 2: First claim extraction — two-tier strategy:
+              Tier 1 (EP patents): EPO OPS claims endpoint (direct HTTP, cached OAuth token).
+                epo_ops library does NOT correctly route this endpoint — replaced with
+                direct requests call. Exponential backoff on 403 fair use throttling.
+              Tier 2 (all other jurisdictions + EP fallback): Google Patents scraper.
+                Covers US, WO, EP, CN, JP, KR, AU, CA, MX and most jurisdictions.
+                Polite 3s inter-request sleep + browser-like User-Agent.
+              Claim source stored in new 'claim_source' CSV column.
+
+DEPENDENCIES (add to requirements.txt):
+  beautifulsoup4>=4.12
+  lxml>=4.9
+  (all others were already required)
 """
 
 import os
+import re
 import time
 import smtplib
 import requests
-import warnings
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -40,6 +46,14 @@ from email.mime.application import MIMEApplication
 
 import pandas as pd
 from lxml import etree
+
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    HAS_BS4 = False
+    print("Warning: beautifulsoup4 not installed. Google Patents fallback disabled.")
+    print("         Install with: pip install beautifulsoup4")
 
 from epo_ops import Client, models, middlewares
 
@@ -60,14 +74,12 @@ DATA_DIR.mkdir(exist_ok=True)
 CUMULATIVE_CSV = DATA_DIR / "patents_cumulative.csv"
 
 # ---------------------------------------------------------------
-# FIX 5: Suppress the noisy but benign embeddings.position_ids
-#         UNEXPECTED warning from sentence-transformers/BertModel
+# FIX 5: Suppress noisy but benign embeddings.position_ids warning
 # ---------------------------------------------------------------
 class _SuppressBertPositionIdsFilter(logging.Filter):
     def filter(self, record):
         return "embeddings.position_ids" not in record.getMessage()
 
-# Apply filter BEFORE basicConfig so it catches all handlers
 _bert_filter = _SuppressBertPositionIdsFilter()
 
 logging.basicConfig(
@@ -75,33 +87,29 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Attach filter to root logger so it covers all child loggers
 logging.getLogger().addFilter(_bert_filter)
 
 # EPO API credentials
-epo_key = os.environ.get("EPO_OPS_KEY")
+epo_key    = os.environ.get("EPO_OPS_KEY")
 epo_secret = os.environ.get("EPO_OPS_SECRET")
 
 # Email credentials
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+SENDER_EMAIL    = os.environ.get("SENDER_EMAIL")
+EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD")
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL")
 
 # Initialize EPO client
 epo_client = None
 if epo_key and epo_secret:
     try:
-        middlewares_list = [middlewares.Throttler()]
         epo_client = Client(
             key=epo_key,
             secret=epo_secret,
-            middlewares=middlewares_list
+            middlewares=[middlewares.Throttler()]
         )
         print("✓ EPO client initialized")
     except Exception as e:
         print(f"Error creating EPO client: {e}")
-        epo_client = None
 
 # ---------------------------------------------------------------
 # EPO OAuth token — fetched once per run, cached at module level.
@@ -149,11 +157,8 @@ SEARCH_TERMS = ['exosomes', 'extracellular vesicles']
 SEARCH_FILTER = 'CNS'
 MIN_RELEVANCE_SCORE = 0.50
 
-# ---------------------------------------------------------------
 # FIX 4: Pass HF_TOKEN to SentenceTransformer to avoid rate-limit risk
-#         Set HF_TOKEN as a GitHub Actions secret and env var (see README)
-# ---------------------------------------------------------------
-hf_token = os.environ.get("HF_TOKEN")  # None is fine if not set — just triggers the warning
+hf_token = os.environ.get("HF_TOKEN")
 if not hf_token:
     logger.warning(
         "HF_TOKEN not set. Unauthenticated HuggingFace requests may be rate-limited. "
@@ -166,7 +171,6 @@ research_focus_embedding = None
 if HAS_SEMANTIC:
     try:
         print("Loading semantic search model...")
-        # FIX 4: token= parameter authenticates requests to HuggingFace Hub
         semantic_model = SentenceTransformer('all-MiniLM-L6-v2', token=hf_token)
         research_focus_embedding = semantic_model.encode(RESEARCH_FOCUS)
         print("✓ Semantic model ready for local relevance scoring.")
@@ -177,17 +181,15 @@ if HAS_SEMANTIC:
 
 # ---------------------------------------------------------------
 # FIX 2: Robust pub_date normalisation
-#         Handles: "20260115", "2026-01-15", "2026/01/15", "20260115000000"
-#         Returns: "20260115" (8-digit string) or None on failure
 # ---------------------------------------------------------------
 def normalise_date(raw_date: str) -> str | None:
     """
     Convert any date string returned by EPO into an 8-digit YYYYMMDD string.
-    Returns None if the date cannot be parsed, so callers can log and decide.
+    Handles: "20260115", "2026-01-15", "2026/01/15", "20260115000000"
+    Returns None if unparseable.
     """
     if not raw_date:
         return None
-    # Strip separators and truncate to 8 digits
     cleaned = raw_date.replace("-", "").replace("/", "").replace(" ", "")[:8]
     if len(cleaned) == 8 and cleaned.isdigit():
         return cleaned
@@ -197,14 +199,12 @@ def normalise_date(raw_date: str) -> str | None:
 def calculate_relevance_score(title, first_claim):
     """
     Calculate semantic similarity to research focus using SentenceTransformer.
-    Scores against title + first claim text (abstract removed).
+    Scores against title + first claim text.
     """
     if not HAS_SEMANTIC or not semantic_model:
         return 0.5
-
     if not title and not first_claim:
         return 0.0
-
     patent_text = f"{title} {first_claim}"
     try:
         patent_embedding = semantic_model.encode(patent_text)
@@ -221,7 +221,7 @@ def calculate_relevance_score(title, first_claim):
 def generate_patent_link(country, number, kind=""):
     """Generate appropriate patent link based on country code."""
     if country == "US":
-        return f"https://patents.google.com/patent/US{number}"
+        return f"https://patents.google.com/patent/US{number}{kind}"
     elif country == "WO":
         return f"https://patentscope.wipo.int/search/en/detail.jsf?docId=WO{number}"
     elif country == "EP":
@@ -229,11 +229,268 @@ def generate_patent_link(country, number, kind=""):
     elif country == "JP":
         return f"https://worldwide.espacenet.com/patent/search?q=pn%3DJP{number}"
     elif country == "CN":
-        return f"https://patents.google.com/patent/CN{number}"
+        return f"https://patents.google.com/patent/CN{number}{kind}"
     elif country == "AU":
         return f"https://worldwide.espacenet.com/patent/search?q=pn%3DAU{number}"
     else:
         return f"https://worldwide.espacenet.com/patent/search?q=pn%3D{country}{number}{kind}"
+
+
+# ---------------------------------------------------------------
+# Tier 1: EPO OPS claims endpoint (EP patents only)
+# ---------------------------------------------------------------
+
+def get_epo_first_claim(country, number, kind) -> str:
+    """
+    Fetch the first claim directly from EPO OPS REST API.
+
+    WHY DIRECT HTTP: The epo_ops library omits the document reference from the
+    URL when routing the 'claims' endpoint (.../docdb/claims instead of
+    .../docdb/EP4132584.A1/claims), returning 404. We build the URL manually.
+
+    EPO FAIR USE: Full-text endpoints enforce rate limits. Burst requests trigger
+    403 "Fair Use policy violation". Retries use exponential backoff (20s->40s->80s).
+    Keep inter-request sleep >= 2s in calling code.
+
+    Returns claim text or '' if unavailable.
+    """
+    token = get_epo_access_token()
+    if not token:
+        return ""
+
+    doc_id = f"{country}{number}.{kind}"
+    url = (
+        f"https://ops.epo.org/3.2/rest-services/"
+        f"published-data/publication/docdb/{doc_id}/claims"
+    )
+
+    max_retries = 3
+    backoff = 20  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/xml"
+                },
+                timeout=15,
+            )
+
+            # Token expired mid-run — refresh once and retry
+            if resp.status_code == 401:
+                logger.info("EPO token expired mid-run, refreshing...")
+                _epo_token_cache["token"] = None
+                token = get_epo_access_token()
+                if not token:
+                    return ""
+                continue
+
+            # Fair use throttling — exponential backoff
+            if resp.status_code == 403:
+                wait = backoff * (2 ** attempt)
+                logger.warning(
+                    f"EPO fair use 403 for {country}{number}{kind} "
+                    f"(attempt {attempt + 1}/{max_retries}). "
+                    f"Backing off {wait}s..."
+                )
+                time.sleep(wait)
+                continue
+
+            if resp.status_code == 404:
+                logger.info(f"  – EPO OPS: {country}{number}{kind} claims not indexed (404)")
+                return ""
+
+            resp.raise_for_status()
+
+            root = etree.fromstring(resp.content)
+            ns = {"ex": "http://www.epo.org/exchange"}
+
+            # Primary: first claim in English
+            first_claim = root.xpath(
+                "string(//ex:claims[@lang='en']/ex:claim[1]/ex:claim-text)",
+                namespaces=ns
+            )
+            # Fallback: first claim in any available language
+            if not first_claim:
+                first_claim = root.xpath(
+                    "string(//ex:claims/ex:claim[1]/ex:claim-text)",
+                    namespaces=ns
+                )
+
+            return first_claim.strip() if first_claim else ""
+
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"EPO claims HTTP error for {country}{number}{kind}: {e}")
+            return ""
+        except Exception as e:
+            logger.warning(f"EPO claims error for {country}{number}{kind}: {e}")
+            return ""
+
+    logger.warning(
+        f"EPO claims: gave up after {max_retries} attempts for {country}{number}{kind}"
+    )
+    return ""
+
+
+# ---------------------------------------------------------------
+# Tier 2: Google Patents scraper (universal fallback)
+# ---------------------------------------------------------------
+
+# Browser-like headers to avoid Google bot detection
+_GOOGLE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+
+def _clean_claim_text(text: str) -> str:
+    """Normalise whitespace and strip leading claim number artefacts (e.g. '1. ')."""
+    if not text:
+        return ""
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r'^(claim\s*)?1[\.\s]\s*', '', text, flags=re.IGNORECASE).strip()
+    return text
+
+
+def _extract_first_claim_from_text(text: str) -> str:
+    """
+    Heuristic: split a full claims blob at the boundary where claim 2 starts.
+    Returns just the first claim text.
+    """
+    split = re.split(r'\b2[\.\s]\s+', text, maxsplit=1)
+    return split[0].strip() if split else text.strip()
+
+
+def get_google_patents_first_claim(country, number, kind) -> str:
+    """
+    Scrape the first claim from Google Patents.
+
+    Covers: US, WO, EP, CN, JP, KR, AU, CA, MX and most other jurisdictions.
+    Google Patents holds full-text claims for the vast majority of patent families.
+
+    URL format: https://patents.google.com/patent/{COUNTRY}{NUMBER}{KIND}/en
+
+    Multiple CSS selector fallbacks handle different Google Patents page layouts:
+      1. div.claims > div.claim > div.claim-text
+      2. [itemprop="claims"] > [itemprop="claimText"]
+      3. patent-text custom element (newer layout)
+
+    Returns first claim text or '' if unavailable / scraping fails.
+    """
+    if not HAS_BS4:
+        return ""
+
+    patent_id = f"{country}{number}{kind}"
+    url = f"https://patents.google.com/patent/{patent_id}/en"
+
+    try:
+        resp = requests.get(url, headers=_GOOGLE_HEADERS, timeout=20)
+
+        if resp.status_code == 404:
+            logger.info(f"  – Google Patents: {patent_id} not found (404)")
+            return ""
+
+        # Rate limited — wait and retry once
+        if resp.status_code == 429:
+            logger.warning(
+                f"  – Google Patents: rate limited (429) for {patent_id}. Waiting 60s..."
+            )
+            time.sleep(60)
+            resp = requests.get(url, headers=_GOOGLE_HEADERS, timeout=20)
+
+        if resp.status_code != 200:
+            logger.warning(
+                f"  – Google Patents: HTTP {resp.status_code} for {patent_id}"
+            )
+            return ""
+
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        # ── Selector 1: standard claims div (most common layout) ───────────────
+        claims_div = soup.find("div", class_="claims")
+        if claims_div:
+            first_claim_div = claims_div.find("div", class_="claim")
+            if first_claim_div:
+                claim_text_div = first_claim_div.find("div", class_="claim-text")
+                text = (
+                    claim_text_div.get_text(separator=" ", strip=True)
+                    if claim_text_div
+                    else first_claim_div.get_text(separator=" ", strip=True)
+                )
+                if text:
+                    return _clean_claim_text(text)
+
+        # ── Selector 2: itemprop="claims" section ──────────────────────────────
+        claims_section = soup.find(attrs={"itemprop": "claims"})
+        if claims_section:
+            claim_span = claims_section.find(attrs={"itemprop": "claimText"})
+            if claim_span:
+                text = claim_span.get_text(separator=" ", strip=True)
+                if text:
+                    return _clean_claim_text(text)
+            # Fallback: full section text, trimmed to first claim
+            full_text = claims_section.get_text(separator=" ", strip=True)
+            if full_text:
+                return _clean_claim_text(_extract_first_claim_from_text(full_text))
+
+        # ── Selector 3: patent-text custom element (newer Google Patents layout) ─
+        patent_text_el = soup.find(
+            "patent-text",
+            attrs={"heading": re.compile(r"claim", re.I)}
+        )
+        if patent_text_el:
+            text = patent_text_el.get_text(separator=" ", strip=True)
+            if text:
+                return _clean_claim_text(_extract_first_claim_from_text(text))
+
+        logger.info(f"  – Google Patents: no claims section found for {patent_id}")
+        return ""
+
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Google Patents request error for {patent_id}: {e}")
+        return ""
+    except Exception as e:
+        logger.warning(f"Google Patents parse error for {patent_id}: {e}")
+        return ""
+
+
+# ---------------------------------------------------------------
+# Combined claim fetcher — EPO OPS first (EP), Google Patents fallback
+# ---------------------------------------------------------------
+
+def get_first_claim(country, number, kind) -> tuple[str, str]:
+    """
+    Two-tier first claim fetch with source attribution.
+
+    Tier 1 (EP patents only): EPO OPS claims endpoint.
+    Tier 2 (all others, or if EPO returns nothing): Google Patents scraper.
+
+    Returns: (claim_text, source_label)
+      source_label one of: 'EPO OPS' | 'Google Patents' | 'unavailable'
+    """
+    # Tier 1: EPO OPS for EP-published patents
+    if country == "EP":
+        claim = get_epo_first_claim(country, number, kind)
+        if claim:
+            logger.info(f"    ✓ Claim via EPO OPS ({len(claim)} chars)")
+            return claim, "EPO OPS"
+        logger.info("    – EPO OPS returned nothing, trying Google Patents...")
+
+    # Tier 2: Google Patents (all jurisdictions)
+    time.sleep(3)  # polite pause before every Google Patents request
+    claim = get_google_patents_first_claim(country, number, kind)
+    if claim:
+        logger.info(f"    ✓ Claim via Google Patents ({len(claim)} chars)")
+        return claim, "Google Patents"
+
+    return "", "unavailable"
 
 
 # ---------------------------------------------------------------
@@ -253,7 +510,11 @@ def search_epo_patents(start_date, end_date):
         return []
 
     records = []
-    cql = '(ta=exosomes OR ta="extracellular vesicles") AND (ta=CNS OR ta="central nervous system" OR ta=neurological OR ta="blood-brain barrier" OR ta=neurodegenerative)'
+    cql = (
+        '(ta=exosomes OR ta="extracellular vesicles") AND '
+        '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
+        'ta="blood-brain barrier" OR ta=neurodegenerative)'
+    )
     logger.info(f"[EPO] Running search: {cql} (Python date filtering applied)")
 
     try:
@@ -281,14 +542,20 @@ def search_epo_patents(start_date, end_date):
             ns = {"ops": "http://ops.epo.org", "ex": "http://www.epo.org/exchange"}
 
             if total is None:
-                total_str = root.xpath("string(//ops:biblio-search/@total-result-count)", namespaces=ns)
+                total_str = root.xpath(
+                    "string(//ops:biblio-search/@total-result-count)",
+                    namespaces=ns
+                )
                 total = int(total_str) if total_str else 0
                 logger.info(f"[EPO] Found {total} total results")
 
-            for pub_ref in root.xpath("//ops:publication-reference/ex:document-id[@document-id-type='docdb']", namespaces=ns):
+            for pub_ref in root.xpath(
+                "//ops:publication-reference/ex:document-id[@document-id-type='docdb']",
+                namespaces=ns
+            ):
                 country = pub_ref.xpath("string(ex:country)", namespaces=ns)
-                number = pub_ref.xpath("string(ex:doc-number)", namespaces=ns)
-                kind = pub_ref.xpath("string(ex:kind)", namespaces=ns)
+                number  = pub_ref.xpath("string(ex:doc-number)", namespaces=ns)
+                kind    = pub_ref.xpath("string(ex:kind)", namespaces=ns)
 
                 if country and number and kind:
                     records.append({
@@ -313,7 +580,7 @@ def search_epo_patents(start_date, end_date):
 def get_epo_biblio(country, number, kind):
     """
     Fetch EPO bibliographic data for a patent.
-    Abstract is intentionally excluded — use first claim for content scoring.
+    Abstract intentionally excluded — first claim used for content scoring.
     """
     if not epo_client:
         return {}
@@ -332,98 +599,38 @@ def get_epo_biblio(country, number, kind):
         if not title:
             title = root.xpath("string(//ex:invention-title)", namespaces=ns)
 
-        applicants = root.xpath("//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()", namespaces=ns)
+        applicants = root.xpath(
+            "//ex:applicants/ex:applicant/ex:applicant-name/ex:name/text()",
+            namespaces=ns
+        )
         applicants_str = ", ".join(applicants[:3]) if applicants else "Not available"
 
-        inventors = root.xpath("//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()", namespaces=ns)
+        inventors = root.xpath(
+            "//ex:inventors/ex:inventor/ex:inventor-name/ex:name/text()",
+            namespaces=ns
+        )
         inventors_str = ", ".join(inventors[:3]) if inventors else "Not available"
 
-        pub_date = root.xpath("string(//ex:publication-reference/ex:document-id[@document-id-type='docdb']/ex:date)", namespaces=ns)
-        priority_date = root.xpath("string(//ex:priority-claims/ex:priority-claim[1]/ex:document-id/ex:date)", namespaces=ns)
+        pub_date = root.xpath(
+            "string(//ex:publication-reference"
+            "/ex:document-id[@document-id-type='docdb']/ex:date)",
+            namespaces=ns
+        )
+        priority_date = root.xpath(
+            "string(//ex:priority-claims/ex:priority-claim[1]/ex:document-id/ex:date)",
+            namespaces=ns
+        )
 
         return {
-            "title": title,
-            "applicants": applicants_str,
-            "inventors": inventors_str,
+            "title":            title,
+            "applicants":       applicants_str,
+            "inventors":        inventors_str,
             "publication_date": pub_date,
-            "priority_date": priority_date,
+            "priority_date":    priority_date,
         }
     except Exception as e:
         logger.warning(f"EPO biblio fetch error for {country}{number}{kind}: {e}")
         return {}
-
-
-def get_epo_first_claim(country, number, kind):
-    """
-    Fetch the first claim of a patent directly from the EPO OPS REST API.
-
-    WHY DIRECT HTTP — NOT epo_client.published_data(endpoint='claims'):
-      The epo_ops library omits the document reference from the URL when routing
-      the 'claims' endpoint, producing .../docdb/claims (404) instead of the
-      correct .../docdb/EP4132584.A1/claims. We fire the request manually using
-      a cached OAuth token obtained independently of the library.
-
-    Returns English claim text where available, falls back to any language.
-    Returns empty string on failure or if claims are not yet indexed.
-    """
-    token = get_epo_access_token()
-    if not token:
-        logger.warning("No EPO token available — cannot fetch claims")
-        return ""
-
-    try:
-        # EPO docdb format: {COUNTRY}{NUMBER}.{KIND}
-        doc_id = f"{country}{number}.{kind}"
-        url = f"https://ops.epo.org/3.2/rest-services/published-data/publication/docdb/{doc_id}/claims"
-
-        resp = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"},
-            timeout=15,
-        )
-
-        # Token may have expired mid-run — refresh once and retry
-        if resp.status_code == 401:
-            logger.info("EPO token expired mid-run, refreshing...")
-            _epo_token_cache["token"] = None
-            token = get_epo_access_token()
-            if not token:
-                return ""
-            resp = requests.get(
-                url,
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"},
-                timeout=15,
-            )
-
-        if resp.status_code == 404:
-            logger.info(f"  – {country}{number}{kind}: claims not yet indexed (404)")
-            return ""
-
-        resp.raise_for_status()
-
-        root = etree.fromstring(resp.content)
-        ns = {"ex": "http://www.epo.org/exchange"}
-
-        # Primary: first claim in English
-        first_claim = root.xpath(
-            "string(//ex:claims[@lang='en']/ex:claim[1]/ex:claim-text)",
-            namespaces=ns
-        )
-        # Fallback: first claim in any available language
-        if not first_claim:
-            first_claim = root.xpath(
-                "string(//ex:claims/ex:claim[1]/ex:claim-text)",
-                namespaces=ns
-            )
-
-        return first_claim.strip() if first_claim else ""
-
-    except requests.exceptions.HTTPError as e:
-        logger.warning(f"EPO claims HTTP error for {country}{number}{kind}: {e}")
-        return ""
-    except Exception as e:
-        logger.warning(f"EPO claims fetch error for {country}{number}{kind}: {e}")
-        return ""
 
 
 # ---------------------------------------------------------------
@@ -433,13 +640,14 @@ def get_epo_first_claim(country, number, kind):
 def search_all_patents():
     """Search EPO patents and process results."""
     start_date = (datetime.now().date() - timedelta(days=60)).strftime("%Y%m%d")
-    end_date = datetime.now().date().strftime("%Y%m%d")
+    end_date   = datetime.now().date().strftime("%Y%m%d")
 
     print("="*80)
-    print(f"Starting AI-Enhanced Patent Search - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Relevance threshold: {MIN_RELEVANCE_SCORE}")
-    print(f"Search period: Last 60 days ({start_date} → {end_date})")
-    print(f"AI relevance scoring: SentenceTransformer (Local) — title + first claim")
+    print(f"Starting AI-Enhanced Patent Search — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Relevance threshold:  {MIN_RELEVANCE_SCORE}")
+    print(f"Search period:        Last 60 days ({start_date} → {end_date})")
+    print(f"AI relevance scoring: SentenceTransformer (title + first claim)")
+    print(f"Claim sources:        EPO OPS (EP) → Google Patents (all others)")
     print("="*80)
 
     # Load existing patents
@@ -447,74 +655,68 @@ def search_all_patents():
     if CUMULATIVE_CSV.exists():
         df = pd.read_csv(CUMULATIVE_CSV, dtype={'first_claim': object})
         existing_ids = set(
-            df.apply(lambda row: f"{row['country']}{row['publication_number']}{row['kind']}", axis=1)
+            df.apply(
+                lambda row: f"{row['country']}{row['publication_number']}{row['kind']}",
+                axis=1
+            )
         )
         logger.info(f"Loaded {len(existing_ids)} existing patents from database")
 
-    # Search EPO
     logger.info("Searching patent sources...")
     epo_results = search_epo_patents(start_date, end_date) if epo_client else []
 
-    print("\n[SUMMARY] Found patents from EPO:")
-    print(f"  - EPO (European): {len(epo_results)}")
+    print(f"\n[SUMMARY] Found patents from EPO: {len(epo_results)}")
 
-    # Process and deduplicate
     records = []
-    current_run_date = datetime.now().strftime('%Y-%m-%d')
-    processed = set()
-
-    # FIX 6: Explicit counters for every disposition so nothing is silently lost
-    count_new = 0
-    count_duplicate_db = 0
+    current_run_date  = datetime.now().strftime('%Y-%m-%d')
+    processed         = set()
+    count_new             = 0
+    count_duplicate_db    = 0
     count_duplicate_batch = 0
-    count_date_filtered = 0
-    count_date_missing = 0
-    count_low_relevance = 0
-    count_biblio_error = 0
+    count_date_filtered   = 0
+    count_date_missing    = 0
+    count_low_relevance   = 0
+    count_biblio_error    = 0
 
     for patent in epo_results:
-        patent_id = f"{patent['country']}{patent['publication_number']}{patent.get('kind', '')}"
+        patent_id = (
+            f"{patent['country']}{patent['publication_number']}{patent.get('kind', '')}"
+        )
 
-        # Skip duplicates within this batch
         if patent_id in processed:
             count_duplicate_batch += 1
             continue
         processed.add(patent_id)
 
-        # Skip if already in database
         if patent_id in existing_ids:
             count_duplicate_db += 1
             continue
 
         # Fetch bibliographic data (no abstract)
-        biblio = get_epo_biblio(patent['country'], patent['publication_number'], patent.get('kind', ''))
-
+        biblio = get_epo_biblio(
+            patent['country'], patent['publication_number'], patent.get('kind', '')
+        )
         if not biblio:
             count_biblio_error += 1
             logger.warning(f"  ✗ {patent_id} — biblio fetch returned empty, skipping")
             continue
 
-        title = biblio.get('title', '')
-        applicants = biblio.get('applicants', 'Not available')
-        inventors = biblio.get('inventors', 'Not available')
-        pub_date_raw = biblio.get('publication_date', '')
+        title         = biblio.get('title', '')
+        applicants    = biblio.get('applicants', 'Not available')
+        inventors     = biblio.get('inventors', 'Not available')
+        pub_date_raw  = biblio.get('publication_date', '')
         priority_date = biblio.get('priority_date', '')
 
-        # -------------------------------------------------------
-        # FIX 2: Robust date parsing + FIX 1: INFO-level logging
-        # -------------------------------------------------------
+        # FIX 2 + FIX 1: Robust date parsing with INFO-level logging
         pub_date_norm = normalise_date(pub_date_raw)
 
         if pub_date_norm is None:
-            # Date missing or unparseable — log at INFO so it is visible
             count_date_missing += 1
             logger.info(
-                f"  ? {patent_id} — pub_date missing or unparseable "
-                f"(raw='{pub_date_raw}'). Including patent anyway."
+                f"  ? {patent_id} — pub_date missing/unparseable "
+                f"(raw='{pub_date_raw}'). Including anyway."
             )
-            # Include the patent (original intent of the bare `pass`)
         else:
-            # FIX 1: Log date-filtered patents at INFO, not silent debug
             if not (start_date <= pub_date_norm <= end_date):
                 count_date_filtered += 1
                 logger.info(
@@ -523,55 +725,57 @@ def search_all_patents():
                 )
                 continue
 
-        # Fetch first claim (separate OPS request)
-        first_claim = get_epo_first_claim(
+        # Two-tier claim fetch: EPO OPS → Google Patents
+        logger.info(f"  Fetching claim for {patent_id}...")
+        first_claim, claim_source = get_first_claim(
             patent['country'], patent['publication_number'], patent.get('kind', '')
         )
-        time.sleep(0.1)  # EPO rate limit courtesy pause
+        time.sleep(2)  # EPO fair use: >= 2s between full-text requests
 
         # Calculate relevance score against title + first claim
         relevance = calculate_relevance_score(title, first_claim)
 
-        # Filter by relevance
         if relevance < MIN_RELEVANCE_SCORE:
             count_low_relevance += 1
             logger.info(
-                f"  ↓ {patent_id} — low relevance score {relevance:.2f} "
+                f"  ↓ {patent_id} — low relevance {relevance:.2f} "
                 f"(threshold={MIN_RELEVANCE_SCORE}). Skipped."
             )
             continue
 
-        # Generate link
         link = generate_patent_link(
-            patent['country'],
-            patent['publication_number'],
-            patent.get('kind', '')
+            patent['country'], patent['publication_number'], patent.get('kind', '')
         )
 
         records.append({
-            "country": patent['country'],
+            "country":            patent['country'],
             "publication_number": patent['publication_number'],
-            "kind": patent.get('kind', 'A1'),
-            "title": title,           # FIX 3: Clean title — no 🔥 prefix written to CSV
-            "applicants": applicants,
-            "inventors": inventors,
-            "first_claim": first_claim[:1000] if first_claim else "",
-            "publication_date": pub_date_raw,   # keep original for display
-            "priority_date": priority_date,
-            "relevance_score": round(relevance, 2),
-            "source": "EPO",
-            "link": link,
-            "date_added": current_run_date,
-            "is_new": "YES"
+            "kind":               patent.get('kind', 'A1'),
+            "title":              title,
+            "applicants":         applicants,
+            "inventors":          inventors,
+            "first_claim":        first_claim[:1000] if first_claim else "",
+            "claim_source":       claim_source,
+            "publication_date":   pub_date_raw,
+            "priority_date":      priority_date,
+            "relevance_score":    round(relevance, 2),
+            "source":             "EPO",
+            "link":               link,
+            "date_added":         current_run_date,
+            "is_new":             "YES"
         })
 
         count_new += 1
-        logger.info(f"  ✓ {patent_id} — Score: {relevance:.2f} — {title[:60]}")
-        time.sleep(0.1)
+        logger.info(
+            f"  ✓ {patent_id} — Score: {relevance:.2f} "
+            f"— Claim: {claim_source} — {title[:60]}"
+        )
 
-    # FIX 6: Print full breakdown — every result accounted for
-    total_checked = count_new + count_duplicate_db + count_duplicate_batch + \
-                    count_date_filtered + count_date_missing + count_low_relevance + count_biblio_error
+    total_checked = (
+        count_new + count_duplicate_db + count_duplicate_batch +
+        count_date_filtered + count_date_missing +
+        count_low_relevance + count_biblio_error
+    )
     print(f"\n[RESULTS BREAKDOWN]")
     print(f"  EPO results returned:        {len(epo_results)}")
     print(f"  ─────────────────────────────────────────")
@@ -586,8 +790,7 @@ def search_all_patents():
     print(f"  Σ Accounted for:             {total_checked}")
     if total_checked != len(epo_results):
         logger.warning(
-            f"  ⚠ COUNT MISMATCH: {len(epo_results)} returned vs {total_checked} accounted. "
-            "Investigate pagination or duplicate patent_ids."
+            f"  ⚠ COUNT MISMATCH: {len(epo_results)} returned vs {total_checked} accounted."
         )
 
     return pd.DataFrame(records)
@@ -597,8 +800,8 @@ def update_cumulative_csv(df_new):
     """Merge new results with existing cumulative CSV."""
     FINAL_COLUMNS = [
         "country", "publication_number", "kind", "title", "applicants", "inventors",
-        "first_claim", "publication_date", "priority_date", "relevance_score",
-        "source", "link", "date_added", "is_new"
+        "first_claim", "claim_source", "publication_date", "priority_date",
+        "relevance_score", "source", "link", "date_added", "is_new"
     ]
 
     if CUMULATIVE_CSV.exists():
@@ -608,21 +811,27 @@ def update_cumulative_csv(df_new):
         if 'relevance_score' not in df_old.columns:
             df_old['relevance_score'] = 0.5
 
-        # FIX 3: Strip legacy 🔥 NEW prefix from any titles already written to CSV
-        #         in previous runs (one-time cleanup — idempotent on clean data)
+        # FIX 3: Strip legacy emoji prefix — one-time cleanup, idempotent
         if 'title' in df_old.columns:
             df_old['title'] = df_old['title'].str.removeprefix('🔥 NEW - ')
 
-        # Migrate: drop abstract column from old CSVs if present
+        # Migration: drop legacy abstract column
         if 'abstract' in df_old.columns:
             df_old = df_old.drop(columns=['abstract'])
-            logger.info("Migrated existing CSV: removed legacy 'abstract' column")
+            logger.info("Migrated: removed legacy 'abstract' column")
 
-        # Migrate: add first_claim column to old CSVs if missing
+        # Migration: add first_claim column (object dtype — FIX 7)
         if 'first_claim' not in df_old.columns:
-            # FIX 7: object dtype prevents pandas float64 TypeError on string assignment
             df_old['first_claim'] = pd.array([''] * len(df_old), dtype=object)
-            logger.info("Migrated existing CSV: added 'first_claim' column (empty for prior records)")
+            logger.info("Migrated: added 'first_claim' column")
+
+        # Migration: add claim_source column
+        if 'claim_source' not in df_old.columns:
+            df_old['claim_source'] = ''
+            logger.info("Migrated: added 'claim_source' column")
+
+        # Unconditional NaN → '' (handles previous failed runs — FIX 7)
+        df_old['first_claim'] = df_old['first_claim'].fillna('')
 
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(
             subset=["country", "publication_number", "kind"],
@@ -635,19 +844,18 @@ def update_cumulative_csv(df_new):
 
     df_all = df_all.reindex(columns=FINAL_COLUMNS, fill_value='')
 
-    # Sort: existing patents first (by relevance desc), new patents at bottom (by relevance desc)
+    # Sort: existing patents first (relevance desc), new patents at bottom (relevance desc)
     df_all = df_all.sort_values(
         ['is_new', 'relevance_score'],
-        ascending=[True, False]   # 'NO' < 'YES' alphabetically → existing first
+        ascending=[True, False]
     )
 
-    # FIX 3: Save clean titles to CSV — no emoji prefix embedded in the data.
-    #         The email notification adds "🔥 NEW" visually without touching the CSV.
+    # FIX 3: Clean titles in CSV — emoji prefix only appears in email, never in data
     df_all.to_csv(CUMULATIVE_CSV, index=False)
 
     logger.info(f"Saved cumulative CSV with {len(df_all)} total records")
-    logger.info(f"  → Existing patents: sorted by relevance (highest first)")
-    logger.info(f"  → New patents: is_new=YES, appear at bottom, titles are clean")
+    logger.info("  → Existing patents: sorted by relevance (highest first)")
+    logger.info("  → New patents: is_new=YES, appear at bottom, titles are clean")
     return df_all
 
 
@@ -660,16 +868,17 @@ def send_email_with_csv(df_all):
     new_patents = df_all[df_all['is_new'] == 'YES']
 
     email_body = f"""
-Patent Search Update - {datetime.now().strftime('%Y-%m-%d')}
+Patent Search Update — {datetime.now().strftime('%Y-%m-%d')}
 {'='*80}
 
-NEW PATENTS: {len(new_patents)}
+NEW PATENTS:    {len(new_patents)}
 TOTAL DATABASE: {len(df_all)} patents
 
-SOURCE: European Patent Office (EPO)
+SOURCE:       European Patent Office (EPO)
 SEARCH TERMS: exosomes, extracellular vesicles, CNS
-DATE RANGE: Last 60 days
-AI SCORING: SentenceTransformer (title + first claim relevance scoring)
+DATE RANGE:   Last 60 days
+AI SCORING:   SentenceTransformer (title + first claim)
+CLAIM DATA:   EPO OPS (EP patents) → Google Patents fallback (all others)
 
 {'='*80}
 """
@@ -678,13 +887,14 @@ AI SCORING: SentenceTransformer (title + first claim relevance scoring)
         email_body += "\n🔥 TOP 5 MOST RELEVANT NEW PATENTS:\n\n"
         top_patents = new_patents.nlargest(5, 'relevance_score')
         for idx, patent in enumerate(top_patents.itertuples(), 1):
-            # FIX 3: 🔥 marker added here for email display only — not written to CSV
             email_body += f"{idx}. [{patent.relevance_score:.2f}] 🔥 {patent.title[:80]}\n"
-            email_body += f"   {patent.country}{patent.publication_number} | {patent.source}\n"
+            email_body += (
+                f"   {patent.country}{patent.publication_number} | {patent.source}\n"
+            )
             email_body += f"   Applicant: {patent.applicants[:60]}\n"
-            # Show a short excerpt of first claim in the email if available
             if patent.first_claim:
-                email_body += f"   Claim 1: {patent.first_claim[:200]}...\n"
+                src = getattr(patent, 'claim_source', '')
+                email_body += f"   Claim 1 [{src}]: {patent.first_claim[:200]}...\n"
             email_body += "\n"
     else:
         email_body += "\n✓ No new patents found, but database is updated.\n"
@@ -692,12 +902,13 @@ AI SCORING: SentenceTransformer (title + first claim relevance scoring)
     email_body += f"\nSee attached CSV for full details.\n{'='*80}"
 
     msg = MIMEMultipart()
-    msg["Subject"] = f"Patent Update - {len(new_patents)} New Patents - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = (
+        f"Patent Update — {len(new_patents)} New Patents — "
+        f"{datetime.now().strftime('%Y-%m-%d')}"
+    )
     msg["From"] = SENDER_EMAIL
-    msg["To"] = RECIPIENT_EMAIL
-
-    body = MIMEText(email_body, "plain")
-    msg.attach(body)
+    msg["To"]   = RECIPIENT_EMAIL
+    msg.attach(MIMEText(email_body, "plain"))
 
     try:
         with open(CUMULATIVE_CSV, "rb") as f:
@@ -720,29 +931,33 @@ AI SCORING: SentenceTransformer (title + first claim relevance scoring)
 def backfill_first_claims():
     """
     Fetch and populate first_claim for any existing CSV records where it is empty.
+
+    Strategy per patent:
+      EP patents  → EPO OPS first, Google Patents as fallback
+      All others  → Google Patents directly
+
     Safe to re-run — already-populated rows are skipped.
-    Saves progress to CSV after every successful fetch so a crash mid-run
-    doesn't lose work already done.
+    Progress saved to CSV after every record (crash-safe).
+    Inter-request sleep: 2s base + 3s inside get_first_claim before Google Patents.
     """
     if not CUMULATIVE_CSV.exists():
         logger.info("No existing CSV found — nothing to backfill.")
         return
 
-    if not epo_client:
-        logger.warning("EPO client not available — cannot backfill first claims.")
-        return
-
+    # FIX 7: force object dtype so string assignment never raises TypeError
     df = pd.read_csv(CUMULATIVE_CSV, dtype={'first_claim': object})
 
     if 'first_claim' not in df.columns:
         df['first_claim'] = pd.array([''] * len(df), dtype=object)
 
-    # Unconditional: even if the column existed, NaN values from a previous
-    # failed run must be converted to empty strings before we can assign to cells.
-    df['first_claim'] = df['first_claim'].fillna('')
+    if 'claim_source' not in df.columns:
+        df['claim_source'] = ''
 
-    # Only process rows where first_claim is genuinely empty
-    mask = df['first_claim'].isna() | (df['first_claim'].astype(str).str.strip() == '')
+    # Unconditional NaN → '' (handles previous failed runs)
+    df['first_claim']  = df['first_claim'].fillna('')
+    df['claim_source'] = df['claim_source'].fillna('')
+
+    mask = df['first_claim'].astype(str).str.strip() == ''
     to_backfill = df[mask]
 
     total = len(to_backfill)
@@ -752,43 +967,40 @@ def backfill_first_claims():
 
     print("="*80)
     print(f"BACKFILL: Fetching first claims for {total} existing records...")
+    print("          Strategy: EPO OPS (EP) → Google Patents (all others)")
     print("="*80)
 
-    success = 0
-    failed = 0
-    empty = 0
+    count_success = 0
+    count_empty   = 0
 
     for i, (idx, row) in enumerate(to_backfill.iterrows(), 1):
-        country = str(row.get('country', ''))
-        number  = str(row.get('publication_number', ''))
-        kind    = str(row.get('kind', ''))
+        country   = str(row.get('country', ''))
+        number    = str(row.get('publication_number', ''))
+        kind      = str(row.get('kind', ''))
         patent_id = f"{country}{number}{kind}"
 
-        logger.info(f"  [{i}/{total}] Fetching claim for {patent_id}...")
+        logger.info(f"  [{i}/{total}] {patent_id}...")
 
-        claim = get_epo_first_claim(country, number, kind)
+        claim, source = get_first_claim(country, number, kind)
+
+        df.at[idx, 'first_claim']  = claim[:1000] if claim else ''
+        df.at[idx, 'claim_source'] = source
 
         if claim:
-            df.at[idx, 'first_claim'] = claim[:1000]
-            success += 1
-            logger.info(f"    ✓ Got claim ({len(claim)} chars)")
+            count_success += 1
         else:
-            # Leave as empty string — don't retry automatically
-            df.at[idx, 'first_claim'] = ''
-            empty += 1
-            logger.info(f"    – No claim returned (not yet indexed or unavailable)")
+            count_empty += 1
 
-        # Save progress after every record so a crash mid-run loses nothing
+        # Save after every record so a crash loses nothing
         df.to_csv(CUMULATIVE_CSV, index=False)
 
-        # Polite pause to respect EPO OPS rate limits
-        time.sleep(0.5)
+        # 2s base sleep (get_first_claim adds its own 3s before Google Patents)
+        time.sleep(2)
 
     print(f"\n[BACKFILL COMPLETE]")
-    print(f"  ✓ Claims fetched:       {success}")
-    print(f"  – Not available:        {empty}")
-    print(f"  ✗ Errors:               {failed}")
-    print(f"  Σ Processed:            {total}")
+    print(f"  ✓ Claims fetched:    {count_success}")
+    print(f"  – Not available:     {count_empty}")
+    print(f"  Σ Processed:         {total}")
     print(f"  CSV saved: {CUMULATIVE_CSV}")
 
 
@@ -798,7 +1010,7 @@ def backfill_first_claims():
 
 def main():
     print("="*80)
-    print("PATENT SEARCH WITH AI RELEVANCE SCORING - EPO - Starting")
+    print("PATENT SEARCH WITH AI RELEVANCE SCORING — EPO — Starting")
     print("="*80)
 
     # Step 1: Backfill first_claim for any existing records that lack it
@@ -816,6 +1028,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
