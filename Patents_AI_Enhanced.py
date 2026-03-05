@@ -37,6 +37,22 @@ CHANGES (2026-03-04):
                 Polite 3s inter-request sleep + browser-like User-Agent.
               Claim source stored in new 'claim_source' CSV column.
 
+CHANGES (2026-03-05):
+  CHANGE 3: Added parallel GRANTED PATENT search (kind=B1/B2) with NO date restriction.
+              - Runs a separate CQL query targeting kind=B1 and kind=B2 EP grants.
+              - Extended CQL terms: neuroprotection, spinal cord, TBI, neuroinflammation,
+                nerve injury, regeneration — matches updated RESEARCH_FOCUS vocabulary.
+              - Deduplicates against existing_ids so already-captured grants are skipped.
+              - First run performs a full historical sweep; subsequent runs only capture
+                newly issued grants (since they will already be in the CSV after run 1).
+              - Results breakdown separates application hits from grant hits.
+              - Email subject line and body now report grants and applications separately.
+  CHANGE 4: RESEARCH_FOCUS and search terms updated to cover TBI, SCI, peripheral nerve,
+              facial nerve, neuroprotection, anti-inflammatory and regenerative mechanisms.
+  CHANGE 5: search_epo_patents() refactored — shared _run_epo_cql_query() helper handles
+              pagination for both queries. _process_patent_list() handles scoring/filtering
+              for both lists. _print_breakdown() formats per-query summary logs.
+
 DEPENDENCIES (add to requirements.txt):
   beautifulsoup4>=4.12
   lxml>=4.9
@@ -155,7 +171,10 @@ def get_epo_access_token() -> str | None:
         return None
 
 
-# Research focus for relevance scoring
+# ---------------------------------------------------------------
+# CHANGE 4: Updated research focus and search configuration
+# ---------------------------------------------------------------
+
 RESEARCH_FOCUS = """
 Exosomes and extracellular vesicles (EVs) — either naive/unmodified or engineered/loaded 
 with therapeutic payloads (proteins, miRNA, siRNA, drugs, growth factors) — for treating 
@@ -179,14 +198,39 @@ Exclude: cancer drug delivery, non-neural applications, purely diagnostic exosom
 """
 
 SEARCH_TERMS = [
-    'exosomes', 
-    'extracellular vesicles', 
+    'exosomes',
+    'extracellular vesicles',
     'EVs',
     'nanovesicles'
 ]
 
 SEARCH_FILTER = 'TBI OR spinal cord OR nerve injury OR neuroprotection OR neuroinflammation'
 MIN_RELEVANCE_SCORE = 0.55
+
+# ---------------------------------------------------------------
+# CHANGE 3: CQL building blocks shared by both search queries
+#
+# BASE_EV_CQL  — exosome/EV subject filter.
+# BASE_CNS_CQL — extended neural condition terms covering the full
+#                RESEARCH_FOCUS vocabulary including TBI, SCI, nerve
+#                injury, facial nerve, regeneration, etc.
+#                Granted patents frequently use this specific language
+#                in claims even when the title says only "exosomes".
+# ---------------------------------------------------------------
+
+BASE_EV_CQL = (
+    '(ta=exosomes OR ta="extracellular vesicles" OR ta=EVs OR ta=nanovesicles)'
+)
+
+BASE_CNS_CQL = (
+    '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
+    'ta="blood-brain barrier" OR ta=neurodegenerative OR '
+    'ta=neuroprotection OR ta=neuroinflammation OR '
+    'ta="spinal cord" OR ta=TBI OR ta="traumatic brain injury" OR '
+    'ta="nerve injury" OR ta="facial nerve" OR ta="peripheral nerve" OR '
+    'ta="nerve regeneration" OR ta=stroke OR ta="brain injury" OR '
+    'ta=remyelination OR ta=axonogenesis OR ta="neural repair")'
+)
 
 # FIX 4: Pass HF_TOKEN to SentenceTransformer to avoid rate-limit risk
 hf_token = os.environ.get("HF_TOKEN")
@@ -390,31 +434,18 @@ def _clean_claim_text(text: str) -> str:
     if not text:
         return ""
 
-    # Extract English translation when present.
-    # Google Patents prefixes translated claims with e.g. "Translated from Chinese"
-    # followed by the native-language text, then the English claim starting with "1."
-    # Google Patents translated pages contain native-language text followed by English.
-    # Two common structures:
-    #   1. "Translated from Chinese ... 1. <english claim>"   (numbered)
-    #   2. "Translated from Japanese ... (a) <english step>"  (lettered steps)
-    # Strategy: find "Translated from <lang>" then skip forward to the first
-    # ASCII-dominant sentence, which is where the English begins.
     lang_match = re.search(
         r'Translated from (?:Chinese|Japanese|Korean|German|French|Spanish)\b',
         text, flags=re.IGNORECASE
     )
     if lang_match:
         remainder = text[lang_match.end():]
-        # Walk through words and find where ASCII content dominates (English starts)
-        # Split on word boundaries and find first run of mostly-ASCII text
         english_start = None
-        # Look for "1." or "(a)" or capital letter sentence starts after native block
         eng_match = re.search(
             r'(?:^|\s)(?:1[.\s]|\(a\)|[A-Z][a-z]{2,})',
             remainder
         )
         if eng_match:
-            # Check the text from here is mostly ASCII (real English, not a stray char)
             candidate = remainder[eng_match.start():].strip()
             non_ascii = sum(1 for c in candidate[:200] if ord(c) > 127)
             if non_ascii / max(len(candidate[:200]), 1) < 0.1:
@@ -422,7 +453,6 @@ def _clean_claim_text(text: str) -> str:
         if english_start is not None:
             text = remainder[english_start:].strip()
         else:
-            # No English translation found — return empty rather than native text
             return ""
 
     text = re.sub(r'\s+', ' ', text).strip()
@@ -445,15 +475,6 @@ def get_google_patents_first_claim(country, number, kind) -> str:
 
     Covers: US, WO, EP, CN, JP, KR, AU, CA, MX and most other jurisdictions.
     Google Patents holds full-text claims for the vast majority of patent families.
-
-    URL format: https://patents.google.com/patent/{COUNTRY}{NUMBER}{KIND}/en
-
-    Multiple CSS selector fallbacks handle different Google Patents page layouts:
-      1. div.claims > div.claim > div.claim-text
-      2. [itemprop="claims"] > [itemprop="claimText"]
-      3. patent-text custom element (newer layout)
-
-    Returns first claim text or '' if unavailable / scraping fails.
     """
     if not HAS_BS4:
         return ""
@@ -468,7 +489,6 @@ def get_google_patents_first_claim(country, number, kind) -> str:
             logger.info(f"  – Google Patents: {patent_id} not found (404)")
             return ""
 
-        # Rate limited — wait and retry once
         if resp.status_code == 429:
             logger.warning(
                 f"  – Google Patents: rate limited (429) for {patent_id}. Waiting 60s..."
@@ -482,10 +502,10 @@ def get_google_patents_first_claim(country, number, kind) -> str:
             )
             return ""
 
-        resp.encoding = 'utf-8'  # Force UTF-8 — prevents mojibake on CN/JP patents
+        resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, "lxml")
 
-        # ── Selector 1: standard claims div (most common layout) ───────────────
+        # ── Selector 1: standard claims div ────────────────────────────────────
         claims_div = soup.find("div", class_="claims")
         if claims_div:
             first_claim_div = claims_div.find("div", class_="claim")
@@ -507,12 +527,11 @@ def get_google_patents_first_claim(country, number, kind) -> str:
                 text = claim_span.get_text(separator=" ", strip=True)
                 if text:
                     return _clean_claim_text(text)
-            # Fallback: full section text, trimmed to first claim
             full_text = claims_section.get_text(separator=" ", strip=True)
             if full_text:
                 return _clean_claim_text(_extract_first_claim_from_text(full_text))
 
-        # ── Selector 3: patent-text custom element (newer Google Patents layout) ─
+        # ── Selector 3: patent-text custom element ─────────────────────────────
         patent_text_el = soup.find(
             "patent-text",
             attrs={"heading": re.compile(r"claim", re.I)}
@@ -547,7 +566,6 @@ def get_first_claim(country, number, kind) -> tuple[str, str]:
     Returns: (claim_text, source_label)
       source_label one of: 'EPO OPS' | 'Google Patents' | 'unavailable'
     """
-    # Tier 1: EPO OPS for EP-published patents
     if country == "EP":
         claim = get_epo_first_claim(country, number, kind)
         if claim:
@@ -555,8 +573,7 @@ def get_first_claim(country, number, kind) -> tuple[str, str]:
             return claim, "EPO OPS"
         logger.info("    – EPO OPS returned nothing, trying Google Patents...")
 
-    # Tier 2: Google Patents (all jurisdictions)
-    time.sleep(3)  # polite pause before every Google Patents request
+    time.sleep(3)
     claim = get_google_patents_first_claim(country, number, kind)
     if claim:
         logger.info(f"    ✓ Claim via Google Patents ({len(claim)} chars)")
@@ -566,34 +583,29 @@ def get_first_claim(country, number, kind) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------
-# EPO Search
+# EPO Search — internal helpers
 # ---------------------------------------------------------------
 
-def search_epo_patents(start_date, end_date):
+def _run_epo_cql_query(cql: str, label: str, max_records: int = 500) -> list[dict]:
     """
-    Search EPO for patents matching criteria.
+    Execute a single CQL query against EPO OPS and return raw patent reference dicts.
+    Handles pagination internally (batch size 25).
 
-    Date filtering is done server-side via the CQL pd>= operator so EPO only
-    returns patents published within the 60-day window. Python date filtering
-    is kept as a safety net for any edge-case results that slip through.
+    Args:
+        cql:         Full CQL query string.
+        label:       Human-readable label for log messages (e.g. 'APPLICATIONS').
+        max_records: Hard cap on records to retrieve (EPO OPS max index is 2000).
+
+    Returns:
+        List of dicts with keys: country, publication_number, kind, source.
     """
-    if not epo_client:
-        logger.warning("EPO client not available, skipping EPO search")
-        return []
-
     records = []
-    cql = (
-        '(ta=exosomes OR ta="extracellular vesicles") AND '
-        '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
-        f'ta="blood-brain barrier" OR ta=neurodegenerative) AND pd>={start_date}'
-    )
-    logger.info(f"[EPO] Running search: {cql}")
+    logger.info(f"[EPO/{label}] Running CQL: {cql}")
 
     try:
-        start = 1
+        start      = 1
         batch_size = 25
-        max_records = 500
-        total = None
+        total      = None
 
         while True:
             end = start + batch_size - 1
@@ -607,11 +619,11 @@ def search_epo_patents(start_date, end_date):
                     range_end=min(end, max_records)
                 )
             except Exception as e:
-                logger.error(f"[EPO] Search error: {e}")
+                logger.error(f"[EPO/{label}] Search error at offset {start}: {e}")
                 break
 
             root = etree.fromstring(resp.content)
-            ns = {"ops": "http://ops.epo.org", "ex": "http://www.epo.org/exchange"}
+            ns   = {"ops": "http://ops.epo.org", "ex": "http://www.epo.org/exchange"}
 
             if total is None:
                 total_str = root.xpath(
@@ -619,10 +631,11 @@ def search_epo_patents(start_date, end_date):
                     namespaces=ns
                 )
                 total = int(total_str) if total_str else 0
-                logger.info(f"[EPO] Found {total} total results")
+                logger.info(f"[EPO/{label}] Server reports {total} total results")
 
             for pub_ref in root.xpath(
-                "//ops:publication-reference/ex:document-id[@document-id-type='docdb']",
+                "//ops:publication-reference"
+                "/ex:document-id[@document-id-type='docdb']",
                 namespaces=ns
             ):
                 country = pub_ref.xpath("string(ex:country)", namespaces=ns)
@@ -631,22 +644,231 @@ def search_epo_patents(start_date, end_date):
 
                 if country and number and kind:
                     records.append({
-                        "country": country,
+                        "country":            country,
                         "publication_number": number,
-                        "kind": kind,
-                        "source": "EPO"
+                        "kind":               kind,
+                        "source":             "EPO"
                     })
 
-            if not total or end >= total:
+            if not total or end >= min(total, max_records):
                 break
 
             start = end + 1
             time.sleep(0.3)
 
     except Exception as e:
-        logger.error(f"[EPO] Search failed: {e}")
+        logger.error(f"[EPO/{label}] Query failed: {e}")
 
+    logger.info(f"[EPO/{label}] Retrieved {len(records)} patent references")
     return records
+
+
+def _process_patent_list(
+    patent_list:       list[dict],
+    existing_ids:      set,
+    processed:         set,
+    start_date:        str,
+    end_date:          str,
+    current_run_date:  str,
+    apply_date_filter: bool,
+) -> tuple[list[dict], dict]:
+    """
+    Process a list of raw EPO patent references into scored, filtered records.
+
+    Args:
+        patent_list:       Raw references from _run_epo_cql_query().
+        existing_ids:      Patent IDs already in the cumulative CSV.
+        processed:         Shared set of IDs already handled this run.
+                           Passed by reference — updated in place.
+                           Prevents a patent from being processed by both the
+                           applications and grants queries in the same run.
+        start_date:        Window start YYYYMMDD.
+        end_date:          Window end YYYYMMDD.
+        current_run_date:  ISO date string written to date_added field.
+        apply_date_filter: True  → enforce 60-day Python date filter (applications).
+                           False → no date restriction (grants).
+
+    Returns:
+        (records, counters)
+    """
+    records  = []
+    counters = {
+        "new":             0,
+        "duplicate_db":    0,
+        "duplicate_batch": 0,
+        "date_filtered":   0,
+        "date_missing":    0,
+        "low_relevance":   0,
+        "biblio_error":    0,
+    }
+
+    for patent in patent_list:
+        patent_id = (
+            f"{patent['country']}"
+            f"{patent['publication_number']}"
+            f"{patent.get('kind', '')}"
+        )
+
+        if patent_id in processed:
+            counters["duplicate_batch"] += 1
+            continue
+        processed.add(patent_id)
+
+        if patent_id in existing_ids:
+            counters["duplicate_db"] += 1
+            continue
+
+        biblio = get_epo_biblio(
+            patent['country'], patent['publication_number'], patent.get('kind', '')
+        )
+        if not biblio:
+            counters["biblio_error"] += 1
+            logger.warning(f"  ✗ {patent_id} — biblio fetch returned empty, skipping")
+            continue
+
+        title         = biblio.get('title', '')
+        applicants    = biblio.get('applicants', 'Not available')
+        inventors     = biblio.get('inventors', 'Not available')
+        pub_date_raw  = biblio.get('publication_date', '')
+        priority_date = biblio.get('priority_date', '')
+
+        pub_date_norm = normalise_date(pub_date_raw)
+
+        # FIX 2 + FIX 1: date filter only applied for applications
+        if apply_date_filter:
+            if pub_date_norm is None:
+                counters["date_missing"] += 1
+                logger.info(
+                    f"  ? {patent_id} — pub_date missing/unparseable "
+                    f"(raw='{pub_date_raw}'). Including anyway."
+                )
+            else:
+                if not (start_date <= pub_date_norm <= end_date):
+                    counters["date_filtered"] += 1
+                    logger.info(
+                        f"  – {patent_id} — outside date window "
+                        f"(pub={pub_date_norm}, window={start_date}–{end_date}). Skipped."
+                    )
+                    continue
+
+        # Two-tier claim fetch: EPO OPS → Google Patents
+        logger.info(f"  Fetching claim for {patent_id}...")
+        first_claim, claim_source = get_first_claim(
+            patent['country'], patent['publication_number'], patent.get('kind', '')
+        )
+        time.sleep(2)  # EPO fair use: >= 2s between full-text requests
+
+        relevance = calculate_relevance_score(title, first_claim)
+
+        if relevance < MIN_RELEVANCE_SCORE:
+            counters["low_relevance"] += 1
+            logger.info(
+                f"  ↓ {patent_id} — low relevance {relevance:.2f} "
+                f"(threshold={MIN_RELEVANCE_SCORE}). Skipped."
+            )
+            continue
+
+        link = generate_patent_link(
+            patent['country'], patent['publication_number'], patent.get('kind', '')
+        )
+
+        records.append({
+            "country":            patent['country'],
+            "publication_number": patent['publication_number'],
+            "kind":               patent.get('kind', 'A1'),
+            "title":              title,
+            "applicants":         applicants,
+            "inventors":          inventors,
+            "first_claim":        first_claim if first_claim else "",
+            "claim_source":       claim_source,
+            "publication_date":   pub_date_raw,
+            "priority_date":      priority_date,
+            "relevance_score":    round(relevance, 2),
+            "source":             "EPO",
+            "link":               link,
+            "date_added":         current_run_date,
+            "is_new":             "YES"
+        })
+
+        counters["new"] += 1
+        logger.info(
+            f"  ✓ {patent_id} — Score: {relevance:.2f} "
+            f"— Claim: {claim_source} — {title[:60]}"
+        )
+
+    return records, counters
+
+
+def _print_breakdown(label: str, total_returned: int, counters: dict):
+    """Print a formatted results breakdown for one query type."""
+    total_checked = sum(counters.values())
+    print(f"\n[{label} BREAKDOWN]")
+    print(f"  EPO results returned:        {total_returned}")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  ✓ Added as new:              {counters['new']}")
+    print(f"  = Already in database:       {counters['duplicate_db']}")
+    print(f"  = Duplicate in this batch:   {counters['duplicate_batch']}")
+    if label == "APPLICATIONS":
+        print(f"  – Outside date window:       {counters['date_filtered']}")
+        print(f"  ? Date missing/unparseable:  {counters['date_missing']}")
+    print(f"  ↓ Below relevance threshold: {counters['low_relevance']}")
+    print(f"  ✗ Biblio fetch error:        {counters['biblio_error']}")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  Σ Accounted for:             {total_checked}")
+    if total_checked != total_returned:
+        logger.warning(
+            f"  ⚠ COUNT MISMATCH: {total_returned} returned vs {total_checked} accounted."
+        )
+
+
+# ---------------------------------------------------------------
+# EPO Search — public entry point
+# ---------------------------------------------------------------
+
+def search_epo_patents(start_date: str, end_date: str) -> tuple[list[dict], list[dict]]:
+    """
+    Run two parallel EPO OPS searches and return results separately.
+
+    Query A — APPLICATIONS (date-windowed, last 60 days):
+        Targets recently published patent applications (A1/A2).
+        The pd>= operator limits EPO server-side results to the 60-day window.
+        Python date filtering is applied as a safety net for edge-case results.
+
+    Query B — GRANTS (NO date restriction, kind=B1 OR kind=B2):
+        Targets examination-complete granted patents with finalised claims.
+        Granted patents are filed 3–8 years before issue and would never appear
+        in a 60-day window. No date filter is applied here.
+        Extended BASE_CNS_CQL vocabulary matches the specific language used in
+        granted patent claims (TBI, SCI, nerve injury, facial nerve, etc.).
+        Deduplication against existing_ids in the caller ensures already-captured
+        grants are not reprocessed on subsequent runs. The first run performs
+        a full historical sweep; later runs only pick up newly issued grants.
+
+    Returns:
+        (app_results, grant_results) — two lists of patent reference dicts.
+    """
+    if not epo_client:
+        logger.warning("EPO client not available, skipping EPO search")
+        return [], []
+
+    # ── Query A: Published applications — 60-day window ───────────────────────
+    cql_applications = (
+        f"{BASE_EV_CQL} AND {BASE_CNS_CQL} AND pd>={start_date}"
+    )
+
+    # ── Query B: Granted patents — full historical sweep ──────────────────────
+    # kind=B1 → granted EP patent (first grant, with search report)
+    # kind=B2 → granted EP patent (post-examination, claims may differ from B1)
+    # No pd>= date restriction — we want all historical grants in this space.
+    cql_grants = (
+        f"{BASE_EV_CQL} AND {BASE_CNS_CQL} AND "
+        f"(kind=B1 OR kind=B2)"
+    )
+
+    app_results   = _run_epo_cql_query(cql_applications, label="APPLICATIONS", max_records=500)
+    grant_results = _run_epo_cql_query(cql_grants,       label="GRANTS",        max_records=2000)
+
+    return app_results, grant_results
 
 
 def get_epo_biblio(country, number, kind):
@@ -665,7 +887,7 @@ def get_epo_biblio(country, number, kind):
         )
 
         root = etree.fromstring(resp.content)
-        ns = {"ex": "http://www.epo.org/exchange"}
+        ns   = {"ex": "http://www.epo.org/exchange"}
 
         title = root.xpath("string(//ex:invention-title[@lang='en'])", namespaces=ns)
         if not title:
@@ -710,17 +932,21 @@ def get_epo_biblio(country, number, kind):
 # ---------------------------------------------------------------
 
 def search_all_patents():
-    """Search EPO patents and process results."""
+    """
+    Search EPO for both published applications (60-day window) and granted patents
+    (full historical sweep). Process, score, and return a combined DataFrame.
+    """
     start_date = (datetime.now().date() - timedelta(days=60)).strftime("%Y%m%d")
     end_date   = datetime.now().date().strftime("%Y%m%d")
 
-    print("="*80)
+    print("=" * 80)
     print(f"Starting AI-Enhanced Patent Search — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Relevance threshold:  {MIN_RELEVANCE_SCORE}")
-    print(f"Search period:        Last 60 days ({start_date} → {end_date})")
+    print(f"Applications window:  Last 60 days ({start_date} → {end_date})")
+    print(f"Grants window:        Full historical (no date restriction)")
     print(f"AI relevance scoring: SentenceTransformer (title + first claim)")
     print(f"Claim sources:        EPO OPS (EP) → Google Patents (all others)")
-    print("="*80)
+    print("=" * 80)
 
     # Load existing patents
     existing_ids = set()
@@ -735,137 +961,57 @@ def search_all_patents():
         logger.info(f"Loaded {len(existing_ids)} existing patents from database")
 
     logger.info("Searching patent sources...")
-    epo_results = search_epo_patents(start_date, end_date) if epo_client else []
+    app_results, grant_results = search_epo_patents(start_date, end_date)
 
-    print(f"\n[SUMMARY] Found patents from EPO: {len(epo_results)}")
+    print(f"\n[SUMMARY] Applications found: {len(app_results)}")
+    print(f"[SUMMARY] Grants found:        {len(grant_results)}")
 
-    records = []
-    current_run_date  = datetime.now().strftime('%Y-%m-%d')
-    processed         = set()
-    count_new             = 0
-    count_duplicate_db    = 0
-    count_duplicate_batch = 0
-    count_date_filtered   = 0
-    count_date_missing    = 0
-    count_low_relevance   = 0
-    count_biblio_error    = 0
+    current_run_date = datetime.now().strftime('%Y-%m-%d')
 
-    for patent in epo_results:
-        patent_id = (
-            f"{patent['country']}{patent['publication_number']}{patent.get('kind', '')}"
-        )
+    # Shared processed set — prevents the same patent ID from being processed
+    # by both the applications and grants loops in the same run.
+    processed = set()
 
-        if patent_id in processed:
-            count_duplicate_batch += 1
-            continue
-        processed.add(patent_id)
-
-        if patent_id in existing_ids:
-            count_duplicate_db += 1
-            continue
-
-        # Fetch bibliographic data (no abstract)
-        biblio = get_epo_biblio(
-            patent['country'], patent['publication_number'], patent.get('kind', '')
-        )
-        if not biblio:
-            count_biblio_error += 1
-            logger.warning(f"  ✗ {patent_id} — biblio fetch returned empty, skipping")
-            continue
-
-        title         = biblio.get('title', '')
-        applicants    = biblio.get('applicants', 'Not available')
-        inventors     = biblio.get('inventors', 'Not available')
-        pub_date_raw  = biblio.get('publication_date', '')
-        priority_date = biblio.get('priority_date', '')
-
-        # FIX 2 + FIX 1: Robust date parsing with INFO-level logging
-        pub_date_norm = normalise_date(pub_date_raw)
-
-        if pub_date_norm is None:
-            count_date_missing += 1
-            logger.info(
-                f"  ? {patent_id} — pub_date missing/unparseable "
-                f"(raw='{pub_date_raw}'). Including anyway."
-            )
-        else:
-            if not (start_date <= pub_date_norm <= end_date):
-                count_date_filtered += 1
-                logger.info(
-                    f"  – {patent_id} — outside date window "
-                    f"(pub={pub_date_norm}, window={start_date}–{end_date}). Skipped."
-                )
-                continue
-
-        # Two-tier claim fetch: EPO OPS → Google Patents
-        logger.info(f"  Fetching claim for {patent_id}...")
-        first_claim, claim_source = get_first_claim(
-            patent['country'], patent['publication_number'], patent.get('kind', '')
-        )
-        time.sleep(2)  # EPO fair use: >= 2s between full-text requests
-
-        # Calculate relevance score against title + first claim
-        relevance = calculate_relevance_score(title, first_claim)
-
-        if relevance < MIN_RELEVANCE_SCORE:
-            count_low_relevance += 1
-            logger.info(
-                f"  ↓ {patent_id} — low relevance {relevance:.2f} "
-                f"(threshold={MIN_RELEVANCE_SCORE}). Skipped."
-            )
-            continue
-
-        link = generate_patent_link(
-            patent['country'], patent['publication_number'], patent.get('kind', '')
-        )
-
-        records.append({
-            "country":            patent['country'],
-            "publication_number": patent['publication_number'],
-            "kind":               patent.get('kind', 'A1'),
-            "title":              title,
-            "applicants":         applicants,
-            "inventors":          inventors,
-            "first_claim":        first_claim if first_claim else "",
-            "claim_source":       claim_source,
-            "publication_date":   pub_date_raw,
-            "priority_date":      priority_date,
-            "relevance_score":    round(relevance, 2),
-            "source":             "EPO",
-            "link":               link,
-            "date_added":         current_run_date,
-            "is_new":             "YES"
-        })
-
-        count_new += 1
-        logger.info(
-            f"  ✓ {patent_id} — Score: {relevance:.2f} "
-            f"— Claim: {claim_source} — {title[:60]}"
-        )
-
-    total_checked = (
-        count_new + count_duplicate_db + count_duplicate_batch +
-        count_date_filtered + count_date_missing +
-        count_low_relevance + count_biblio_error
+    # ── Process applications ────────────────────────────────────────────────
+    print(f"\n{'─' * 40}")
+    print("Processing APPLICATIONS...")
+    print(f"{'─' * 40}")
+    app_records, app_counters = _process_patent_list(
+        patent_list       = app_results,
+        existing_ids      = existing_ids,
+        processed         = processed,
+        start_date        = start_date,
+        end_date          = end_date,
+        current_run_date  = current_run_date,
+        apply_date_filter = True,
     )
-    print(f"\n[RESULTS BREAKDOWN]")
-    print(f"  EPO results returned:        {len(epo_results)}")
-    print(f"  ─────────────────────────────────────────")
-    print(f"  ✓ Added as new:              {count_new}")
-    print(f"  = Already in database:       {count_duplicate_db}")
-    print(f"  = Duplicate in this batch:   {count_duplicate_batch}")
-    print(f"  – Outside date window:       {count_date_filtered}")
-    print(f"  ? Date missing/unparseable:  {count_date_missing}")
-    print(f"  ↓ Below relevance threshold: {count_low_relevance}")
-    print(f"  ✗ Biblio fetch error:        {count_biblio_error}")
-    print(f"  ─────────────────────────────────────────")
-    print(f"  Σ Accounted for:             {total_checked}")
-    if total_checked != len(epo_results):
-        logger.warning(
-            f"  ⚠ COUNT MISMATCH: {len(epo_results)} returned vs {total_checked} accounted."
-        )
+    _print_breakdown("APPLICATIONS", len(app_results), app_counters)
 
-    return pd.DataFrame(records)
+    # ── Process grants ──────────────────────────────────────────────────────
+    print(f"\n{'─' * 40}")
+    print("Processing GRANTS (historical sweep)...")
+    print(f"{'─' * 40}")
+    grant_records, grant_counters = _process_patent_list(
+        patent_list       = grant_results,
+        existing_ids      = existing_ids,
+        processed         = processed,
+        start_date        = start_date,
+        end_date          = end_date,
+        current_run_date  = current_run_date,
+        apply_date_filter = False,
+    )
+    _print_breakdown("GRANTS", len(grant_results), grant_counters)
+
+    # ── Combined summary ────────────────────────────────────────────────────
+    total_new = app_counters["new"] + grant_counters["new"]
+    print(f"\n{'=' * 40}")
+    print(f"TOTAL NEW PATENTS ADDED: {total_new}")
+    print(f"  From applications: {app_counters['new']}")
+    print(f"  From grants:       {grant_counters['new']}")
+    print(f"{'=' * 40}")
+
+    all_records = app_records + grant_records
+    return pd.DataFrame(all_records)
 
 
 def update_cumulative_csv(df_new):
@@ -922,7 +1068,6 @@ def update_cumulative_csv(df_new):
         ascending=[True, False]
     )
 
-    # FIX 3: Clean titles in CSV — emoji prefix only appears in email, never in data
     df_all.to_csv(CUMULATIVE_CSV, index=False, quoting=1)
 
     logger.info(f"Saved cumulative CSV with {len(df_all)} total records")
@@ -932,50 +1077,66 @@ def update_cumulative_csv(df_new):
 
 
 def send_email_with_csv(df_all):
-    """Send email with updated CSV."""
+    """
+    Send email with updated CSV.
+    New applications and new grants are reported in separate sections.
+    """
     if not SENDER_EMAIL or not RECIPIENT_EMAIL or not EMAIL_PASSWORD:
         logger.warning("Email credentials not found. Skipping email.")
         return
 
     new_patents = df_all[df_all['is_new'] == 'YES']
 
+    # Separate applications (A1/A2) from grants (B1/B2) in new results
+    new_apps   = new_patents[new_patents['kind'].isin(['A1', 'A2'])]
+    new_grants = new_patents[new_patents['kind'].isin(['B1', 'B2'])]
+
     email_body = f"""
 Patent Search Update — {datetime.now().strftime('%Y-%m-%d')}
 {'='*80}
 
-NEW PATENTS:    {len(new_patents)}
-TOTAL DATABASE: {len(df_all)} patents
+NEW GRANTS:       {len(new_grants)}
+NEW APPLICATIONS: {len(new_apps)}
+TOTAL NEW:        {len(new_patents)}
+TOTAL DATABASE:   {len(df_all)} patents
 
 SOURCE:       European Patent Office (EPO)
-SEARCH TERMS: exosomes, extracellular vesicles, CNS
-DATE RANGE:   Last 60 days
+SEARCH TERMS: exosomes, extracellular vesicles, EVs, nanovesicles
+              TBI, spinal cord injury, nerve injury, neuroprotection, neuroinflammation
+DATE RANGE:   Applications: Last 60 days | Grants: Full historical sweep
 AI SCORING:   SentenceTransformer (title + first claim)
 CLAIM DATA:   EPO OPS (EP patents) → Google Patents fallback (all others)
 
 {'='*80}
 """
 
-    if len(new_patents) > 0:
-        email_body += "\n🔥 TOP 5 MOST RELEVANT NEW PATENTS:\n\n"
-        top_patents = new_patents.nlargest(5, 'relevance_score')
-        for idx, patent in enumerate(top_patents.itertuples(), 1):
-            email_body += f"{idx}. [{patent.relevance_score:.2f}] 🔥 {patent.title[:80]}\n"
-            email_body += (
-                f"   {patent.country}{patent.publication_number} | {patent.source}\n"
+    def _format_top5(patents_df, section_label):
+        if len(patents_df) == 0:
+            return f"\n✓ No new {section_label} found.\n"
+        count = min(5, len(patents_df))
+        out = f"\n🔥 TOP {count} MOST RELEVANT NEW {section_label.upper()}:\n\n"
+        top = patents_df.nlargest(count, 'relevance_score')
+        for idx, patent in enumerate(top.itertuples(), 1):
+            out += f"{idx}. [{patent.relevance_score:.2f}] 🔥 {patent.title[:80]}\n"
+            out += (
+                f"   {patent.country}{patent.publication_number}{patent.kind}"
+                f" | {patent.source}\n"
             )
-            email_body += f"   Applicant: {patent.applicants[:60]}\n"
+            out += f"   Applicant:  {patent.applicants[:60]}\n"
+            out += f"   Priority:   {patent.priority_date}\n"
             if patent.first_claim:
                 src = getattr(patent, 'claim_source', '')
-                email_body += f"   Claim 1 [{src}]: {patent.first_claim[:200]}...\n"
-            email_body += "\n"
-    else:
-        email_body += "\n✓ No new patents found, but database is updated.\n"
+                out += f"   Claim 1 [{src}]: {patent.first_claim[:200]}...\n"
+            out += "\n"
+        return out
 
+    email_body += _format_top5(new_grants, "Grants")
+    email_body += _format_top5(new_apps, "Applications")
     email_body += f"\nSee attached CSV for full details.\n{'='*80}"
 
     msg = MIMEMultipart()
     msg["Subject"] = (
-        f"Patent Update — {len(new_patents)} New Patents — "
+        f"Patent Update — {len(new_grants)} Grants | {len(new_apps)} Applications — "
         f"{datetime.now().strftime('%Y-%m-%d')}"
     )
     msg["From"] = SENDER_EMAIL
@@ -1002,11 +1163,8 @@ CLAIM DATA:   EPO OPS (EP patents) → Google Patents fallback (all others)
 
 def backfill_first_claims():
     """
-    Fetch and populate first_claim for any existing CSV records where it is empty.
-
-    Strategy per patent:
-      EP patents  → EPO OPS first, Google Patents as fallback
-      All others  → Google Patents directly
+    Fetch and populate first_claim for any existing CSV records where it is empty,
+    garbled (mojibake), or truncated at the legacy 1000-char limit.
 
     Safe to re-run — already-populated rows are skipped.
     Progress saved to CSV after every record (crash-safe).
@@ -1016,7 +1174,6 @@ def backfill_first_claims():
         logger.info("No existing CSV found — nothing to backfill.")
         return
 
-    # FIX 7: force object dtype so string assignment never raises TypeError
     df = pd.read_csv(CUMULATIVE_CSV, dtype={'first_claim': object})
 
     if 'first_claim' not in df.columns:
@@ -1025,7 +1182,6 @@ def backfill_first_claims():
     if 'claim_source' not in df.columns:
         df['claim_source'] = ''
 
-    # Unconditional NaN → '' (handles previous failed runs)
     df['first_claim']  = df['first_claim'].fillna('')
     df['claim_source'] = df['claim_source'].fillna('')
 
@@ -1037,9 +1193,12 @@ def backfill_first_claims():
         non_ascii = sum(1 for c in text if ord(c) > 127)
         return (non_ascii / len(text)) > 0.15
 
-    # Re-fetch: empty claims OR garbled (mojibake) OR truncated at legacy 1000-char limit
     truncated_mask = df['first_claim'].fillna('').str.len() == 1000
-    mask = (df['first_claim'].astype(str).str.strip() == '') | df['first_claim'].apply(_is_garbled) | truncated_mask
+    mask = (
+        (df['first_claim'].astype(str).str.strip() == '')
+        | df['first_claim'].apply(_is_garbled)
+        | truncated_mask
+    )
     to_backfill = df[mask]
 
     total = len(to_backfill)
@@ -1047,10 +1206,10 @@ def backfill_first_claims():
         logger.info("Backfill: all existing records already have first_claim populated.")
         return
 
-    print("="*80)
+    print("=" * 80)
     print(f"BACKFILL: Fetching first claims for {total} existing records...")
     print("          Strategy: EPO OPS (EP) → Google Patents (all others)")
-    print("="*80)
+    print("=" * 80)
 
     count_success = 0
     count_empty   = 0
@@ -1064,7 +1223,6 @@ def backfill_first_claims():
         logger.info(f"  [{i}/{total}] {patent_id}...")
 
         claim, source = get_first_claim(country, number, kind)
-        # Strip residual non-ASCII (interleaved native language in translated patents)
         if claim:
             claim_clean = re.sub(r'[^\x00-\x7F]+', ' ', claim)
             claim_clean = re.sub(r'\s{2,}', ' ', claim_clean).strip()
@@ -1080,8 +1238,6 @@ def backfill_first_claims():
 
         # Save after every record so a crash loses nothing
         df.to_csv(CUMULATIVE_CSV, index=False, quoting=1)
-
-        # 2s base sleep (get_first_claim adds its own 3s before Google Patents)
         time.sleep(2)
 
     print(f"\n[BACKFILL COMPLETE]")
@@ -1096,25 +1252,26 @@ def backfill_first_claims():
 # ---------------------------------------------------------------
 
 def main():
-    print("="*80)
+    print("=" * 80)
     print("PATENT SEARCH WITH AI RELEVANCE SCORING — EPO — Starting")
-    print("="*80)
+    print("=" * 80)
 
     # Step 1: Backfill first_claim for any existing records that lack it
     backfill_first_claims()
 
-    # Step 2: Run the regular search for new patents
+    # Step 2: Run applications search (60-day window) + grants sweep (historical)
     df_new = search_all_patents()
     df_all = update_cumulative_csv(df_new)
     send_email_with_csv(df_all)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Process completed successfully")
-    print("="*80)
+    print("=" * 80)
 
 
 if __name__ == "__main__":
     main()
+
 
 
 
