@@ -741,6 +741,7 @@ def _process_patent_list(
     end_date:          str,
     current_run_date:  str,
     apply_date_filter: bool,
+    kind_filter:       set | None = None,
 ) -> tuple[list[dict], dict]:
     """
     Process a list of raw EPO patent references into scored, filtered records.
@@ -757,6 +758,10 @@ def _process_patent_list(
         current_run_date:  ISO date string written to date_added field.
         apply_date_filter: True  → enforce 60-day Python date filter (applications).
                            False → no date restriction (grants).
+        kind_filter:       Optional set of allowed kind codes, e.g. {'B1', 'B2'}.
+                           Patents whose kind code is not in the set are skipped.
+                           None = accept all kind codes (default).
+                           Used for grants because EPO CQL has no kind-code field.
 
     Returns:
         (records, counters)
@@ -768,6 +773,7 @@ def _process_patent_list(
         "duplicate_batch": 0,
         "date_filtered":   0,
         "date_missing":    0,
+        "kind_filtered":   0,
         "low_relevance":   0,
         "biblio_error":    0,
     }
@@ -786,6 +792,16 @@ def _process_patent_list(
 
         if patent_id in existing_ids:
             counters["duplicate_db"] += 1
+            continue
+
+        # Kind-code filter (grants only): skip applications (A1/A2) that
+        # slip through the subject-only grants CQL query.
+        if kind_filter and patent.get('kind', '') not in kind_filter:
+            counters["kind_filtered"] += 1
+            logger.info(
+                f"  – {patent_id} — kind '{patent.get('kind', '')}' "
+                f"not in {kind_filter}. Skipped."
+            )
             continue
 
         biblio = get_epo_biblio(
@@ -881,6 +897,8 @@ def _print_breakdown(label: str, total_returned: int, counters: dict):
     if label == "APPLICATIONS":
         print(f"  – Outside date window:       {counters['date_filtered']}")
         print(f"  ? Date missing/unparseable:  {counters['date_missing']}")
+    if label == "GRANTS":
+        print(f"  – Wrong kind code (A*/WO):   {counters['kind_filtered']}")
     print(f"  ↓ Below relevance threshold: {counters['low_relevance']}")
     print(f"  ✗ Biblio fetch error:        {counters['biblio_error']}")
     print(f"  ─────────────────────────────────────────")
@@ -931,14 +949,17 @@ def search_epo_patents(start_date: str, end_date: str) -> tuple[list[dict], list
     ]
 
     # ── Query B: Granted patents — full historical sweep ──────────────────────
-    # ki=B1 → granted EP patent (first grant, with search report)
-    # ki=B2 → granted EP patent (post-examination, amended claims)
-    # EPO CQL uses ki= (not kind=) for the kind-code field.
-    # No pd>= date restriction — captures all historical grants.
+    # EPO OPS published-data/search CQL does not support a standalone kind-code
+    # field (ki=, kind=, etc. all return 400 Bad Request). Kind filtering is
+    # handled in Python post-processing via the kind_filter parameter passed to
+    # _process_patent_list, which checks the kind code returned in biblio data.
+    # Queries are identical subject terms to apps but WITHOUT a date restriction,
+    # so the full historical corpus is searched. Deduplication against existing_ids
+    # and the shared processed set prevents reprocessing patents already captured.
     cql_grants = [
-        f"{_EV} AND {_CNS_A} AND (ki=B1 OR ki=B2)",   # ~133 chars
-        f"{_EV} AND {_CNS_B} AND (ki=B1 OR ki=B2)",   # ~149 chars
-        f"{_EV} AND {_CNS_C} AND (ki=B1 OR ki=B2)",   # ~136 chars
+        f"{_EV} AND {_CNS_A}",   # ~114 chars
+        f"{_EV} AND {_CNS_B}",   # ~130 chars
+        f"{_EV} AND {_CNS_C}",   # ~117 chars
     ]
 
     app_results   = _run_epo_cql_query(cql_apps,   label="APPLICATIONS", max_records=500)
@@ -1060,6 +1081,7 @@ def search_all_patents():
         end_date          = end_date,
         current_run_date  = current_run_date,
         apply_date_filter = True,
+        kind_filter       = None,   # accept all kind codes for applications
     )
     _print_breakdown("APPLICATIONS", len(app_results), app_counters)
 
@@ -1075,6 +1097,7 @@ def search_all_patents():
         end_date          = end_date,
         current_run_date  = current_run_date,
         apply_date_filter = False,
+        kind_filter       = {'B1', 'B2'},   # grants only — filter out A1/A2/WO etc.
     )
     _print_breakdown("GRANTS", len(grant_results), grant_counters)
 
@@ -1347,6 +1370,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
