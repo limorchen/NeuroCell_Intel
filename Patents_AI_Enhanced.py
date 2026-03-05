@@ -53,6 +53,19 @@ CHANGES (2026-03-05):
               pagination for both queries. _process_patent_list() handles scoring/filtering
               for both lists. _print_breakdown() formats per-query summary logs.
 
+FIXES (2026-03-05):
+  FIX 17: EPO OPS 413 (Request Entity Too Large) — BASE_CNS_CQL was too long for the
+           EPO OPS URL limit (~2000 chars). Fix: split BASE_CNS_CQL into two halves
+           (CNS_CQL_A and CNS_CQL_B). _run_epo_cql_query() now runs both sub-queries
+           and deduplicates the combined result list before returning. Each individual
+           CQL stays well within EPO OPS limits.
+  FIX 18: Google Patents 404 for US published applications — EPO docdb stores US
+           publication numbers without leading zeros in the application serial portion,
+           e.g. "2023285291" (10 digits). Google Patents requires the full zero-padded
+           11-digit format, e.g. "20230285291". normalise_us_number() detects US
+           publications (A1/A2 kind codes) and zero-pads the serial portion when the
+           stored number is 10 digits so the Google Patents URL resolves correctly.
+
 DEPENDENCIES (add to requirements.txt):
   beautifulsoup4>=4.12
   lxml>=4.9
@@ -208,28 +221,40 @@ SEARCH_FILTER = 'TBI OR spinal cord OR nerve injury OR neuroprotection OR neuroi
 MIN_RELEVANCE_SCORE = 0.55
 
 # ---------------------------------------------------------------
-# CHANGE 3: CQL building blocks shared by both search queries
+# FIX 17: CQL building blocks — split to stay under EPO OPS URL limit
 #
-# BASE_EV_CQL  — exosome/EV subject filter.
-# BASE_CNS_CQL — extended neural condition terms covering the full
-#                RESEARCH_FOCUS vocabulary including TBI, SCI, nerve
-#                injury, facial nerve, regeneration, etc.
-#                Granted patents frequently use this specific language
-#                in claims even when the title says only "exosomes".
+# EPO OPS rejects CQL queries whose URL exceeds ~2000 characters with a
+# 413 "Request Entity Too Large" error. The previous single BASE_CNS_CQL
+# with 18 ta= terms exceeded this limit when combined with BASE_EV_CQL.
+#
+# Fix: split the neural condition terms into two halves (CNS_CQL_A and
+# CNS_CQL_B). _run_epo_cql_query() runs both sub-queries and deduplicates
+# the combined result before returning. Each individual CQL stays well
+# within the EPO OPS limit (~900 chars each).
+#
+# BASE_EV_CQL  — exosome/EV subject filter (shared by all sub-queries).
+# CNS_CQL_A    — core CNS/BBB/neurodegenerative terms (original vocabulary).
+# CNS_CQL_B    — injury/repair/peripheral nerve terms (extended vocabulary).
 # ---------------------------------------------------------------
 
 BASE_EV_CQL = (
     '(ta=exosomes OR ta="extracellular vesicles" OR ta=EVs OR ta=nanovesicles)'
 )
 
-BASE_CNS_CQL = (
+# Half A: established CNS terms
+CNS_CQL_A = (
     '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
     'ta="blood-brain barrier" OR ta=neurodegenerative OR '
     'ta=neuroprotection OR ta=neuroinflammation OR '
-    'ta="spinal cord" OR ta=TBI OR ta="traumatic brain injury" OR '
+    'ta=stroke OR ta="brain injury" OR ta=TBI)'
+)
+
+# Half B: injury / repair / peripheral nerve terms
+CNS_CQL_B = (
+    '(ta="traumatic brain injury" OR ta="spinal cord" OR '
     'ta="nerve injury" OR ta="facial nerve" OR ta="peripheral nerve" OR '
-    'ta="nerve regeneration" OR ta=stroke OR ta="brain injury" OR '
-    'ta=remyelination OR ta=axonogenesis OR ta="neural repair")'
+    'ta="nerve regeneration" OR ta=remyelination OR '
+    'ta=axonogenesis OR ta="neural repair")'
 )
 
 # FIX 4: Pass HF_TOKEN to SentenceTransformer to avoid rate-limit risk
@@ -295,7 +320,9 @@ def calculate_relevance_score(title, first_claim):
 
 def generate_patent_link(country, number, kind=""):
     """Generate appropriate patent link based on country code."""
+    # FIX 18: normalise US application numbers for correct Google Patents URLs
     if country == "US":
+        number = normalise_us_number(number, kind)
         return f"https://patents.google.com/patent/US{number}{kind}"
     elif country == "WO":
         return f"https://patentscope.wipo.int/search/en/detail.jsf?docId=WO{number}"
@@ -469,7 +496,31 @@ def _extract_first_claim_from_text(text: str) -> str:
     return split[0].strip() if split else text.strip()
 
 
-def get_google_patents_first_claim(country, number, kind) -> str:
+def normalise_us_number(number: str, kind: str) -> str:
+    """
+    FIX 18: Normalise US publication numbers for Google Patents URLs.
+
+    EPO's docdb format stores US published application numbers with the
+    application serial portion un-padded, e.g. "2023285291" (10 digits:
+    4-digit year + 6-digit serial). Google Patents requires the full
+    zero-padded 11-digit format: "20230285291" (4-digit year + 7-digit serial).
+
+    This only applies to US published applications (kind A1/A2). US granted
+    patents (kind B1/B2) use a plain grant number that needs no padding.
+
+    Examples:
+        "2023285291", "A1"  →  "20230285291"   (6-digit serial → 7-digit)
+        "20230285291", "A1" →  "20230285291"   (already correct, unchanged)
+        "11234567", "B2"    →  "11234567"      (grant number, unchanged)
+    """
+    if kind in ("A1", "A2") and len(number) == 10 and number.isdigit():
+        year   = number[:4]
+        serial = number[4:]          # 6 digits from EPO
+        return f"{year}0{serial}"    # pad to 7 digits → 11 total
+    return number
+
+
+
     """
     Scrape the first claim from Google Patents.
 
@@ -478,6 +529,11 @@ def get_google_patents_first_claim(country, number, kind) -> str:
     """
     if not HAS_BS4:
         return ""
+
+    # FIX 18: normalise US publication numbers to the zero-padded format
+    # that Google Patents expects (EPO docdb omits the leading zero in the serial)
+    if country == "US":
+        number = normalise_us_number(number, kind)
 
     patent_id = f"{country}{number}{kind}"
     url = f"https://patents.google.com/patent/{patent_id}/en"
@@ -586,81 +642,92 @@ def get_first_claim(country, number, kind) -> tuple[str, str]:
 # EPO Search — internal helpers
 # ---------------------------------------------------------------
 
-def _run_epo_cql_query(cql: str, label: str, max_records: int = 500) -> list[dict]:
+def _run_epo_cql_query(cql_list: list[str], label: str, max_records: int = 500) -> list[dict]:
     """
-    Execute a single CQL query against EPO OPS and return raw patent reference dicts.
-    Handles pagination internally (batch size 25).
+    Execute one or more CQL queries against EPO OPS and return deduplicated results.
+
+    FIX 17: EPO OPS rejects queries whose URL exceeds ~2000 chars with 413.
+    Accepting a list of CQL strings allows callers to split large queries into
+    safe sub-queries. Results from all sub-queries are merged and deduplicated
+    on (country, publication_number, kind) before being returned.
 
     Args:
-        cql:         Full CQL query string.
-        label:       Human-readable label for log messages (e.g. 'APPLICATIONS').
-        max_records: Hard cap on records to retrieve (EPO OPS max index is 2000).
+        cql_list:    One or more CQL query strings.
+        label:       Human-readable label for log messages.
+        max_records: Per-query hard cap (EPO OPS index max is 2000).
 
     Returns:
-        List of dicts with keys: country, publication_number, kind, source.
+        Deduplicated list of dicts with keys: country, publication_number, kind, source.
     """
-    records = []
-    logger.info(f"[EPO/{label}] Running CQL: {cql}")
+    all_records: list[dict] = []
+    seen_ids:    set[str]   = set()
 
-    try:
-        start      = 1
-        batch_size = 25
-        total      = None
+    for sub_idx, cql in enumerate(cql_list, 1):
+        sub_label = f"{label}/Q{sub_idx}" if len(cql_list) > 1 else label
+        logger.info(f"[EPO/{sub_label}] Running CQL: {cql}")
 
-        while True:
-            end = start + batch_size - 1
-            if start > max_records:
-                break
+        try:
+            start      = 1
+            batch_size = 25
+            total      = None
 
-            try:
-                resp = epo_client.published_data_search(
-                    cql=cql,
-                    range_begin=start,
-                    range_end=min(end, max_records)
-                )
-            except Exception as e:
-                logger.error(f"[EPO/{label}] Search error at offset {start}: {e}")
-                break
+            while True:
+                end = start + batch_size - 1
+                if start > max_records:
+                    break
 
-            root = etree.fromstring(resp.content)
-            ns   = {"ops": "http://ops.epo.org", "ex": "http://www.epo.org/exchange"}
+                try:
+                    resp = epo_client.published_data_search(
+                        cql=cql,
+                        range_begin=start,
+                        range_end=min(end, max_records)
+                    )
+                except Exception as e:
+                    logger.error(f"[EPO/{sub_label}] Search error at offset {start}: {e}")
+                    break
 
-            if total is None:
-                total_str = root.xpath(
-                    "string(//ops:biblio-search/@total-result-count)",
+                root = etree.fromstring(resp.content)
+                ns   = {"ops": "http://ops.epo.org", "ex": "http://www.epo.org/exchange"}
+
+                if total is None:
+                    total_str = root.xpath(
+                        "string(//ops:biblio-search/@total-result-count)",
+                        namespaces=ns
+                    )
+                    total = int(total_str) if total_str else 0
+                    logger.info(f"[EPO/{sub_label}] Server reports {total} total results")
+
+                for pub_ref in root.xpath(
+                    "//ops:publication-reference"
+                    "/ex:document-id[@document-id-type='docdb']",
                     namespaces=ns
-                )
-                total = int(total_str) if total_str else 0
-                logger.info(f"[EPO/{label}] Server reports {total} total results")
+                ):
+                    country = pub_ref.xpath("string(ex:country)", namespaces=ns)
+                    number  = pub_ref.xpath("string(ex:doc-number)", namespaces=ns)
+                    kind    = pub_ref.xpath("string(ex:kind)", namespaces=ns)
 
-            for pub_ref in root.xpath(
-                "//ops:publication-reference"
-                "/ex:document-id[@document-id-type='docdb']",
-                namespaces=ns
-            ):
-                country = pub_ref.xpath("string(ex:country)", namespaces=ns)
-                number  = pub_ref.xpath("string(ex:doc-number)", namespaces=ns)
-                kind    = pub_ref.xpath("string(ex:kind)", namespaces=ns)
+                    if country and number and kind:
+                        uid = f"{country}{number}{kind}"
+                        if uid not in seen_ids:
+                            seen_ids.add(uid)
+                            all_records.append({
+                                "country":            country,
+                                "publication_number": number,
+                                "kind":               kind,
+                                "source":             "EPO"
+                            })
 
-                if country and number and kind:
-                    records.append({
-                        "country":            country,
-                        "publication_number": number,
-                        "kind":               kind,
-                        "source":             "EPO"
-                    })
+                if not total or end >= min(total, max_records):
+                    break
 
-            if not total or end >= min(total, max_records):
-                break
+                start = end + 1
+                time.sleep(0.3)
 
-            start = end + 1
-            time.sleep(0.3)
+        except Exception as e:
+            logger.error(f"[EPO/{sub_label}] Query failed: {e}")
 
-    except Exception as e:
-        logger.error(f"[EPO/{label}] Query failed: {e}")
-
-    logger.info(f"[EPO/{label}] Retrieved {len(records)} patent references")
-    return records
+    logger.info(f"[EPO/{label}] Total unique references after dedup: {len(all_records)}")
+    return all_records
 
 
 def _process_patent_list(
@@ -852,21 +919,19 @@ def search_epo_patents(start_date: str, end_date: str) -> tuple[list[dict], list
         return [], []
 
     # ── Query A: Published applications — 60-day window ───────────────────────
-    cql_applications = (
-        f"{BASE_EV_CQL} AND {BASE_CNS_CQL} AND pd>={start_date}"
-    )
+    # Split into two sub-queries (FIX 17) to stay under EPO OPS URL length limit.
+    cql_apps_a = f"{BASE_EV_CQL} AND {CNS_CQL_A} AND pd>={start_date}"
+    cql_apps_b = f"{BASE_EV_CQL} AND {CNS_CQL_B} AND pd>={start_date}"
 
     # ── Query B: Granted patents — full historical sweep ──────────────────────
     # kind=B1 → granted EP patent (first grant, with search report)
     # kind=B2 → granted EP patent (post-examination, claims may differ from B1)
     # No pd>= date restriction — we want all historical grants in this space.
-    cql_grants = (
-        f"{BASE_EV_CQL} AND {BASE_CNS_CQL} AND "
-        f"(kind=B1 OR kind=B2)"
-    )
+    cql_grants_a = f"{BASE_EV_CQL} AND {CNS_CQL_A} AND (kind=B1 OR kind=B2)"
+    cql_grants_b = f"{BASE_EV_CQL} AND {CNS_CQL_B} AND (kind=B1 OR kind=B2)"
 
-    app_results   = _run_epo_cql_query(cql_applications, label="APPLICATIONS", max_records=500)
-    grant_results = _run_epo_cql_query(cql_grants,       label="GRANTS",        max_records=2000)
+    app_results   = _run_epo_cql_query([cql_apps_a,   cql_apps_b],   label="APPLICATIONS", max_records=500)
+    grant_results = _run_epo_cql_query([cql_grants_a, cql_grants_b], label="GRANTS",        max_records=2000)
 
     return app_results, grant_results
 
@@ -1271,6 +1336,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
