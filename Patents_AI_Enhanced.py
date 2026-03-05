@@ -520,7 +520,7 @@ def normalise_us_number(number: str, kind: str) -> str:
     return number
 
 
-
+def get_google_patents_first_claim(country, number, kind) -> str:
     """
     Scrape the first claim from Google Patents.
 
@@ -1336,6 +1336,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
