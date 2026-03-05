@@ -157,16 +157,36 @@ def get_epo_access_token() -> str | None:
 
 # Research focus for relevance scoring
 RESEARCH_FOCUS = """
-Exosome-based drug delivery systems or unchanged naive exosomes 
-for central nervous system diseases and conditions,
-including therapeutic applications for neurodegenerative conditions,
-stroke, spinal cord injury and genetic brain disorders.
-Focus on blood-brain barrier penetration and targeted CNS delivery.
+Exosomes and extracellular vesicles (EVs) — either naive/unmodified or engineered/loaded 
+with therapeutic payloads (proteins, miRNA, siRNA, drugs, growth factors) — for treating 
+neural injuries and conditions. 
+
+Primary focus areas:
+- Traumatic brain injury (TBI): neuroprotection, neuroinflammation reduction, axonal repair
+- Spinal cord injury (SCI): regeneration, remyelination, motor function recovery
+- Peripheral nerve injuries: facial nerve palsy, cranial nerve damage, nerve crush/transection
+- Stroke and hypoxic-ischemic injury: penumbra salvage, angiogenesis, functional recovery
+
+Key mechanisms of interest:
+- Neuroprotective effects (reducing apoptosis, oxidative stress, excitotoxicity)
+- Anti-inflammatory modulation (M1/M2 macrophage polarization, microglial regulation, cytokine suppression)
+- Regenerative and pro-repair signaling (axonogenesis, synaptogenesis, myelin repair)
+- Blood-brain barrier (BBB) and blood-nerve barrier (BNB) integrity and penetration
+- Stem cell-derived EVs (MSC, neural stem cell) and their paracrine regenerative effects
+- Surface engineering for targeted CNS/PNS delivery (RVG peptide, targeting ligands)
+
+Exclude: cancer drug delivery, non-neural applications, purely diagnostic exosome studies.
 """
 
-SEARCH_TERMS = ['exosomes', 'extracellular vesicles']
-SEARCH_FILTER = 'CNS'
-MIN_RELEVANCE_SCORE = 0.50
+SEARCH_TERMS = [
+    'exosomes', 
+    'extracellular vesicles', 
+    'EVs',
+    'nanovesicles'
+]
+
+SEARCH_FILTER = 'TBI OR spinal cord OR nerve injury OR neuroprotection OR neuroinflammation'
+MIN_RELEVANCE_SCORE = 0.55
 
 # FIX 4: Pass HF_TOKEN to SentenceTransformer to avoid rate-limit risk
 hf_token = os.environ.get("HF_TOKEN")
