@@ -798,7 +798,7 @@ def _process_patent_list(
         # slip through the subject-only grants CQL query.
         if kind_filter and patent.get('kind', '') not in kind_filter:
             counters["kind_filtered"] += 1
-            logger.info(
+            logger.debug(
                 f"  – {patent_id} — kind '{patent.get('kind', '')}' "
                 f"not in {kind_filter}. Skipped."
             )
@@ -1370,6 +1370,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
