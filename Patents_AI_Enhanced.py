@@ -680,7 +680,13 @@ def _run_epo_cql_query(cql_list: list[str], label: str, max_records: int = 500) 
                         range_end=min(end, max_records)
                     )
                 except Exception as e:
-                    logger.error(f"[EPO/{sub_label}] Search error at offset {start}: {e}")
+                    err_str = str(e)
+                    # EPO OPS returns 404 when a valid query matches zero results.
+                    # Treat this as empty — not a real error.
+                    if "404" in err_str:
+                        logger.info(f"[EPO/{sub_label}] No results (404 — zero matches)")
+                    else:
+                        logger.error(f"[EPO/{sub_label}] Search error at offset {start}: {e}")
                     break
 
                 root = etree.fromstring(resp.content)
@@ -898,7 +904,7 @@ def search_epo_patents(start_date: str, end_date: str) -> tuple[list[dict], list
         The pd>= operator limits EPO server-side results to the 60-day window.
         Python date filtering is applied as a safety net for edge-case results.
 
-    Query B — GRANTS (NO date restriction, kind=B1 OR kind=B2):
+    Query B — GRANTS (NO date restriction, ki=B1 OR ki=B2):
         Targets examination-complete granted patents with finalised claims.
         Granted patents are filed 3–8 years before issue and would never appear
         in a 60-day window. No date filter is applied here.
@@ -925,13 +931,14 @@ def search_epo_patents(start_date: str, end_date: str) -> tuple[list[dict], list
     ]
 
     # ── Query B: Granted patents — full historical sweep ──────────────────────
-    # kind=B1 → granted EP patent (first grant, with search report)
-    # kind=B2 → granted EP patent (post-examination, amended claims)
+    # ki=B1 → granted EP patent (first grant, with search report)
+    # ki=B2 → granted EP patent (post-examination, amended claims)
+    # EPO CQL uses ki= (not kind=) for the kind-code field.
     # No pd>= date restriction — captures all historical grants.
     cql_grants = [
-        f"{_EV} AND {_CNS_A} AND (kind=B1 OR kind=B2)",   # ~133 chars
-        f"{_EV} AND {_CNS_B} AND (kind=B1 OR kind=B2)",   # ~149 chars
-        f"{_EV} AND {_CNS_C} AND (kind=B1 OR kind=B2)",   # ~136 chars
+        f"{_EV} AND {_CNS_A} AND (ki=B1 OR ki=B2)",   # ~133 chars
+        f"{_EV} AND {_CNS_B} AND (ki=B1 OR ki=B2)",   # ~149 chars
+        f"{_EV} AND {_CNS_C} AND (ki=B1 OR ki=B2)",   # ~136 chars
     ]
 
     app_results   = _run_epo_cql_query(cql_apps,   label="APPLICATIONS", max_records=500)
@@ -1340,6 +1347,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
