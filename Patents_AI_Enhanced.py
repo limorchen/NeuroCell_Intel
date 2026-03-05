@@ -221,41 +221,38 @@ SEARCH_FILTER = 'TBI OR spinal cord OR nerve injury OR neuroprotection OR neuroi
 MIN_RELEVANCE_SCORE = 0.55
 
 # ---------------------------------------------------------------
-# FIX 17: CQL building blocks — split to stay under EPO OPS URL limit
+# FIX 17 (revised): CQL sub-queries — kept deliberately minimal
 #
-# EPO OPS rejects CQL queries whose URL exceeds ~2000 characters with a
-# 413 "Request Entity Too Large" error. The previous single BASE_CNS_CQL
-# with 18 ta= terms exceeded this limit when combined with BASE_EV_CQL.
+# The EPO OPS CQL limit is ~175 raw characters per query string.
+# URL-encoding multiplies length further. The original working query
+# (from the script's first run) was ~175 chars and succeeded.
+# Any query exceeding that threshold returns 413.
 #
-# Fix: split the neural condition terms into two halves (CNS_CQL_A and
-# CNS_CQL_B). _run_epo_cql_query() runs both sub-queries and deduplicates
-# the combined result before returning. Each individual CQL stays well
-# within the EPO OPS limit (~900 chars each).
+# Strategy: use 3 short sub-queries per search type, each well under
+# 160 chars. The semantic model (MIN_RELEVANCE_SCORE) is the primary
+# relevance filter — the CQL just needs to cast a broad enough net.
 #
-# BASE_EV_CQL  — exosome/EV subject filter (shared by all sub-queries).
-# CNS_CQL_A    — core CNS/BBB/neurodegenerative terms (original vocabulary).
-# CNS_CQL_B    — injury/repair/peripheral nerve terms (extended vocabulary).
+# ta=EVs and ta=nanovesicles are removed from the EV filter:
+#   - "EVs" is a generic abbreviation that matches unrelated patents
+#   - "nanovesicles" rarely appears in patent titles/abstracts
+#   Both added length without adding useful recall.
+#
+# _EV      — core exosome/EV title+abstract filter (~44 chars)
+# _CNS_A   — core CNS/neurological terms         (~73 chars)
+# _CNS_B   — injury/TBI/SCI/stroke terms         (~84 chars)
+# _CNS_C   — BBB/neurodegenerative/nerve repair  (~76 chars)
+#
+# Longest combined sub-query: _EV AND _CNS_B AND pd>=YYYYMMDD ≈ 153 chars
 # ---------------------------------------------------------------
 
-BASE_EV_CQL = (
-    '(ta=exosomes OR ta="extracellular vesicles" OR ta=EVs OR ta=nanovesicles)'
-)
+_EV = '(ta=exosomes OR ta="extracellular vesicles")'
 
-# Half A: established CNS terms
-CNS_CQL_A = (
-    '(ta=CNS OR ta="central nervous system" OR ta=neurological OR '
-    'ta="blood-brain barrier" OR ta=neurodegenerative OR '
-    'ta=neuroprotection OR ta=neuroinflammation OR '
-    'ta=stroke OR ta="brain injury" OR ta=TBI)'
-)
+_CNS_A = '(ta=CNS OR ta=neurological OR ta=neuroprotection OR ta=neuroinflammation)'
 
-# Half B: injury / repair / peripheral nerve terms
-CNS_CQL_B = (
-    '(ta="traumatic brain injury" OR ta="spinal cord" OR '
-    'ta="nerve injury" OR ta="facial nerve" OR ta="peripheral nerve" OR '
-    'ta="nerve regeneration" OR ta=remyelination OR '
-    'ta=axonogenesis OR ta="neural repair")'
-)
+_CNS_B = '(ta="spinal cord" OR ta=TBI OR ta="nerve injury" OR ta=stroke OR ta="brain injury")'
+
+_CNS_C = '(ta="blood-brain barrier" OR ta=neurodegenerative OR ta="nerve regeneration")'
+
 
 # FIX 4: Pass HF_TOKEN to SentenceTransformer to avoid rate-limit risk
 hf_token = os.environ.get("HF_TOKEN")
@@ -919,19 +916,26 @@ def search_epo_patents(start_date: str, end_date: str) -> tuple[list[dict], list
         return [], []
 
     # ── Query A: Published applications — 60-day window ───────────────────────
-    # Split into two sub-queries (FIX 17) to stay under EPO OPS URL length limit.
-    cql_apps_a = f"{BASE_EV_CQL} AND {CNS_CQL_A} AND pd>={start_date}"
-    cql_apps_b = f"{BASE_EV_CQL} AND {CNS_CQL_B} AND pd>={start_date}"
+    # Three sub-queries, each under ~160 raw chars to stay within EPO OPS limit.
+    # Semantic scoring handles fine-grained relevance filtering.
+    cql_apps = [
+        f"{_EV} AND {_CNS_A} AND pd>={start_date}",   # ~137 chars
+        f"{_EV} AND {_CNS_B} AND pd>={start_date}",   # ~153 chars
+        f"{_EV} AND {_CNS_C} AND pd>={start_date}",   # ~140 chars
+    ]
 
     # ── Query B: Granted patents — full historical sweep ──────────────────────
     # kind=B1 → granted EP patent (first grant, with search report)
-    # kind=B2 → granted EP patent (post-examination, claims may differ from B1)
-    # No pd>= date restriction — we want all historical grants in this space.
-    cql_grants_a = f"{BASE_EV_CQL} AND {CNS_CQL_A} AND (kind=B1 OR kind=B2)"
-    cql_grants_b = f"{BASE_EV_CQL} AND {CNS_CQL_B} AND (kind=B1 OR kind=B2)"
+    # kind=B2 → granted EP patent (post-examination, amended claims)
+    # No pd>= date restriction — captures all historical grants.
+    cql_grants = [
+        f"{_EV} AND {_CNS_A} AND (kind=B1 OR kind=B2)",   # ~133 chars
+        f"{_EV} AND {_CNS_B} AND (kind=B1 OR kind=B2)",   # ~149 chars
+        f"{_EV} AND {_CNS_C} AND (kind=B1 OR kind=B2)",   # ~136 chars
+    ]
 
-    app_results   = _run_epo_cql_query([cql_apps_a,   cql_apps_b],   label="APPLICATIONS", max_records=500)
-    grant_results = _run_epo_cql_query([cql_grants_a, cql_grants_b], label="GRANTS",        max_records=2000)
+    app_results   = _run_epo_cql_query(cql_apps,   label="APPLICATIONS", max_records=500)
+    grant_results = _run_epo_cql_query(cql_grants, label="GRANTS",        max_records=2000)
 
     return app_results, grant_results
 
@@ -1336,6 +1340,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
