@@ -31,11 +31,11 @@ jobs:
 
     - name: Create .env file
       run: |
-        cat <<EOF > .env
-        EMAIL_USER=${{ secrets.EMAIL_USER }}
-        EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
-        EMAIL_RECIPIENT=${{ secrets.EMAIL_RECIPIENT }}
-        EOF
+       touch .env
+       echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
+       echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
+       echo "RECIPIENT_EMAIL=${{ secrets.RECIPIENT_EMAIL }}" >> .env
+       EOF
 
     - name: Debug - list files
       run: ls -R
