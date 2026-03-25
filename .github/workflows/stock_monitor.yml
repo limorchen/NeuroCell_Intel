@@ -9,12 +9,20 @@ on:
 jobs:
   monitor_stock:
     runs-on: ubuntu-latest
+
+    # Opt-in to Node.js 24 now (avoids future breakage)
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - uses: actions/setup-python@v5
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: 'pip'   # speeds up installs
 
     - name: Install dependencies
       run: |
@@ -23,13 +31,14 @@ jobs:
 
     - name: Create .env file
       run: |
-        touch .env
-        echo "EMAIL_USER=${{ secrets.EMAIL_USER }}" >> .env
-        echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
-        echo "EMAIL_RECIPIENT=${{ secrets.EMAIL_RECIPIENT }}" >> .env
+        cat <<EOF > .env
+        EMAIL_USER=${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_RECIPIENT=${{ secrets.EMAIL_RECIPIENT }}
+        EOF
 
-    - name: List files for debugging
-      run: ls -R  
+    - name: Debug - list files
+      run: ls -R
 
     - name: Run stock monitor script
       run: python NRX_Stock_Report.py
@@ -38,5 +47,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: stock-reports-${{ github.run_id }}
-        path: |
-          *.png
+        path: "*.png"
