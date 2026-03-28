@@ -2,7 +2,6 @@ name: Daily Nurexone Stock Monitor
 
 on:
   schedule:
-    # Runs every day at 15:00 UTC
     - cron: '0 15 * * *'
   workflow_dispatch:
 
@@ -10,7 +9,6 @@ jobs:
   monitor_stock:
     runs-on: ubuntu-latest
 
-    # Opt-in to Node.js 24 now (avoids future breakage)
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -22,7 +20,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        cache: 'pip'   # speeds up installs
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
@@ -31,11 +29,10 @@ jobs:
 
     - name: Create .env file
       run: |
-       touch .env
-       echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
-       echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
-       echo "RECIPIENT_EMAIL=${{ secrets.RECIPIENT_EMAIL }}" >> .env
-       EOF
+        touch .env
+        echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
+        echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
+        echo "RECIPIENT_EMAIL=${{ secrets.RECIPIENT_EMAIL }}" >> .env
 
     - name: Debug - list files
       run: ls -R
@@ -46,5 +43,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
+        name: stock-reports-${{ github.run_id }}
+        path: "*.png"
         name: stock-reports-${{ github.run_id }}
         path: "*.png"
