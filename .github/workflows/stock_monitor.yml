@@ -45,5 +45,3 @@ jobs:
       with:
         name: stock-reports-${{ github.run_id }}
         path: "*.png"
-        name: stock-reports-${{ github.run_id }}
-        path: "*.png"
