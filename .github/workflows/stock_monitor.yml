@@ -1,5 +1,4 @@
 name: Daily Nurexone Stock Monitor
-
 on:
   schedule:
     - cron: '0 15 * * *'
@@ -8,7 +7,6 @@ on:
 jobs:
   monitor_stock:
     runs-on: ubuntu-latest
-
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -27,17 +25,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Create .env file
-      run: |
-        touch .env
-        echo "SENDER_EMAIL=${{ secrets.SENDER_EMAIL }}" >> .env
-        echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
-        echo "RECIPIENT_EMAIL=${{ secrets.RECIPIENT_EMAIL }}" >> .env
-
-    - name: Debug - list files
-      run: ls -R
-
     - name: Run stock monitor script
+      env:
+        EMAIL_USER: ${{ secrets.SENDER_EMAIL }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_RECIPIENT: ${{ secrets.RECIPIENT_EMAIL }}
       run: python NRX_Stock_Report.py
 
     - name: Upload artifacts
