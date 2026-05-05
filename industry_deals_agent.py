@@ -652,7 +652,7 @@ def main():
         if not df_new.empty:
             df_new.to_excel(snapshot_path, index=False)
             print(f"Saved run snapshot to: {snapshot_path}")
-         else:
+        else:
              print("No new items this run — snapshot not saved.")
         
     except Exception as e:
