@@ -596,7 +596,7 @@ def main():
             
             # Check minimum exosome relevance
             if REQUIRE_EXOSOME_TERM and not is_exosome_relevant(f"{title} {summary} {full_text}"):
-               continue
+                continue
                 
             # Quality scoring
             quality = "HIGH" if relevance_score >= 0.7 else "MEDIUM" if relevance_score >= 0.5 else "LOW"
@@ -648,8 +648,13 @@ def main():
     today_str = dt.datetime.utcnow().strftime("%Y%m%d")
     snapshot_path = os.path.join(OUTPUT_DIR, f"exosome_deals_run_{today_str}.xlsx")
     try:
-        df_new.to_excel(snapshot_path, index=False)
-        print(f"Saved run snapshot to: {snapshot_path}")
+        # fix: wrap with a guard
+        if not df_new.empty:
+            df_new.to_excel(snapshot_path, index=False)
+            print(f"Saved run snapshot to: {snapshot_path}")
+         else:
+             print("No new items this run — snapshot not saved.")
+        
     except Exception as e:
         print(f"Failed to save run snapshot: {e}")
     
