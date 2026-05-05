@@ -13,13 +13,8 @@ import time
 # Load environment variables
 load_dotenv()
 
-# Set HuggingFace token if available
-if not os.getenv("HF_TOKEN"):
-    print("Warning: HF_TOKEN not set. Consider adding it to .env for faster model downloads.")
-
 # Configuration
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 35
 TOP_N_TO_EMAIL = 10
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx"
 
@@ -158,7 +153,7 @@ def extract_companies(text):
     doc = nlp(text[:2000])
     companies = set()
     
-    9  for ent in doc.ents:
+    for ent in doc.ents:
         if ent.label_ == "ORG":
             companies.add(ent.text)
     
@@ -405,7 +400,6 @@ def generate_month_narrative(df):
 
 def save_cumulative(df, path):
     """Save cumulative database with formatting and new record marking"""
-    def save_cumulative(df, path):
     dirpath = os.path.dirname(os.path.abspath(path))
     os.makedirs(dirpath, exist_ok=True)
     
@@ -602,7 +596,8 @@ def main():
             
             # Check minimum exosome relevance
             if REQUIRE_EXOSOME_TERM and not is_exosome_relevant(f"{title} {summary} {full_text}"):
-            
+               continue
+                
             # Quality scoring
             quality = "HIGH" if relevance_score >= 0.7 else "MEDIUM" if relevance_score >= 0.5 else "LOW"
             is_exosome = is_exosome_relevant(f"{title} {summary}")
