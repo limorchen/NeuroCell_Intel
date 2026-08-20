@@ -1,11 +1,9 @@
 name: AI-Enhanced Patent Search
-
 on:
   workflow_dispatch:  # מאפשר הרצה ידנית בלחיצת כפתור
   schedule:
     # מריץ ב-00:00 ב-1 לכל חודש שני (פברואר, אפריל, יוני וכו')
     - cron: '0 0 1 */2 *'
-
 jobs:
   search-patents:
     runs-on: ubuntu-latest
@@ -24,7 +22,7 @@ jobs:
       
       # שמירת ספריות הפייתון בזיכרון מטמון לחיסכון בזמן
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -33,7 +31,7 @@ jobs:
       
       # שמירת מודל ה-AI בזיכרון מטמון (חוסך הורדה של 90MB בכל ריצה)
       - name: Cache sentence-transformers model
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/torch/sentence_transformers
           key: ${{ runner.os }}-sentence-transformers

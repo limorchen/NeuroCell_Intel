@@ -1,14 +1,9 @@
 import os
 import re
 import datetime as dt
-from dateutil import parser as dateparser
-import requests
 import feedparser
-from bs4 import BeautifulSoup
 import pandas as pd
 import spacy
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 import smtplib
 from email.message import EmailMessage
@@ -18,22 +13,15 @@ import time
 # Load environment variables
 load_dotenv()
 
-# Set HuggingFace token if available
-if not os.getenv("HF_TOKEN"):
-    print("Warning: HF_TOKEN not set. Consider adding it to .env for faster model downloads.")
-
 # Configuration
 OUTPUT_DIR = "./industry_deals"
-SINCE_DAYS = 35
 TOP_N_TO_EMAIL = 10
 CUMULATIVE_FILENAME = "exosome_deals_DATABASE.xlsx"
 
 # FILTERING THRESHOLDS (tunable)
 MIN_RELEVANCE_SCORE = 0.50
-MIN_EXOSOME_TERM_MATCH = True
-MIN_EVENT_TYPE_CONFIDENCE = 0.3
+REQUIRE_EXOSOME_TERM = True   # set False to allow non-exosome articles through
 MIN_TITLE_LENGTH = 20
-MIN_SUMMARY_LENGTH = 50
 
 RSS_FEEDS = [
     # Core Biotech/Pharma
@@ -102,7 +90,6 @@ EXOSOME_COMPANIES = [
 
 # Initialize NLP models
 nlp = spacy.load("en_core_web_sm")
-embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # =====================================================
 # CORE FUNCTIONS
@@ -133,11 +120,11 @@ def clean_text(text):
 def extract_full_text(url):
     """Extract article text from URL"""
     try:
-        downloaded = trafilatura.fetch_url(url)
+        downloaded = trafilatura.fetch_url(url, timeout=10)
         if downloaded:
             text = trafilatura.extract(downloaded)
             return text[:5000] if text else ""
-    except:
+    except Exception:
         pass
     return ""
 
@@ -167,35 +154,30 @@ def extract_companies(text):
     companies = set()
     
     for ent in doc.ents:
-        if ent.label_ in ["ORG", "GPE"]:
+        if ent.label_ == "ORG":
             companies.add(ent.text)
     
     return "; ".join(sorted(list(companies)))[:200]
 
 def extract_amounts(text):
-    """Extract deal amounts"""
     if not text:
         return ""
-    
-    patterns = [
-        r'\$?\s*(\d+(?:\.\d+)?)\s*(?:million|m|bn|billion|b)',
-    ]
-    
+
+    pattern = r'\$?\s*(\d+(?:\.\d+)?)\s*(billion|bn|million|m)\b'
     amounts = []
-    for pattern in patterns:
-        matches = re.findall(pattern, text.lower())
-        if matches:
-            for match in matches[:3]:
-                try:
-                    val = float(match)
-                    if val > 0.1:
-                        if val >= 1000:
-                            amounts.append(f"${val:,.0f}M")
-                        else:
-                            amounts.append(f"${val:,.1f}M")
-                except:
-                    pass
-    
+
+    for match in re.findall(pattern, text.lower())[:5]:
+        try:
+            val = float(match[0])
+            unit = match[1]
+            if val <= 0:
+                continue
+            if unit in ("billion", "bn"):
+                val *= 1000
+            amounts.append(f"${val:,.0f}M")
+        except ValueError:
+            pass
+
     return "; ".join(amounts)[:100] if amounts else ""
 
 def extract_indications(text):
@@ -271,10 +253,6 @@ def load_existing_cumulative(path):
                 df = df.sort_values('RelevanceScore', ascending=False)
                 df = df.drop_duplicates(subset=['URL'], keep='first')
                 print(f"After removing URL duplicates: {len(df)} records")
-            
-            # STEP 3: Remove duplicate Titles (keep highest RelevanceScore)
-            if 'RelevanceScore' in df.columns:
-                df = df.sort_values('RelevanceScore', ascending=False)
                 df = df.drop_duplicates(subset=['Title'], keep='first')
                 print(f"After removing Title duplicates: {len(df)} records")
             
@@ -286,11 +264,10 @@ def load_existing_cumulative(path):
     return pd.DataFrame()
 
 def generate_month_narrative(df):
-    """Generate a narrative summary of deals from the past month"""
     if df.empty:
         return ""
-    
-    # Convert date for grouping
+
+    df = df.copy()
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
     # Calculate date range: past 30 days
@@ -423,7 +400,8 @@ def generate_month_narrative(df):
 
 def save_cumulative(df, path):
     """Save cumulative database with formatting and new record marking"""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    dirpath = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dirpath, exist_ok=True)
     
     # Ensure correct column order
     columns = ['Date', 'Title', 'EventType', 'Companies', 'Amounts', 
@@ -561,11 +539,11 @@ def main():
     entries = fetch_rss_feeds()
     print(f"Collected {len(entries)} recent entries.")
     
-    # 2) Normalize entries
+    # 2) Normalize entries — skip any entry without a URL
     unique_entries = {}
     for entry in entries:
-        url = entry.get('link', '')
-        if url not in unique_entries:
+        url = entry.get('link', '').strip()
+        if url and url not in unique_entries:
             unique_entries[url] = entry
     
     print(f"Normalized to {len(unique_entries)} unique items.")
@@ -592,8 +570,9 @@ def main():
             if is_spam(title, summary):
                 continue
             
-            # Extract full text
+            # Extract full text — sleep to avoid rate-limit bans
             full_text = extract_full_text(url)
+            time.sleep(0.5)
             
             # Get publish date
             pub = entry.get('published_parsed')
@@ -616,9 +595,9 @@ def main():
                 continue
             
             # Check minimum exosome relevance
-            if MIN_EXOSOME_TERM_MATCH and not is_exosome_relevant(f"{title} {summary} {full_text}"):
+            if REQUIRE_EXOSOME_TERM and not is_exosome_relevant(f"{title} {summary} {full_text}"):
                 continue
-            
+                
             # Quality scoring
             quality = "HIGH" if relevance_score >= 0.7 else "MEDIUM" if relevance_score >= 0.5 else "LOW"
             is_exosome = is_exosome_relevant(f"{title} {summary}")
@@ -669,15 +648,19 @@ def main():
     today_str = dt.datetime.utcnow().strftime("%Y%m%d")
     snapshot_path = os.path.join(OUTPUT_DIR, f"exosome_deals_run_{today_str}.xlsx")
     try:
-        df_new.to_excel(snapshot_path, index=False)
-        print(f"Saved run snapshot to: {snapshot_path}")
+        # fix: wrap with a guard
+        if not df_new.empty:
+            df_new.to_excel(snapshot_path, index=False)
+            print(f"Saved run snapshot to: {snapshot_path}")
+        else:
+             print("No new items this run — snapshot not saved.")
+        
     except Exception as e:
         print(f"Failed to save run snapshot: {e}")
     
     # 8) Send email with narrative summary AND top deals from this run
     if not df_new.empty:
-        send_email_with_top_deals(df_new, df_merged, 10)
-
+        send_email_with_top_deals(df_new, df_merged, TOP_N_TO_EMAIL)
 
 if __name__ == "__main__":
     main()
