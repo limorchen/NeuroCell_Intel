@@ -318,12 +318,61 @@ def export_full_csvs(db: str = DB_FILE):
 # -------------------------
 # Email Notification
 # -------------------------
+def _build_email_body(new_p, new_t) -> str:
+    lines = [
+        f"NeuroCell Weekly Intelligence Report — {datetime.now().strftime('%Y-%m-%d')}",
+        f"New items this run: {len(new_p)} papers, {len(new_t)} clinical trials",
+        "=" * 60,
+    ]
+
+    if new_p:
+        lines.append("\nNEW PUBMED PAPERS\n" + "-" * 40)
+        papers_with_abstract = [a for a in new_p if (a.get('abstract') or '').strip()]
+        for i, a in enumerate(sorted(papers_with_abstract, key=lambda x: x.get('combined_score', 0), reverse=True), 1):
+            title   = a.get('title') or 'N/A'
+            journal = a.get('journal') or 'N/A'
+            abstract = a.get('abstract').strip()
+            snippet = (abstract[:300] + '...') if len(abstract) > 300 else abstract
+            url     = a.get('url', '')
+            lines += [
+                f"\n[{i}] {title}",
+                f"    Journal : {journal}  ({a.get('publication_date', '')})",
+                f"    Summary : {snippet}",
+                f"    Link    : {url}",
+            ]
+
+    if new_t:
+        lines.append("\n\nNEW CLINICAL TRIALS\n" + "-" * 40)
+        trials_with_desc = [t for t in new_t if (t.get('detailed_description') or '').strip()]
+        for i, t in enumerate(sorted(trials_with_desc, key=lambda x: x.get('combined_score', 0), reverse=True), 1):
+            title  = t.get('title') or 'N/A'
+            status = t.get('status') or 'N/A'
+            phases = t.get('phases') if isinstance(t.get('phases'), str) else '; '.join(t.get('phases') or [])
+            desc   = t.get('detailed_description').strip()
+            snippet = (desc[:300] + '...') if len(desc) > 300 else desc
+            url    = t.get('url', '')
+            lines += [
+                f"\n[{i}] {title}",
+                f"    Status : {status}  |  Phase: {phases or 'N/A'}",
+                f"    Summary: {snippet}",
+                f"    Link   : {url}",
+            ]
+
+    lines += [
+        "\n" + "=" * 60,
+        "Full cumulative database attached as CSV.",
+        "NeuroCell Intelligence Agent",
+    ]
+    return "\n".join(lines)
+
+
 def send_email(new_p, new_t):
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD): return
     msg = MIMEMultipart()
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = RECIPIENT_EMAIL
     msg['Subject'] = f"NeuroCell Report: {len(new_p)} New Papers, {len(new_t)} New Trials"
-    body = f"Total New Items Found Today: {len(new_p) + len(new_t)}\n\nCheck attached CSVs for the full cumulative database."
-    msg.attach(MIMEText(body, 'plain'))
+    msg.attach(MIMEText(_build_email_body(new_p, new_t), 'plain'))
     
     for file in [PUBMED_FULL_CSV, TRIALS_FULL_CSV]:
         if os.path.exists(file):
