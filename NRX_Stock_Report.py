@@ -39,8 +39,8 @@ def fetch_data(ticker, days=14):
         df = df[ticker]
     return df
 
-def process_symbol(symbol, ticker):
-    df = fetch_data(ticker)
+def process_symbol(symbol, ticker, days=14, include_chart=False, chart_windows=None):
+    df = fetch_data(ticker, days=days)
     
     if df.empty:
         print(f"[WARN] No data returned for {symbol} ({ticker}). Skipping this ticker.")
@@ -71,18 +71,29 @@ def process_symbol(symbol, ticker):
 
     print(f"[DEBUG] Currency for {symbol} is {currency}")
 
-    # Save chart image in memory
-    buf = BytesIO()
-    plt.figure(figsize=(8,3))
-    plt.plot(df.index, df['Close'], label=f'{symbol} price')
-    plt.title(f'{symbol} - Closing Price')
-    plt.xlabel('Date')
-    plt.ylabel('Price')
-    plt.legend()
-    plt.grid()
-    plt.savefig(buf, format='png', dpi=80)
-    plt.close()
-    buf.seek(0)
+    # Build one chart per requested window (e.g. 7-day and 30-day), all sliced
+    # from the same fetched data so we only hit the API once per ticker.
+    charts = []
+    if include_chart and chart_windows:
+        last_date = df.index.max()
+        for window in chart_windows:
+            cutoff = last_date - pd.Timedelta(days=window)
+            window_df = df[df.index >= cutoff]
+            if window_df.empty:
+                print(f"[WARN] No data in the last {window} days for {symbol}. Skipping this chart window.")
+                continue
+            buf = BytesIO()
+            plt.figure(figsize=(8,3))
+            plt.plot(window_df.index, window_df['Close'], label=f'{symbol} price')
+            plt.title(f'{symbol} - Closing Price (Last {window} Days)')
+            plt.xlabel('Date')
+            plt.ylabel('Price')
+            plt.legend()
+            plt.grid()
+            plt.savefig(buf, format='png', dpi=80)
+            plt.close()
+            buf.seek(0)
+            charts.append({"window": window, "buffer": buf})
 
     return {
         "symbol": symbol,
@@ -91,13 +102,20 @@ def process_symbol(symbol, ticker):
         "day_change": round(day_change, 2),
         "week_change": round(week_change, 2),
         "currency": currency,
-        "image_buffer": buf  # Keep buffer open for email embedding
+        "charts": charts  # list of {"window": int, "buffer": BytesIO}
     }
+
+CHART_SYMBOL = "TSXV:NRX"
+CHART_WINDOWS = [7, 30]  # days back for each chart, shortest first
+FETCH_DAYS = max(CHART_WINDOWS)
 
 def main():
     parts = []
     for symbol, ticker in TICKERS.items():
-        result = process_symbol(symbol, ticker)
+        if symbol == CHART_SYMBOL:
+            result = process_symbol(symbol, ticker, days=FETCH_DAYS, include_chart=True, chart_windows=CHART_WINDOWS)
+        else:
+            result = process_symbol(symbol, ticker)
         if result is None:
             continue
         parts.append(result)
@@ -113,10 +131,15 @@ def main():
     body += "</table>"
 
     body += "<br><h3>Price Charts</h3>"
-    for idx, item in enumerate(parts):
-        cid = f"chart{idx}"
-        body += f"<h4>{item['symbol']}</h4>"
-        body += f"<img src='cid:{cid}' alt='Chart for {item['symbol']}' width='300'/><br>"
+    image_attachments = []  # list of (cid, buffer, filename)
+    cid_counter = 0
+    for item in parts:
+        for chart in item.get('charts', []):
+            cid = f"chart{cid_counter}"
+            body += f"<h4>{item['symbol']} - Last {chart['window']} Days</h4>"
+            body += f"<img src='cid:{cid}' alt='Chart for {item['symbol']} ({chart['window']}d)' width='400'/><br>"
+            image_attachments.append((cid, chart['buffer'], f"{item['symbol']}_{chart['window']}d_chart.png"))
+            cid_counter += 1
 
     msg = MIMEMultipart("related")
     msg['From'] = EMAIL_USER
@@ -128,14 +151,14 @@ def main():
 
     msg_alternative.attach(MIMEText(body, "html"))
 
-    # Attach images with CIDs
-    for idx, item in enumerate(parts):
-        img_data = item['image_buffer'].getvalue()
+    # Attach images with CIDs (one per chart window collected above)
+    for cid, buffer, filename in image_attachments:
+        img_data = buffer.getvalue()
         mime_img = MIMEImage(img_data, 'png')
-        mime_img.add_header('Content-ID', f"<chart{idx}>")
-        mime_img.add_header('Content-Disposition', 'inline', filename=f"{item['symbol']}_chart.png")
+        mime_img.add_header('Content-ID', f"<{cid}>")
+        mime_img.add_header('Content-Disposition', 'inline', filename=filename)
         msg.attach(mime_img)
-        item['image_buffer'].close()
+        buffer.close()
 
     # smtplib.sendmail() needs a list of addresses, not one comma-joined string,
     # or it treats the whole thing as a single (invalid) recipient address.
