@@ -31,9 +31,3 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECIPIENT: ${{ secrets.RECIPIENT_EMAIL }}
       run: python NRX_Stock_Report.py
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: stock-reports-${{ github.run_id }}
-        path: "*.png"
