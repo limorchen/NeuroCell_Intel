@@ -137,9 +137,13 @@ def main():
         msg.attach(mime_img)
         item['image_buffer'].close()
 
+    # smtplib.sendmail() needs a list of addresses, not one comma-joined string,
+    # or it treats the whole thing as a single (invalid) recipient address.
+    recipients = [addr.strip() for addr in EMAIL_RECIPIENT.split(",") if addr.strip()]
+
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(EMAIL_USER, EMAIL_PASSWORD)
-        smtp.sendmail(EMAIL_USER, EMAIL_RECIPIENT, msg.as_string())
+        smtp.sendmail(EMAIL_USER, recipients, msg.as_string())
 
 if __name__ == "__main__":
     main()
