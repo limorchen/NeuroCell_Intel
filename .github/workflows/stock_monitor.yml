@@ -29,5 +29,5 @@ jobs:
       env:
         EMAIL_USER: ${{ secrets.SENDER_EMAIL }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-       EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
       run: python NRX_Stock_Report.py
