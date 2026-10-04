@@ -3,7 +3,7 @@ on:
   workflow_dispatch:  # מאפשר הרצה ידנית בלחיצת כפתור
   schedule:
     # מריץ ב-00:00 ב-1 לכל חודש שני (פברואר, אפריל, יוני וכו')
-    - cron: '0 0 1 */2 *'
+    - cron: '0 0 1 2,4,6,8,10,12 *'
 jobs:
   search-patents:
     runs-on: ubuntu-latest
