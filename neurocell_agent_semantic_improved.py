@@ -140,13 +140,19 @@ TOP_TIER_JOURNALS = {
 
 def get_journal_impact(journal_name: str):
     """Return (canonical_name, approx_impact_factor) if journal_name matches
-    a curated top-tier venue, else None. Matching is case-insensitive and
-    strips a leading 'The '."""
+    a curated top-tier venue, else None. Matching is case-insensitive,
+    strips a leading 'The ', and also tries stripping a trailing
+    parenthetical disambiguator — PubMed's own Journal/Title field commonly
+    carries one for short/ambiguous names, e.g. "Science (New York, N.Y.)"
+    or "Advanced materials (Deerfield Beach, Fla.)"."""
     if not journal_name:
         return None
-    key = re.sub(r'^\s*the\s+', '', journal_name.strip().lower())
-    key = re.sub(r'\s+', ' ', key)
-    return TOP_TIER_JOURNALS.get(key)
+    base = re.sub(r'^\s*the\s+', '', journal_name.strip().lower())
+    base = re.sub(r'\s+', ' ', base)
+    if base in TOP_TIER_JOURNALS:
+        return TOP_TIER_JOURNALS[base]
+    stripped = re.sub(r'\s*\([^)]*\)\s*$', '', base).strip()
+    return TOP_TIER_JOURNALS.get(stripped)
 
 
 # -------------------------
