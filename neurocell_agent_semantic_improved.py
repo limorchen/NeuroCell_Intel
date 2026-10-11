@@ -18,6 +18,7 @@ import logging
 import requests
 import smtplib
 import re
+import html as html_lib
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -98,6 +99,57 @@ except Exception as e:
     model = None
 
 # -------------------------
+# Top-tier / very-high-impact journal flagging
+# -------------------------
+# Manually curated — there is no free/live impact-factor API, so this maps
+# lowercased journal name -> (canonical display name, approx. impact factor).
+# Figures are approximate (Clarivate JCR, ~2024/2025) and only cover
+# multidisciplinary + neuro/stem-cell/biotech venues likely to show up for
+# this PUBMED_TERM. Threshold for inclusion here is roughly IF >= 15;
+# review/update periodically rather than trusting these as exact.
+TOP_TIER_JOURNALS = {
+    "nature reviews drug discovery":      ("Nature Reviews Drug Discovery", 122.7),
+    "the lancet":                         ("The Lancet", 98.4),
+    "lancet":                             ("The Lancet", 98.4),
+    "new england journal of medicine":    ("New England Journal of Medicine", 96.2),
+    "nejm":                                ("New England Journal of Medicine", 96.2),
+    "nature reviews molecular cell biology": ("Nature Reviews Molecular Cell Biology", 81.3),
+    "jama":                                ("JAMA", 63.1),
+    "nature medicine":                    ("Nature Medicine", 58.7),
+    "nature":                             ("Nature", 50.5),
+    "cancer cell":                        ("Cancer Cell", 48.8),
+    "lancet neurology":                   ("The Lancet Neurology", 46.5),
+    "cell":                               ("Cell", 45.5),
+    "science":                            ("Science", 44.7),
+    "nature nanotechnology":              ("Nature Nanotechnology", 38.1),
+    "nature materials":                   ("Nature Materials", 37.2),
+    "nature reviews neurology":           ("Nature Reviews Neurology", 36.5),
+    "nature biotechnology":               ("Nature Biotechnology", 33.1),
+    "immunity":                           ("Immunity", 32.4),
+    "advanced materials":                 ("Advanced Materials", 29.4),
+    "cell metabolism":                    ("Cell Metabolism", 27.7),
+    "cell stem cell":                     ("Cell Stem Cell", 21.7),
+    "nature cell biology":                ("Nature Cell Biology", 21.3),
+    "nature neuroscience":                ("Nature Neuroscience", 21.2),
+    "jama neurology":                     ("JAMA Neurology", 20.4),
+    "science translational medicine":     ("Science Translational Medicine", 17.1),
+    "neuron":                             ("Neuron", 16.2),
+    "molecular cell":                     ("Molecular Cell", 16.0),
+}
+
+
+def get_journal_impact(journal_name: str):
+    """Return (canonical_name, approx_impact_factor) if journal_name matches
+    a curated top-tier venue, else None. Matching is case-insensitive and
+    strips a leading 'The '."""
+    if not journal_name:
+        return None
+    key = re.sub(r'^\s*the\s+', '', journal_name.strip().lower())
+    key = re.sub(r'\s+', ' ', key)
+    return TOP_TIER_JOURNALS.get(key)
+
+
+# -------------------------
 # Utils
 # -------------------------
 def now_ts() -> str:
@@ -152,6 +204,11 @@ def calculate_relevance_score(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]
         cns_hits = sum(1 for term in cns_terms if term in full_text)
         semantic_score = doc.get('semantic_score', 0)
         doc['combined_score'] = round(semantic_score + (0.1 * min(cns_hits, 3)), 4)
+
+        match = get_journal_impact(doc.get('journal'))
+        doc['top_tier_journal'] = bool(match)
+        doc['journal_canonical'] = match[0] if match else None
+        doc['journal_impact_factor'] = match[1] if match else None
     return docs
 
 # -------------------------
@@ -299,10 +356,13 @@ def export_full_csvs(db: str = DB_FILE):
     rows = cur.fetchall()
     with open(PUBMED_FULL_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["pmid","title","abstract","authors","pub_date","journal","doi","url","spinal","first_seen","sem_score","comb_score","new_this_run"])
+        writer.writerow(["pmid","title","abstract","authors","pub_date","journal","doi","url","spinal","first_seen","sem_score","comb_score","new_this_run","top_tier_journal","impact_factor_est"])
         for r in rows:
             is_new = "YES" if (now - datetime.strptime(r[9], "%Y-%m-%d %H:%M:%S")).total_seconds() < 86400 else "NO"
-            writer.writerow(list(r) + [is_new])
+            match = get_journal_impact(r[5])
+            top_tier = "YES" if match else "NO"
+            impact_factor = match[1] if match else ""
+            writer.writerow(list(r) + [is_new, top_tier, impact_factor])
 
     # Trials
     cur.execute("SELECT * FROM clinical_trials")
@@ -337,6 +397,10 @@ def _build_email_body(new_p, new_t) -> str:
             lines += [
                 f"\n[{i}] {title}",
                 f"    Journal : {journal}  ({a.get('publication_date', '')})",
+            ]
+            if a.get('top_tier_journal'):
+                lines.append(f"    *** TOP-TIER JOURNAL — approx. IF {a.get('journal_impact_factor')} ***")
+            lines += [
                 f"    Summary : {snippet}",
                 f"    Link    : {url}",
             ]
@@ -366,14 +430,85 @@ def _build_email_body(new_p, new_t) -> str:
     return "\n".join(lines)
 
 
+def _build_email_html(new_p, new_t) -> str:
+    """HTML counterpart of _build_email_body — papers from a curated
+    top-tier/very-high-impact-factor journal are rendered in red."""
+    esc = html_lib.escape
+    parts = [
+        '<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #222;">',
+        f'<h2 style="margin-bottom:4px;">NeuroCell Weekly Intelligence Report — {datetime.now().strftime("%Y-%m-%d")}</h2>',
+        f'<p style="color:#555;">New items this run: {len(new_p)} papers, {len(new_t)} clinical trials</p>',
+        '<hr>',
+    ]
+
+    if new_p:
+        parts.append('<h3>New PubMed Papers</h3>')
+        papers_with_abstract = [a for a in new_p if (a.get('abstract') or '').strip()]
+        for i, a in enumerate(sorted(papers_with_abstract, key=lambda x: x.get('combined_score', 0), reverse=True), 1):
+            title    = esc(a.get('title') or 'N/A')
+            journal  = esc(a.get('journal') or 'N/A')
+            abstract = a.get('abstract').strip()
+            snippet  = esc((abstract[:300] + '...') if len(abstract) > 300 else abstract)
+            url      = esc(a.get('url', ''))
+            is_top   = a.get('top_tier_journal')
+            impact   = a.get('journal_impact_factor')
+
+            title_style = "color:#c00020; font-weight:bold;" if is_top else "font-weight:bold;"
+            parts.append('<div style="margin:0 0 16px 0; padding:10px; border-left:3px solid {border};">'.format(
+                border="#c00020" if is_top else "#ddd"))
+            parts.append(f'<div style="{title_style}">[{i}] {title}</div>')
+            journal_line = f'Journal: {journal} ({esc(a.get("publication_date", ""))})'
+            if is_top:
+                journal_line += f' &nbsp;&mdash;&nbsp; <span style="color:#c00020; font-weight:bold;">⭐ TOP-TIER JOURNAL (IF ≈ {impact})</span>'
+                parts.append(f'<div style="color:#c00020;">{journal_line}</div>')
+            else:
+                parts.append(f'<div style="color:#555;">{journal_line}</div>')
+            parts.append(f'<div style="margin:6px 0;">{snippet}</div>')
+            parts.append(f'<div><a href="{url}">{url}</a></div>')
+            parts.append('</div>')
+
+    if new_t:
+        parts.append('<h3>New Clinical Trials</h3>')
+        trials_with_desc = [t for t in new_t if (t.get('detailed_description') or '').strip()]
+        for i, t in enumerate(sorted(trials_with_desc, key=lambda x: x.get('combined_score', 0), reverse=True), 1):
+            title  = esc(t.get('title') or 'N/A')
+            status = esc(t.get('status') or 'N/A')
+            phases = t.get('phases') if isinstance(t.get('phases'), str) else '; '.join(t.get('phases') or [])
+            desc   = t.get('detailed_description').strip()
+            snippet = esc((desc[:300] + '...') if len(desc) > 300 else desc)
+            url    = esc(t.get('url', ''))
+            parts.append('<div style="margin:0 0 16px 0; padding:10px; border-left:3px solid #ddd;">')
+            parts.append(f'<div style="font-weight:bold;">[{i}] {title}</div>')
+            parts.append(f'<div style="color:#555;">Status: {status} | Phase: {esc(phases) or "N/A"}</div>')
+            parts.append(f'<div style="margin:6px 0;">{snippet}</div>')
+            parts.append(f'<div><a href="{url}">{url}</a></div>')
+            parts.append('</div>')
+
+    parts += [
+        '<hr>',
+        '<p style="color:#888; font-size:12px;">Full cumulative database attached as CSV. NeuroCell Intelligence Agent</p>',
+        '</div>',
+    ]
+    return "\n".join(parts)
+
+
 def send_email(new_p, new_t):
     if not (SENDER_EMAIL and RECIPIENT_EMAIL and EMAIL_PASSWORD): return
-    msg = MIMEMultipart()
+    n_top = sum(1 for a in new_p if a.get('top_tier_journal'))
+
+    msg = MIMEMultipart('mixed')
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECIPIENT_EMAIL
-    msg['Subject'] = f"NeuroCell Report: {len(new_p)} New Papers, {len(new_t)} New Trials"
-    msg.attach(MIMEText(_build_email_body(new_p, new_t), 'plain'))
-    
+    subject = f"NeuroCell Report: {len(new_p)} New Papers, {len(new_t)} New Trials"
+    if n_top:
+        subject += f" — 🔴 {n_top} TOP-TIER"
+    msg['Subject'] = subject
+
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(_build_email_body(new_p, new_t), 'plain'))
+    alt.attach(MIMEText(_build_email_html(new_p, new_t), 'html'))
+    msg.attach(alt)
+
     for file in [PUBMED_FULL_CSV, TRIALS_FULL_CSV]:
         if os.path.exists(file):
             with open(file, "rb") as attachment:
@@ -382,7 +517,7 @@ def send_email(new_p, new_t):
                 encoders.encode_base64(part)
                 part.add_header("Content-Disposition", f"attachment; filename= {file}")
                 msg.attach(part)
-    
+
     with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
         server.login(SENDER_EMAIL, EMAIL_PASSWORD)
         server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL.split(","), msg.as_string())
