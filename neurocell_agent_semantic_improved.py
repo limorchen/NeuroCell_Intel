@@ -362,13 +362,10 @@ def export_full_csvs(db: str = DB_FILE):
     rows = cur.fetchall()
     with open(PUBMED_FULL_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["pmid","title","abstract","authors","pub_date","journal","doi","url","spinal","first_seen","sem_score","comb_score","new_this_run","top_tier_journal","impact_factor_est"])
+        writer.writerow(["pmid","title","abstract","authors","pub_date","journal","doi","url","spinal","first_seen","sem_score","comb_score","new_this_run"])
         for r in rows:
             is_new = "YES" if (now - datetime.strptime(r[9], "%Y-%m-%d %H:%M:%S")).total_seconds() < 86400 else "NO"
-            match = get_journal_impact(r[5])
-            top_tier = "YES" if match else "NO"
-            impact_factor = match[1] if match else ""
-            writer.writerow(list(r) + [is_new, top_tier, impact_factor])
+            writer.writerow(list(r) + [is_new])
 
     # Trials
     cur.execute("SELECT * FROM clinical_trials")
