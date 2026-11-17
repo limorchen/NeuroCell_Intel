@@ -138,6 +138,9 @@ SENDER_EMAIL    = os.environ.get("SENDER_EMAIL")
 EMAIL_PASSWORD  = os.environ.get("EMAIL_PASSWORD")
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL")
 
+# Applications look-back window (override for catch-up runs via DAYS_BACK)
+DAYS_BACK = int(os.environ.get("DAYS_BACK") or 60)
+
 # Initialize EPO client
 epo_client = None
 if epo_key and epo_secret:
@@ -1030,16 +1033,16 @@ def get_epo_biblio(country, number, kind):
 
 def search_all_patents():
     """
-    Search EPO for both published applications (60-day window) and granted patents
+    Search EPO for both published applications (DAYS_BACK window) and granted patents
     (full historical sweep). Process, score, and return a combined DataFrame.
     """
-    start_date = (datetime.now().date() - timedelta(days=60)).strftime("%Y%m%d")
+    start_date = (datetime.now().date() - timedelta(days=DAYS_BACK)).strftime("%Y%m%d")
     end_date   = datetime.now().date().strftime("%Y%m%d")
 
     print("=" * 80)
     print(f"Starting AI-Enhanced Patent Search — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Relevance threshold:  {MIN_RELEVANCE_SCORE}")
-    print(f"Applications window:  Last 60 days ({start_date} → {end_date})")
+    print(f"Applications window:  Last {DAYS_BACK} days ({start_date} → {end_date})")
     print(f"Grants window:        Full historical (no date restriction)")
     print(f"AI relevance scoring: SentenceTransformer (title + first claim)")
     print(f"Claim sources:        EPO OPS (EP) → Google Patents (all others)")
@@ -1202,7 +1205,7 @@ TOTAL DATABASE:   {len(df_all)} patents
 SOURCE:       European Patent Office (EPO)
 SEARCH TERMS: exosomes, extracellular vesicles, EVs, nanovesicles
               TBI, spinal cord injury, nerve injury, neuroprotection, neuroinflammation
-DATE RANGE:   Applications: Last 60 days | Grants: Full historical sweep
+DATE RANGE:   Applications: Last {DAYS_BACK} days | Grants: Full historical sweep
 AI SCORING:   SentenceTransformer (title + first claim)
 CLAIM DATA:   EPO OPS (EP patents) → Google Patents fallback (all others)
 

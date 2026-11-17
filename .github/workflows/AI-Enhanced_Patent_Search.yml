@@ -1,6 +1,11 @@
 name: AI-Enhanced Patent Search
 on:
   workflow_dispatch:  # מאפשר הרצה ידנית בלחיצת כפתור
+    inputs:
+      days_back:
+        description: 'Applications look-back window in days (default 60)'
+        required: false
+        default: '60'
   schedule:
     # מריץ ב-00:00 ב-1 לכל חודש שני (פברואר, אפריל, יוני וכו')
     - cron: '0 0 1 2,4,6,8,10,12 *'
@@ -50,6 +55,8 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }} 
+          # ריצה מתוזמנת: 60 ימים; ריצה ידנית: לפי הערך שהוזן
+          DAYS_BACK: ${{ github.event.inputs.days_back || '60' }}
         # הרצת הקובץ החדש והמשופר
         run: python Patents_AI_Enhanced.py
       
